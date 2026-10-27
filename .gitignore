@@ -1,0 +1,6 @@
+/target
+/params
+/state
+*.pk
+*.vk
+.env

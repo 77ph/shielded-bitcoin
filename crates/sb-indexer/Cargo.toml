@@ -1,0 +1,10 @@
+[package]
+name = "sb-indexer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+sb-primitives.workspace = true
+thiserror.workspace = true
