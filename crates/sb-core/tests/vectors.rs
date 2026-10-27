@@ -2,7 +2,7 @@
 //! `cargo test -p sb-core --release --test vectors -- --ignored --nocapture`.
 //! If any value changes, the profile changed.
 
-use ark_ff::PrimeField;
+use ark_ff::{BigInteger, PrimeField};
 use sha2::{Digest, Sha256};
 
 use sb_core::address::Network;
