@@ -61,10 +61,20 @@ $SB withdraw --name alice --amount 3000 --to tb1q...   # dev boundary: pays the 
 $SB payouts --name operator            # operator: pays pending withdraw requests from the vault
 ```
 
-`--chain` selects the block source (`esplora:<url>`, default mempool.space
-signet; `rpc:<url>:<user>:<pass>`; `rpc-cookie:<url>:<path>`). Publishing
-uses the Esplora source. Everything under `sb-data/` (wallet seeds in
+`--chain` selects the block source and the publisher (`esplora:<url>`,
+default mempool.space signet; `rpc:<url>:<user>:<pass>`;
+`rpc-cookie:<url>:<path>`). With an RPC source, UTXOs come from
+`scantxoutset` and transactions go out through `sendrawtransaction`, so no
+node wallet is needed. Everything under `sb-data*/` (wallet seeds in
 plaintext, indexer state) is local and git-ignored.
+
+### Private signet
+
+`scripts/localsignet.sh` stands up a signet you can mine yourself
+(`signetchallenge=51`), funds a wallet and mines on demand; it needs Bitcoin
+Core binaries and a Core source checkout for `contrib/signet/miner`.
+`deployments/localsignet-dev.json` is the matching profile (activation 100,
+dev vault held by the `operator` wallet).
 
 ## Tests
 

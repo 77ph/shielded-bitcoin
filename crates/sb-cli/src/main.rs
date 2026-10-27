@@ -191,10 +191,27 @@ impl Ctx {
         bail!("unknown chain spec {:?}", self.chain)
     }
 
-    fn esplora_url(&self) -> Result<&str> {
-        self.chain
-            .strip_prefix("esplora:")
-            .ok_or_else(|| anyhow!("publishing needs an esplora: chain source"))
+    /// UTXO lookup and broadcast through the same backend as `--chain`.
+    fn publisher(&self) -> Result<Box<dyn funding::Publisher>> {
+        if let Some(url) = self.chain.strip_prefix("esplora:") {
+            return Ok(Box::new(funding::EsploraPublisher::new(url)));
+        }
+        if let Some(rest) = self.chain.strip_prefix("rpc-cookie:") {
+            let (url, cookie) = rest
+                .rsplit_once(':')
+                .ok_or_else(|| anyhow!("rpc-cookie:<url>:<cookie-path>"))?;
+            let rpc = BitcoinCoreRpc::with_cookie(url, Path::new(cookie))?;
+            return Ok(Box::new(funding::RpcPublisher { rpc }));
+        }
+        if let Some(rest) = self.chain.strip_prefix("rpc:") {
+            let parts: Vec<&str> = rest.rsplitn(3, ':').collect();
+            if parts.len() != 3 {
+                bail!("rpc:<url>:<user>:<pass>");
+            }
+            let rpc = BitcoinCoreRpc::new(parts[2], parts[1], parts[0]);
+            return Ok(Box::new(funding::RpcPublisher { rpc }));
+        }
+        bail!("unknown chain spec {:?}", self.chain)
     }
 
     fn indexer(&self) -> Result<Indexer> {
@@ -249,16 +266,16 @@ impl Ctx {
         if !broadcast {
             return Ok(());
         }
-        let esplora = self.esplora_url()?;
+        let publisher = self.publisher()?;
         let fk = self.funding(wallet)?;
-        let utxos = fk.utxos(esplora)?;
+        let utxos = publisher.utxos(&fk.address)?;
         let mut outputs = extra;
         outputs.push(sb_indexer::carrier::carrier_output(envelope));
         if let Some(m) = memo {
             outputs.push(sb_indexer::carrier::memo_output(&m));
         }
         let tx = fk.build_tx(&utxos, outputs, fee_rate)?;
-        let txid = funding::broadcast(esplora, &tx)?;
+        let txid = publisher.broadcast(&tx)?;
         println!("broadcast {} ({} vB)", txid, tx.vsize());
         Ok(())
     }
@@ -587,15 +604,15 @@ fn main() -> Result<()> {
                 if no_broadcast {
                     continue;
                 }
-                let esplora = ctx.esplora_url()?;
+                let publisher = ctx.publisher()?;
                 let fk = ctx.funding(&w)?;
-                let utxos = fk.utxos(esplora)?;
+                let utxos = publisher.utxos(&fk.address)?;
                 let out = bitcoin::TxOut {
                     value: bitcoin::Amount::from_sat(p.request.amount),
                     script_pubkey: spk,
                 };
                 let tx = fk.build_tx(&utxos, vec![out], fee_rate)?;
-                let txid = funding::broadcast(esplora, &tx)?;
+                let txid = publisher.broadcast(&tx)?;
                 println!("  paid in {txid}");
                 w.record_payout(&p.note.txid, &p.request, Some(txid.to_string()));
                 w.save(&ctx.wallet_path(&name))?;

@@ -61,31 +61,6 @@ impl FundingKey {
         self.address.script_pubkey()
     }
 
-    /// Confirmed and unconfirmed UTXOs of the funding address via Esplora.
-    pub fn utxos(&self, esplora: &str) -> Result<Vec<Utxo>> {
-        let url = format!(
-            "{}/address/{}/utxo",
-            esplora.trim_end_matches('/'),
-            self.address
-        );
-        let list: Vec<EsploraUtxo> = ureq::get(&url)
-            .call()
-            .context("esplora utxo")?
-            .into_json()?;
-        list.into_iter()
-            .map(|u| {
-                Ok(Utxo {
-                    outpoint: OutPoint {
-                        txid: u.txid.parse::<Txid>()?,
-                        vout: u.vout,
-                    },
-                    value: u.value,
-                    confirmed: u.status.confirmed,
-                })
-            })
-            .collect()
-    }
-
     /// Build and sign a transaction paying `outputs` plus change; the fee is
     /// taken from the funding UTXOs. `fee_rate` in sat/vB.
     pub fn build_tx(
@@ -164,13 +139,90 @@ impl FundingKey {
     }
 }
 
-/// `POST /tx` with the raw hex; returns the txid.
-pub fn broadcast(esplora: &str, tx: &Transaction) -> Result<Txid> {
-    let hex = bitcoin::consensus::encode::serialize_hex(tx);
-    let url = format!("{}/tx", esplora.trim_end_matches('/'));
-    let resp = ureq::post(&url)
-        .send_string(&hex)
-        .map_err(|e| anyhow!("broadcast: {e}"))?;
-    let txid = resp.into_string()?;
-    txid.trim().parse().context("txid")
+/// Where UTXOs are looked up and transactions are broadcast.
+pub trait Publisher {
+    fn utxos(&self, address: &Address) -> Result<Vec<Utxo>>;
+    fn broadcast(&self, tx: &Transaction) -> Result<Txid>;
+}
+
+/// Esplora HTTP (`/address/:addr/utxo`, `POST /tx`).
+pub struct EsploraPublisher {
+    base: String,
+}
+
+impl EsploraPublisher {
+    pub fn new(base: &str) -> Self {
+        EsploraPublisher {
+            base: base.trim_end_matches('/').to_string(),
+        }
+    }
+}
+
+impl Publisher for EsploraPublisher {
+    fn utxos(&self, address: &Address) -> Result<Vec<Utxo>> {
+        let url = format!("{}/address/{}/utxo", self.base, address);
+        let list: Vec<EsploraUtxo> = ureq::get(&url)
+            .call()
+            .context("esplora utxo")?
+            .into_json()?;
+        list.into_iter()
+            .map(|u| {
+                Ok(Utxo {
+                    outpoint: OutPoint {
+                        txid: u.txid.parse::<Txid>()?,
+                        vout: u.vout,
+                    },
+                    value: u.value,
+                    confirmed: u.status.confirmed,
+                })
+            })
+            .collect()
+    }
+
+    fn broadcast(&self, tx: &Transaction) -> Result<Txid> {
+        let hex = bitcoin::consensus::encode::serialize_hex(tx);
+        let url = format!("{}/tx", self.base);
+        let resp = ureq::post(&url)
+            .send_string(&hex)
+            .map_err(|e| anyhow!("broadcast: {e}"))?;
+        let txid = resp.into_string()?;
+        txid.trim().parse().context("txid")
+    }
+}
+
+/// Bitcoin Core RPC without a node wallet: `scantxoutset` for UTXOs (confirmed
+/// only) and `sendrawtransaction`.
+pub struct RpcPublisher {
+    pub rpc: sb_indexer::chain::rpc::BitcoinCoreRpc,
+}
+
+impl Publisher for RpcPublisher {
+    fn utxos(&self, address: &Address) -> Result<Vec<Utxo>> {
+        let desc = format!("addr({address})");
+        let res = self
+            .rpc
+            .call("scantxoutset", serde_json::json!(["start", [desc]]))
+            .map_err(|e| anyhow!("scantxoutset: {e}"))?;
+        let mut out = Vec::new();
+        for u in res["unspents"].as_array().cloned().unwrap_or_default() {
+            let txid: Txid = u["txid"].as_str().context("txid")?.parse()?;
+            let vout = u["vout"].as_u64().context("vout")? as u32;
+            let amount = Amount::from_btc(u["amount"].as_f64().context("amount")?)?;
+            out.push(Utxo {
+                outpoint: OutPoint { txid, vout },
+                value: amount.to_sat(),
+                confirmed: true,
+            });
+        }
+        Ok(out)
+    }
+
+    fn broadcast(&self, tx: &Transaction) -> Result<Txid> {
+        let hex = bitcoin::consensus::encode::serialize_hex(tx);
+        let res = self
+            .rpc
+            .call("sendrawtransaction", serde_json::json!([hex]))
+            .map_err(|e| anyhow!("sendrawtransaction: {e}"))?;
+        res.as_str().context("txid")?.parse().context("txid")
+    }
 }

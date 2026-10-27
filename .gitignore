@@ -5,3 +5,4 @@
 *.vk
 .env
 /sb-data
+/sb-data-local

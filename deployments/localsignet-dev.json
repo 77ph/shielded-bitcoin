@@ -1,0 +1,17 @@
+{
+  "name": "localsignet-dev",
+  "network": "signet",
+  "activation_height": 100,
+  "const_salt": "a918b07ed8d88766930bfd67d9b6b43d6a178862b95b6d74afe5e1219177e5b8",
+  "transfer_vk_sha256": "58b0ee44d0e969f873c0137f364659ac6c8f5878746a1abb2fee1d31befd95fd",
+  "setup": {
+    "kind": "insecure-seed",
+    "seed": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "window_w": 100,
+  "k_min": 1,
+  "boundary": {
+    "vault_script_hex": "0014c23e07deb4e881c8b6e1c4b38e1b95eb4349c911",
+    "operator_address": "tsb199a6n9h6zccsy75krddm04l9rh2sv3zdru20qgke5vvjc2s0e32fzqjcskvjhqzqj8h75wkk5eq"
+  }
+}
