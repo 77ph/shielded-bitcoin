@@ -77,12 +77,7 @@ pub fn extract_envelope(tx: &Transaction) -> Option<Result<Candidate, CarrierErr
             Err(e) => {
                 // A malformed OP_RETURN whose raw bytes start with our magic
                 // is a probe; anything else is somebody else's data.
-                if out
-                    .script_pubkey
-                    .as_bytes()
-                    .windows(4)
-                    .any(|w| is_candidate(w))
-                {
+                if out.script_pubkey.as_bytes().windows(4).any(is_candidate) {
                     return Some(Err(e));
                 }
             }

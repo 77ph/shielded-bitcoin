@@ -482,6 +482,7 @@ impl MintEnvelope {
 
 /// Any envelope kind this implementation knows.
 #[derive(Clone, PartialEq, Eq, Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum Envelope {
     Transfer(TransferEnvelope),
     Mint(MintEnvelope),

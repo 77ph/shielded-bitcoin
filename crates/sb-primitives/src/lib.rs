@@ -40,7 +40,7 @@ mod tests {
             "0e7db4ea6533afa906673b0101343b00a6682093ccc81082d0970e5ed6f72cb7"
         );
         // 2^250 < r_J, so `Scalar250` never needs a reduction (profile §2.1).
-        assert!(JubjubScalar::MODULUS_BIT_SIZE == 252);
+        assert_eq!(JubjubScalar::MODULUS_BIT_SIZE, 252);
         let g = Jubjub::generator().into_affine();
         assert!(g.is_on_curve());
     }

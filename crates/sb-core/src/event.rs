@@ -70,6 +70,7 @@ impl AcceptedEvent {
     }
 
     /// `derived` is `(pk_eph, ct_note)` recomputed from the mint plaintext.
+    #[allow(clippy::too_many_arguments)]
     pub fn from_mint(
         height: u32,
         tx_index: u32,

@@ -244,6 +244,7 @@ impl Ctx {
     }
 
     /// Fund, sign and broadcast a carrier (or just write it to the outbox).
+    #[allow(clippy::too_many_arguments)]
     fn publish(
         &self,
         wallet: &Wallet,

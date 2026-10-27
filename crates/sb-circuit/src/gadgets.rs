@@ -57,7 +57,7 @@ pub fn low_bits(x: &Var, n: usize) -> Result<Vec<Bit>, SynthesisError> {
 /// on the curve, cofactor cleared, not the identity. Fails at witness
 /// generation if `d` is invalid, exactly like the native function.
 pub fn diversify_hash_var(d: &Var) -> Result<PointVar, SynthesisError> {
-    let y = hash_var(t_div(), &[d.clone()])?;
+    let y = hash_var(t_div(), std::slice::from_ref(d))?;
     let cs = d.cs();
     let x = Var::new_witness(cs, || {
         let y = y.value()?;
@@ -106,12 +106,15 @@ impl NoteVars {
 
     /// `rho = PH(T_RHO, rseed)`.
     pub fn rho(&self) -> Result<Var, SynthesisError> {
-        hash_var(t_rho(), &[self.rseed.clone()])
+        hash_var(t_rho(), std::slice::from_ref(&self.rseed))
     }
 
     /// `sk_eph` bits.
     pub fn sk_eph_bits(&self) -> Result<Vec<Bit>, SynthesisError> {
-        low_bits(&hash_var(t_eph(), &[self.rseed.clone()])?, SCALAR_BITS)
+        low_bits(
+            &hash_var(t_eph(), std::slice::from_ref(&self.rseed))?,
+            SCALAR_BITS,
+        )
     }
 }
 

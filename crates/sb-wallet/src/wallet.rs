@@ -361,7 +361,7 @@ impl Wallet {
                 WalletError::NothingUnderAnchor
             });
         }
-        candidates.sort_by(|a, b| b.value.cmp(&a.value));
+        candidates.sort_by_key(|n| std::cmp::Reverse(n.value));
         if let Some(exact) = candidates.iter().find(|n| n.value == amount) {
             return Ok(vec![exact]);
         }

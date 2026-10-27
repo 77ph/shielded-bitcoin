@@ -161,13 +161,13 @@ impl ConstraintSynthesizer<Fr> for TransferCircuit {
         let w = self.witness.as_ref();
         let sk_spend =
             Var::new_witness(cs.clone(), || missing(w.map(|w| scalar_to_fr(&w.sk_spend))))?;
-        let sk_nf = hash_var(t_sknf(), &[sk_spend.clone()])?;
-        let vk_in = hash_var(t_vkin(), &[sk_spend.clone()])?;
+        let sk_nf = hash_var(t_sknf(), std::slice::from_ref(&sk_spend))?;
+        let vk_in = hash_var(t_vkin(), std::slice::from_ref(&sk_spend))?;
         let sk_view_bits = low_bits(&hash_var(t_view(), &[vk_in])?, SCALAR_BITS)?;
 
         // ---- inputs (blocks 1, 2, 3, 4) ----
         let mut v_in = Var::zero();
-        for i in 0..N_IN {
+        for (i, nf_pub_i) in nf_pub.iter().enumerate() {
             let iw = w.map(|w| &w.inputs[i]);
             let note = NoteVars::alloc(cs.clone(), iw.map(|w| &w.note))?;
             let h_body_create =
@@ -190,7 +190,7 @@ impl ConstraintSynthesizer<Fr> for TransferCircuit {
             root.conditional_enforce_equal(&r_anchor, &is_real)?;
 
             let nf = nullifier_var(&sk_nf, &note.rho()?, &pos)?;
-            nf.enforce_equal(&nf_pub[i])?;
+            nf.enforce_equal(nf_pub_i)?;
             v_in += &note.v;
         }
 
@@ -211,8 +211,8 @@ impl ConstraintSynthesizer<Fr> for TransferCircuit {
             let g_d = diversify_hash_var(&note.d)?;
             let chan = output_channel(&note, &g_d, &pk_d)?;
             chan.pk_eph.enforce_equal(&pk_eph_pub[j])?;
-            for t in 0..3 {
-                chan.ct[t].enforce_equal(&ct_pub[j][t])?;
+            for (c, c_pub) in chan.ct.iter().zip(&ct_pub[j]) {
+                c.enforce_equal(c_pub)?;
             }
             v_out += &note.v;
         }
