@@ -1,5 +1,6 @@
 [package]
 name = "sb-circuit"
+description = "Shielded Bitcoin: the transfer relation as R1CS and its Groth16 proofs"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -7,4 +8,21 @@ license.workspace = true
 
 [dependencies]
 sb-primitives.workspace = true
+sb-core.workspace = true
+ark-ff.workspace = true
+ark-ec.workspace = true
+ark-std.workspace = true
+ark-serialize.workspace = true
+ark-bls12-381.workspace = true
+ark-ed-on-bls12-381.workspace = true
+ark-relations.workspace = true
+ark-r1cs-std.workspace = true
+ark-groth16.workspace = true
+ark-snark.workspace = true
+rand.workspace = true
+rand_chacha.workspace = true
+sha2.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+hex.workspace = true

@@ -277,15 +277,20 @@ of the envelope belongs to one of its own notes.
 ### 8.1 Public inputs (in this order)
 
 ```
-x = [ r_anchor,
+x = [ const_salt,
+      r_anchor,
       N (=2), M (=2),
       nf_0, nf_1,
       pk_eph_0.x, pk_eph_0.y, pk_eph_1.x, pk_eph_1.y,
       c_0^0, c_1^0, tag^0,  c_0^1, c_1^1, tag^1,
-      h_body ]                                         # 16 Fr elements
+      h_body ]                                         # 17 Fr elements
 ```
 
 `r_anchor = R[h_anchor]` is derived by replay, never serialised.
+`const_salt` (its `Fr` embedding, §7.2) is a public input rather than a
+circuit constant so that one trusted setup serves every deployment; the
+indexer supplies its own deployment's value. The circuit also enforces
+`N = M = 2` in-circuit.
 
 ### 8.2 Witness
 
