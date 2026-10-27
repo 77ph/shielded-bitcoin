@@ -296,13 +296,15 @@ indexer supplies its own deployment's value. The circuit also enforces
 
 ```
 sk_spend                                   # one Fr element for all inputs
-for i in 0..2:  (v_i, d_i, rseed_i, h_body_create_i, j_i, pos_i, path_i[32], x_Gd_i)
-for j in 0..2:  (v_j, d_j, rseed_j, pk_d_root_j, x_Gd_j)
+for i in 0..2:  (v_i, d_i, rseed_i, h_body_create_i, j_i, pos_i, path_i[32])
+for j in 0..2:  (v_j, d_j, rseed_j, pk_d_root_j)
 ```
 
-`x_Gd` is the witnessed x-coordinate for DiversifyHash. `pk_eph`, `ct_note`
-and the leaf of each input are re-derived in circuit, never witnessed
-(§14.3). A **dummy input** has `v = 0`, a fresh random `rseed`, `pos = 0`,
+The DiversifyHash gadget witnesses the even `x` for `y = PH(T_DIV, d)`
+internally (it is a function of `d`, not independent witness data).
+`pk_eph`, `ct_note` and the leaf of each input are re-derived in circuit,
+never witnessed (§14.3). `v` is allocated as 64 bits and `d` as 88 bits
+(range checks of block 6 and canonical `m_0` packing); `pos` as 32 bits. A **dummy input** has `v = 0`, a fresh random `rseed`, `pos = 0`,
 an arbitrary path, and still publishes its (unique, random) nullifier;
 the Merkle check is skipped exactly when `v = 0`. A **dummy output** is a
 real zero-value note to one of the sender's own addresses.
@@ -366,6 +368,9 @@ One OP_RETURN output whose script is exactly `OP_RETURN <single minimal push of 
 of its outputs is an OP_RETURN whose single push starts with `"btc" 0x01`.
 A candidate with two such outputs, extra pushes, or a non-minimal push is
 **rejected and logged** (it never mutates state). Witness data is ignored.
+OP_RETURN outputs whose payload does not start with the magic are not part
+of the envelope and never affect acceptance (deployment extensions may use
+them, see `docs/BOUNDARY.md`).
 Transactions in a block are processed in block order; blocks from
 `activation_height` upward.
 

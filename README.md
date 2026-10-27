@@ -25,7 +25,7 @@ soft fork or a hard fork.
 | Circuit | 2-in/2-out transfer relation, 84 362 constraints, Groth16/BLS12-381; prove ≈ 1.5 s, verify ≈ 4 ms (16 threads) |
 | Indexer | Bitcoin Core RPC / Esplora / mock sources, carrier rule, normative acceptance order, per-block checkpoints with reorg rollback, JSON state |
 | Wallet | scanning and sender recovery, note selection, anchor policy, change, input locks, reorg-safe rescan |
-| Boundary | development **mint** into a custodial vault (`docs/BOUNDARY.md`); withdraw not yet implemented |
+| Boundary | development **mint** into a custodial vault and **withdraw** via payout memos (`docs/BOUNDARY.md`) |
 | CLI | `sb`: profile, wallets, sync, scan, mint, send; publishes carriers through Esplora with a transparent funding key |
 
 Measured on this machine (release build): setup 1.5 s, prove 1.5 s,
@@ -57,6 +57,8 @@ $SB mint --name alice --amount 20000   # pays the dev vault, publishes the mint 
 $SB sync && $SB scan --name alice      # after confirmation: balance 20000
 $SB send --name alice --to tsb1... --amount 5000   # proves and publishes a private transfer
 $SB sync && $SB scan --name alice      # change note appears, inputs marked spent
+$SB withdraw --name alice --amount 3000 --to tb1q...   # dev boundary: pays the operator + payout memo
+$SB payouts --name operator            # operator: pays pending withdraw requests from the vault
 ```
 
 `--chain` selects the block source (`esplora:<url>`, default mempool.space
@@ -96,8 +98,8 @@ to grow into a real indexer and wallet, and test-vector-first interoperability.
 ## Roadmap
 
 1. ~~Primitives~~ 2. ~~Core~~ 3. ~~Circuit~~ 4. ~~Indexer~~ 5. ~~Wallet + CLI~~
-6. **Signet run** with the dev boundary; withdraw path; pinned test vectors
-   (`docs/TEST_VECTORS.md`).
+6. **Signet run** with the dev boundary (needs signet coins on the funding
+   address); test vectors are in `docs/TEST_VECTORS.md`.
 7. Electrum source, encrypted wallet files, light-client sync, ceremony
    tooling, versioning/upgrade rules.
 
