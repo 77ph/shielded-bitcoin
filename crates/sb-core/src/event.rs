@@ -9,6 +9,13 @@ use crate::envelope::{MintEnvelope, TransferEnvelope};
 use crate::note::NoteCiphertext;
 use crate::recovery::CT_OUT_LEN;
 
+/// Display form of a txid (byte-reversed hex, as explorers and `bitcoin-cli` show it).
+pub fn txid_hex(txid: &[u8; 32]) -> String {
+    let mut r = *txid;
+    r.reverse();
+    hex::encode(r)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EventKind {
     Transfer,

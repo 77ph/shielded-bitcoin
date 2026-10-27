@@ -90,6 +90,12 @@ impl FundingKey {
                 break;
             }
         }
+        if inputs.is_empty() {
+            bail!(
+                "funding address {} has no confirmed coins; fund it first",
+                self.address
+            );
+        }
         if total < target + fee {
             bail!(
                 "funding address {} holds {} sat; need {} + fee {}",

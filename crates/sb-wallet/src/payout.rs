@@ -3,7 +3,7 @@
 //!
 //! Memo: `"sbx" ‖ 0x01 ‖ amount (u64 LE) ‖ scriptPubKey`.
 
-use sb_core::event::AcceptedEvent;
+use sb_core::event::{AcceptedEvent, txid_hex};
 
 use crate::wallet::{NoteRecord, Wallet};
 
@@ -56,7 +56,7 @@ impl Wallet {
             if self.payouts.iter().any(|p| p.txid == n.txid) {
                 continue;
             }
-            let Some(ev) = events.iter().find(|e| hex::encode(e.txid) == n.txid) else {
+            let Some(ev) = events.iter().find(|e| txid_hex(&e.txid) == n.txid) else {
                 continue;
             };
             let Some(memo) = ev.memo.as_deref() else {

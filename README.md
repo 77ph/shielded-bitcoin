@@ -41,7 +41,7 @@ verify 4 ms, envelope 668 bytes, carrier ≈ 800 vB.
 | `crates/sb-indexer` | §8, §11, §15, §A.4, §A.6, §A.7 | chain sources, carrier extraction, replay, state, reorg handling, dev mint |
 | `crates/sb-wallet` | §10, §16, §C | scanning, recovery, note selection, anchor policy, transfer construction |
 | `crates/sb-cli` | — | `sb` command-line tool |
-| `docs/` | — | `PROFILE.md` (normative profile), `BOUNDARY.md` (dev peg) |
+| `docs/` | — | `PROFILE.md` (normative profile), `BOUNDARY.md` (dev peg), `TEST_VECTORS.md`, `RUNS.md` |
 | `deployments/` | profile §9 | deployment profiles |
 
 ## Quick start (signet)
@@ -108,8 +108,8 @@ to grow into a real indexer and wallet, and test-vector-first interoperability.
 ## Roadmap
 
 1. ~~Primitives~~ 2. ~~Core~~ 3. ~~Circuit~~ 4. ~~Indexer~~ 5. ~~Wallet + CLI~~
-6. **Signet run** with the dev boundary (needs signet coins on the funding
-   address); test vectors are in `docs/TEST_VECTORS.md`.
+6. ~~End-to-end run on a real node~~ (private signet, see `docs/RUNS.md`);
+   public signet run waits for coins on the funding address.
 7. Electrum source, encrypted wallet files, light-client sync, ceremony
    tooling, versioning/upgrade rules.
 

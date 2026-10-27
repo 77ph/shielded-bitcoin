@@ -35,11 +35,18 @@ impl BitcoinCoreRpc {
 
     pub fn call(&self, method: &str, params: Value) -> Result<Value, ChainError> {
         let body = json!({ "jsonrpc": "1.0", "id": "sb", "method": method, "params": params });
-        let resp: Value = ureq::post(&self.url)
+        let resp: Value = match ureq::post(&self.url)
             .set("Authorization", &self.auth)
             .set("Content-Type", "application/json")
-            .send_json(body)?
-            .into_json()?;
+            .send_json(body)
+        {
+            Ok(r) => r.into_json()?,
+            // Bitcoin Core answers application errors with HTTP 500 and a JSON body.
+            Err(ureq::Error::Status(_, r)) => {
+                r.into_json().map_err(|e| ChainError::Rpc(e.to_string()))?
+            }
+            Err(e) => return Err(e.into()),
+        };
         if let Some(err) = resp.get("error").filter(|e| !e.is_null()) {
             return Err(ChainError::Rpc(err.to_string()));
         }

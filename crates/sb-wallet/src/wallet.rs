@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use sb_circuit::TransferParams;
 use sb_core::address::{Network, PaymentAddress};
-use sb_core::event::AcceptedEvent;
+use sb_core::event::{AcceptedEvent, txid_hex};
 use sb_core::keys::{Seed, WalletKeys};
 use sb_core::note::{NotePlaintext, nullifier};
 use sb_core::tree::NoteTree;
@@ -280,7 +280,7 @@ impl Wallet {
                     pos: r.pos,
                     nullifier: hex_fr(&nf),
                     height: r.height,
-                    txid: hex::encode(r.txid),
+                    txid: txid_hex(&r.txid),
                     spent_at: None,
                     locked_by: None,
                 });
@@ -313,7 +313,7 @@ impl Wallet {
                             to_d: hex::encode(s.note.d),
                             pos: s.pos,
                             height: s.height,
-                            txid: hex::encode(s.txid),
+                            txid: txid_hex(&s.txid),
                             is_change,
                         });
                     }
