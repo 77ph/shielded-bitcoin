@@ -39,19 +39,39 @@ fn coinbase(height: u32, salt: u32) -> Transaction {
     }
 }
 
+fn fake_input(nonce: u32) -> TxIn {
+    TxIn {
+        previous_output: OutPoint::null(),
+        script_sig: Builder::new().push_int(nonce as i64).into_script(),
+        sequence: Sequence::MAX,
+        witness: Witness::new(),
+    }
+}
+
 /// A transaction whose only output is the carrier for `envelope`; `nonce`
 /// makes repeated publications of the same envelope distinct transactions.
 pub fn carrier_tx(envelope: &[u8], nonce: u32) -> Transaction {
     Transaction {
         version: Version::TWO,
         lock_time: LockTime::ZERO,
-        input: vec![TxIn {
-            previous_output: OutPoint::null(),
-            script_sig: Builder::new().push_int(nonce as i64).into_script(),
-            sequence: Sequence::MAX,
-            witness: Witness::new(),
-        }],
+        input: vec![fake_input(nonce)],
         output: vec![carrier_output(envelope)],
+    }
+}
+
+/// A mint carrier: pays `value` to `vault` and carries `envelope`.
+pub fn mint_tx(envelope: &[u8], vault: &ScriptBuf, value: u64, nonce: u32) -> Transaction {
+    Transaction {
+        version: Version::TWO,
+        lock_time: LockTime::ZERO,
+        input: vec![fake_input(nonce)],
+        output: vec![
+            TxOut {
+                value: Amount::from_sat(value),
+                script_pubkey: vault.clone(),
+            },
+            carrier_output(envelope),
+        ],
     }
 }
 

@@ -4,7 +4,8 @@
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::{BigInteger, PrimeField};
 
-use sb_primitives::diversify::{DIVERSIFIER_LEN, diversifier_to_fr, diversify_hash};
+pub use sb_primitives::diversify::DIVERSIFIER_LEN;
+use sb_primitives::diversify::{diversifier_to_fr, diversify_hash};
 use sb_primitives::encoding::{DecodeError, fr_from_bytes, fr_to_bytes};
 use sb_primitives::poseidon::hash;
 use sb_primitives::scalar::scalar250;

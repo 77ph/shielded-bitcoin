@@ -398,3 +398,143 @@ mod tests {
         assert!(fr_to_bytes(&a)[31] <= 0x1f);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Development boundary: mint envelope (kind 0x02). NOT part of the paper's
+// transfer layer (§22.3): a deployment extension that lets value enter a
+// test deployment through a custodial vault. See docs/BOUNDARY.md.
+// ---------------------------------------------------------------------------
+
+pub const KIND_MINT: u8 = 0x02;
+/// `header ‖ v (u64 LE) ‖ d (11) ‖ rseed (32) ‖ pk_d (32)`.
+pub const MINT_LEN: usize = HEADER_LEN + 8 + crate::note::DIVERSIFIER_LEN + 32 + 32;
+
+/// A plaintext mint: the carrier transaction pays `note.value` satoshis to
+/// the deployment vault, and replay derives the note leaf exactly as for a
+/// transfer output (`j = 0`) from the recomputed `(pk_eph, ct_note)`.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct MintEnvelope {
+    pub note: crate::note::NotePlaintext,
+    pub pk_d: JubjubAffine,
+}
+
+impl MintEnvelope {
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(MINT_LEN);
+        out.extend_from_slice(&MAGIC);
+        out.push(VERSION);
+        out.push(KIND_MINT);
+        out.push(0);
+        out.extend_from_slice(&self.note.value.to_le_bytes());
+        out.extend_from_slice(&self.note.d);
+        out.extend_from_slice(&fr_to_bytes(&self.note.rseed));
+        out.extend_from_slice(&point_to_bytes(&self.pk_d));
+        debug_assert_eq!(out.len(), MINT_LEN);
+        out
+    }
+
+    pub fn parse(bytes: &[u8]) -> Result<Self, ParseError> {
+        if bytes.len() != MINT_LEN {
+            return Err(ParseError::Length {
+                got: bytes.len(),
+                expected: MINT_LEN,
+            });
+        }
+        let mut r = Reader { b: bytes, pos: 0 };
+        if r.take(3)? != MAGIC {
+            return Err(ParseError::Magic);
+        }
+        let version = r.u8()?;
+        if version != VERSION {
+            return Err(ParseError::Version(version));
+        }
+        let kind = r.u8()?;
+        if kind != KIND_MINT {
+            return Err(ParseError::Kind(kind));
+        }
+        if r.u8()? != 0 {
+            return Err(ParseError::Reserved);
+        }
+        let value = u64::from_le_bytes(r.take(8)?.try_into().unwrap());
+        let mut d = [0u8; crate::note::DIVERSIFIER_LEN];
+        d.copy_from_slice(r.take(crate::note::DIVERSIFIER_LEN)?);
+        let rseed = fr_from_bytes(r.take(32)?).map_err(|e| ParseError::Field("rseed", e))?;
+        let pk_d = point_from_bytes(r.take(32)?).map_err(|e| ParseError::Field("pk_d", e))?;
+        let env = MintEnvelope {
+            note: crate::note::NotePlaintext { value, d, rseed },
+            pk_d,
+        };
+        if env.to_bytes() != bytes {
+            return Err(ParseError::NonCanonical);
+        }
+        Ok(env)
+    }
+
+    pub fn h_body(&self, const_salt: &[u8; 32]) -> Fr {
+        h_body(const_salt, &self.to_bytes())
+    }
+
+    /// `(pk_eph, ct_note)` for the minted note; `None` if `d` is invalid.
+    pub fn derive(&self) -> Option<(JubjubAffine, NoteCiphertext)> {
+        crate::note::encrypt_note(&self.note, &self.pk_d)
+    }
+}
+
+/// Any envelope kind this implementation knows.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum Envelope {
+    Transfer(TransferEnvelope),
+    Mint(MintEnvelope),
+}
+
+/// Dispatch on the kind byte (index 4) after the magic and version.
+pub fn parse_envelope(bytes: &[u8]) -> Result<Envelope, ParseError> {
+    if bytes.len() < HEADER_LEN {
+        return Err(ParseError::Length {
+            got: bytes.len(),
+            expected: HEADER_LEN,
+        });
+    }
+    if bytes[..3] != MAGIC {
+        return Err(ParseError::Magic);
+    }
+    if bytes[3] != VERSION {
+        return Err(ParseError::Version(bytes[3]));
+    }
+    match bytes[4] {
+        KIND_TRANSFER => Ok(Envelope::Transfer(TransferEnvelope::parse(bytes)?)),
+        KIND_MINT => Ok(Envelope::Mint(MintEnvelope::parse(bytes)?)),
+        k => Err(ParseError::Kind(k)),
+    }
+}
+
+#[cfg(test)]
+mod mint_tests {
+    use super::*;
+    use crate::keys::{Seed, WalletKeys};
+    use ark_ff::UniformRand;
+    use ark_std::rand::{SeedableRng, rngs::StdRng};
+
+    #[test]
+    fn mint_round_trip_and_dispatch() {
+        let mut rng = StdRng::seed_from_u64(9);
+        let k = WalletKeys::from_seed(&Seed([1u8; 32]));
+        let (_, a) = k.ivk.find_address(0);
+        let m = MintEnvelope {
+            note: crate::note::NotePlaintext {
+                value: 12345,
+                d: a.d,
+                rseed: Fr::rand(&mut rng),
+            },
+            pk_d: a.pk_d,
+        };
+        let bytes = m.to_bytes();
+        assert_eq!(bytes.len(), MINT_LEN);
+        assert_eq!(MintEnvelope::parse(&bytes).unwrap(), m);
+        assert_eq!(parse_envelope(&bytes).unwrap(), Envelope::Mint(m.clone()));
+        assert!(m.derive().is_some());
+        let mut bad = bytes.clone();
+        bad[4] = 0x07;
+        assert_eq!(parse_envelope(&bad), Err(ParseError::Kind(7)));
+    }
+}

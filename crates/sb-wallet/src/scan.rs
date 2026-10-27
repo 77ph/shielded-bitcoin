@@ -2,12 +2,12 @@
 //! (paper §16.1, §16.2).
 
 use sb_core::address::PaymentAddress;
-use sb_core::event::AcceptedTransfer;
+use sb_core::event::AcceptedEvent;
 use sb_core::keys::{IncomingViewingKey, OutgoingViewingKey};
 use sb_core::note::{
     NotePlaintext, check_note_consistency, decrypt_as_recipient, decrypt_as_sender, note_leaf,
 };
-use sb_core::recovery::{N_OUT, binding_digest, decrypt_recovery};
+use sb_core::recovery::{binding_digest, decrypt_recovery};
 use sb_primitives::Fr;
 
 /// A received note that passed every §16.1 check.
@@ -35,28 +35,21 @@ pub struct SentNote {
 }
 
 /// Shared post-decryption checks: `pk_eph` consistency and leaf equality.
-fn passes_checks(const_salt: &Fr, event: &AcceptedTransfer, j: usize, pt: &NotePlaintext) -> bool {
-    let body = &event.envelope.body;
-    check_note_consistency(pt, &body.pk_eph[j])
-        && note_leaf(
-            const_salt,
-            &event.h_body,
-            j as u64,
-            &body.pk_eph[j],
-            &body.ct_note[j],
-        ) == event.leaves[j]
+fn passes_checks(const_salt: &Fr, event: &AcceptedEvent, j: usize, pt: &NotePlaintext) -> bool {
+    let (pk_eph, ct) = &event.outputs[j];
+    check_note_consistency(pt, pk_eph)
+        && note_leaf(const_salt, &event.h_body, j as u64, pk_eph, ct) == event.leaves[j]
 }
 
 /// Try every output of an accepted transfer with the incoming viewing key.
 pub fn scan_incoming(
     ivk: &IncomingViewingKey,
     const_salt: &Fr,
-    event: &AcceptedTransfer,
+    event: &AcceptedEvent,
 ) -> Vec<ReceivedNote> {
-    let body = &event.envelope.body;
     let mut found = Vec::new();
-    for j in 0..N_OUT {
-        let Some(pt) = decrypt_as_recipient(&ivk.sk_view, &body.pk_eph[j], &body.ct_note[j]) else {
+    for (j, (pk_eph, ct)) in event.outputs.iter().enumerate() {
+        let Some(pt) = decrypt_as_recipient(&ivk.sk_view, pk_eph, ct) else {
             continue;
         };
         // d must identify a local receive path whose pk_d matches the one
@@ -87,19 +80,19 @@ pub fn scan_incoming(
 pub fn scan_outgoing(
     ovk: &OutgoingViewingKey,
     const_salt: &Fr,
-    event: &AcceptedTransfer,
+    event: &AcceptedEvent,
 ) -> Option<Vec<SentNote>> {
-    let body = &event.envelope.body;
-    let digest = binding_digest(&body.pk_eph, &body.ct_note);
-    let entries = decrypt_recovery(ovk, &digest, &body.ct_out)?;
-    let mut out = Vec::with_capacity(N_OUT);
+    let ct_out = event.ct_out.as_ref()?;
+    if event.outputs.len() != 2 {
+        return None;
+    }
+    let pk_eph = [event.outputs[0].0, event.outputs[1].0];
+    let ct = [event.outputs[0].1, event.outputs[1].1];
+    let digest = binding_digest(&pk_eph, &ct);
+    let entries = decrypt_recovery(ovk, &digest, ct_out)?;
+    let mut out = Vec::with_capacity(entries.len());
     for (j, entry) in entries.iter().enumerate() {
-        let pt = decrypt_as_sender(
-            &entry.sk_eph,
-            &entry.pk_d,
-            &body.pk_eph[j],
-            &body.ct_note[j],
-        )?;
+        let pt = decrypt_as_sender(&entry.sk_eph, &entry.pk_d, &pk_eph[j], &ct[j])?;
         if !passes_checks(const_salt, event, j, &pt) {
             return None;
         }

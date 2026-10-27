@@ -28,6 +28,13 @@ pub enum Setup {
     },
 }
 
+/// Custodial development boundary (docs/BOUNDARY.md). Absent → mints rejected.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DevBoundary {
+    /// Hex `scriptPubKey` of the vault that mints must pay.
+    pub vault_script_hex: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Deployment {
     pub name: String,
@@ -43,6 +50,8 @@ pub struct Deployment {
     pub window_w: u32,
     /// `K_min` (profile §A.6).
     pub k_min: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub boundary: Option<DevBoundary>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -143,6 +152,7 @@ mod tests {
             setup: Setup::InsecureSeed { seed: [1u8; 32] },
             window_w: 100,
             k_min: 1,
+            boundary: None,
         };
         let json = d.to_json();
         assert!(json.contains("\"insecure-seed\""));

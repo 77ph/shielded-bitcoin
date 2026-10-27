@@ -7,8 +7,8 @@ use std::path::Path;
 use bitcoin::BlockHash;
 use serde::{Deserialize, Serialize};
 
-use sb_core::envelope::TransferEnvelope;
-use sb_core::event::AcceptedTransfer;
+use sb_core::envelope::{Envelope, parse_envelope};
+use sb_core::event::{AcceptedEvent, EventKind};
 use sb_core::tree::{DEPTH, EMPTY_ROOTS, NoteTree};
 use sb_primitives::Fr;
 
@@ -41,11 +41,11 @@ pub struct ReplayState {
     /// `R[h]` for every replayed height.
     pub roots: BTreeMap<u32, Fr>,
     pub blocks: Vec<BlockCheckpoint>,
-    pub events: Vec<AcceptedTransfer>,
+    pub events: Vec<AcceptedEvent>,
     pub rejections: Vec<Rejection>,
 }
 
-/// Serialisable event record.
+/// Serialisable event record; outputs are re-derived from `raw` on load.
 #[derive(Serialize, Deserialize)]
 struct EventRecord {
     height: u32,
@@ -53,7 +53,7 @@ struct EventRecord {
     #[serde(with = "hexbytes")]
     txid: [u8; 32],
     #[serde(with = "hexbytes::bytes")]
-    envelope: Vec<u8>,
+    raw: Vec<u8>,
     #[serde(with = "hexbytes::fr")]
     h_body: Fr,
     first_position: u64,
@@ -163,10 +163,10 @@ impl ReplayState {
                     height: e.height,
                     tx_index: e.tx_index,
                     txid: e.txid,
-                    envelope: e.envelope.to_bytes(),
+                    raw: e.raw.clone(),
                     h_body: e.h_body,
                     first_position: e.first_position,
-                    leaves: e.leaves.to_vec(),
+                    leaves: e.leaves.clone(),
                 })
                 .collect(),
             rejections: self.rejections.clone(),
@@ -193,21 +193,42 @@ impl ReplayState {
         }
         let mut events = Vec::with_capacity(f.events.len());
         for e in f.events {
-            let envelope = TransferEnvelope::parse(&e.envelope)
-                .map_err(|e| StateError::Corrupt(e.to_string()))?;
-            let leaves: [Fr; 2] = e
-                .leaves
-                .try_into()
-                .map_err(|_| StateError::Corrupt("leaves".into()))?;
-            events.push(AcceptedTransfer {
-                height: e.height,
-                tx_index: e.tx_index,
-                txid: e.txid,
-                envelope,
-                h_body: e.h_body,
-                first_position: e.first_position,
-                leaves,
-            });
+            let env = parse_envelope(&e.raw).map_err(|e| StateError::Corrupt(e.to_string()))?;
+            let ev = match env {
+                Envelope::Transfer(t) => AcceptedEvent::from_transfer(
+                    e.height,
+                    e.tx_index,
+                    e.txid,
+                    &t,
+                    e.h_body,
+                    e.first_position,
+                    e.leaves,
+                ),
+                Envelope::Mint(m) => {
+                    let derived = m
+                        .derive()
+                        .ok_or_else(|| StateError::Corrupt("mint diversifier".into()))?;
+                    let leaf = *e
+                        .leaves
+                        .first()
+                        .ok_or_else(|| StateError::Corrupt("mint leaf".into()))?;
+                    AcceptedEvent::from_mint(
+                        e.height,
+                        e.tx_index,
+                        e.txid,
+                        &m,
+                        e.h_body,
+                        derived,
+                        e.first_position,
+                        leaf,
+                    )
+                }
+            };
+            debug_assert!(matches!(
+                (ev.kind, &ev.raw),
+                (EventKind::Transfer, _) | (EventKind::Mint, _)
+            ));
+            events.push(ev);
         }
         Ok(ReplayState {
             tree: NoteTree::from_leaves(&f.leaves),

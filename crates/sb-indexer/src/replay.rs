@@ -1,12 +1,13 @@
-//! Deterministic replay (paper §8, §15; profile §11).
+//! Deterministic replay (paper §8, §15; profile §11), plus the development
+//! mint of docs/BOUNDARY.md.
 
 use bitcoin::hashes::Hash;
-use bitcoin::{Block, Transaction};
+use bitcoin::{Block, ScriptBuf, Transaction};
 use log::{debug, info, warn};
 
 use sb_circuit::{TransferStatement, TransferVerifier};
-use sb_core::envelope::{ParseError, TransferEnvelope};
-use sb_core::event::AcceptedTransfer;
+use sb_core::envelope::{Envelope, MintEnvelope, ParseError, TransferEnvelope, parse_envelope};
+use sb_core::event::AcceptedEvent;
 use sb_core::note::note_leaf;
 use sb_core::recovery::N_OUT;
 use sb_primitives::Fr;
@@ -33,6 +34,12 @@ pub enum RejectReason {
     SpentNullifier,
     #[error("proof does not verify")]
     ProofInvalid,
+    #[error("mint: this deployment has no boundary")]
+    MintDisabled,
+    #[error("mint: vault output missing or amount differs")]
+    MintVault,
+    #[error("mint: invalid diversifier")]
+    MintDiversifier,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -54,14 +61,19 @@ pub struct Indexer {
     pub deployment: Deployment,
     verifier: TransferVerifier,
     pub state: ReplayState,
+    vault_script: Option<ScriptBuf>,
 }
 
 impl Indexer {
     pub fn new(deployment: Deployment, verifier: TransferVerifier, state: ReplayState) -> Self {
+        let vault_script = deployment.boundary.as_ref().map(|b| {
+            ScriptBuf::from_bytes(hex::decode(&b.vault_script_hex).expect("vault script hex"))
+        });
         Indexer {
             deployment,
             verifier,
             state,
+            vault_script,
         }
     }
 
@@ -103,14 +115,13 @@ impl Indexer {
             let txid = tx.compute_txid().to_byte_array();
             let result = candidate
                 .map_err(RejectReason::from)
-                .and_then(|bytes| self.accept(id.height, tx_index as u32, txid, &bytes));
+                .and_then(|bytes| self.accept(id.height, tx_index as u32, txid, tx, &bytes));
             match result {
                 Ok(event) => {
-                    cp.nullifiers_added
-                        .extend_from_slice(&event.envelope.body.nullifiers);
+                    cp.nullifiers_added.extend_from_slice(&event.nullifiers);
                     info!(
-                        "height {} tx {}: accepted transfer, leaves at {}",
-                        id.height, tx_index, event.first_position
+                        "height {} tx {}: accepted {:?}, leaves at {}",
+                        id.height, tx_index, event.kind, event.first_position
                     );
                     self.state.events.push(event);
                     report.accepted += 1;
@@ -133,16 +144,28 @@ impl Indexer {
         report
     }
 
-    /// Validate and, if accepted, apply one envelope (profile §11).
     fn accept(
         &mut self,
         height: u32,
         tx_index: u32,
         txid: [u8; 32],
+        tx: &Transaction,
         bytes: &[u8],
-    ) -> Result<AcceptedTransfer, RejectReason> {
-        // 1. canonical parse
-        let envelope = TransferEnvelope::parse(bytes)?;
+    ) -> Result<AcceptedEvent, RejectReason> {
+        match parse_envelope(bytes)? {
+            Envelope::Transfer(env) => self.accept_transfer(height, tx_index, txid, env),
+            Envelope::Mint(env) => self.accept_mint(height, tx_index, txid, tx, env),
+        }
+    }
+
+    /// Validate and, if accepted, apply one transfer (profile §11).
+    fn accept_transfer(
+        &mut self,
+        height: u32,
+        tx_index: u32,
+        txid: [u8; 32],
+        envelope: TransferEnvelope,
+    ) -> Result<AcceptedEvent, RejectReason> {
         let body = &envelope.body;
         // 2. h_body
         let h_body = body.h_body(&self.deployment.const_salt);
@@ -186,29 +209,69 @@ impl Indexer {
         // 7. apply
         let salt_fe = d.const_salt_fr();
         let first_position = self.state.tree.size();
-        let mut leaves = [Fr::from(0u64); N_OUT];
+        let mut leaves = Vec::with_capacity(N_OUT);
         for j in 0..N_OUT {
-            leaves[j] = note_leaf(
+            let leaf = note_leaf(
                 &salt_fe,
                 &h_body,
                 j as u64,
                 &body.pk_eph[j],
                 &body.ct_note[j],
             );
-            self.state.tree.append(leaves[j]);
+            self.state.tree.append(leaf);
+            leaves.push(leaf);
         }
         for nf in &body.nullifiers {
             self.state.nullifiers.insert(*nf);
         }
-        Ok(AcceptedTransfer {
+        Ok(AcceptedEvent::from_transfer(
             height,
             tx_index,
             txid,
-            envelope,
+            &envelope,
             h_body,
             first_position,
             leaves,
-        })
+        ))
+    }
+
+    /// Development mint (docs/BOUNDARY.md).
+    fn accept_mint(
+        &mut self,
+        height: u32,
+        tx_index: u32,
+        txid: [u8; 32],
+        tx: &Transaction,
+        envelope: MintEnvelope,
+    ) -> Result<AcceptedEvent, RejectReason> {
+        let vault = self
+            .vault_script
+            .as_ref()
+            .ok_or(RejectReason::MintDisabled)?;
+        let paid: Vec<u64> = tx
+            .output
+            .iter()
+            .filter(|o| o.script_pubkey == *vault)
+            .map(|o| o.value.to_sat())
+            .collect();
+        if paid.len() != 1 || paid[0] != envelope.note.value {
+            return Err(RejectReason::MintVault);
+        }
+        let h_body = envelope.h_body(&self.deployment.const_salt);
+        let derived = envelope.derive().ok_or(RejectReason::MintDiversifier)?;
+        let salt_fe = self.deployment.const_salt_fr();
+        let leaf = note_leaf(&salt_fe, &h_body, 0, &derived.0, &derived.1);
+        let first_position = self.state.tree.append(leaf);
+        Ok(AcceptedEvent::from_mint(
+            height,
+            tx_index,
+            txid,
+            &envelope,
+            h_body,
+            derived,
+            first_position,
+            leaf,
+        ))
     }
 
     /// Roll back to the last block that is still on the active chain, then
@@ -227,8 +290,9 @@ impl Indexer {
             }
         }
         if let Some(last) = self.state.last_height() {
-            let rollback_to = fork.unwrap_or(self.deployment.activation_height.saturating_sub(1));
             if fork != Some(last) {
+                let rollback_to =
+                    fork.unwrap_or(self.deployment.activation_height.saturating_sub(1));
                 warn!(
                     "reorganisation: rolling back from {} to {}",
                     last, rollback_to
@@ -258,12 +322,11 @@ impl Indexer {
     }
 
     /// Accepted history after `index` (for wallet scanning).
-    pub fn events_from(&self, index: usize) -> &[AcceptedTransfer] {
+    pub fn events_from(&self, index: usize) -> &[AcceptedEvent] {
         &self.state.events[index.min(self.state.events.len())..]
     }
 
-    /// Is this transaction a carrier candidate? (Convenience for wallets
-    /// tracking their own publications.)
+    /// Is this transaction a carrier candidate?
     pub fn is_carrier(tx: &Transaction) -> bool {
         extract_envelope(tx).is_some()
     }
