@@ -4,3 +4,4 @@
 *.pk
 *.vk
 .env
+/sb-data

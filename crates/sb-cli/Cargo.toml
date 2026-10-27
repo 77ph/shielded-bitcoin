@@ -1,5 +1,6 @@
 [package]
 name = "sb-cli"
+description = "Shielded Bitcoin command-line wallet and indexer"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,7 +13,19 @@ path = "src/main.rs"
 [dependencies]
 sb-primitives.workspace = true
 sb-core.workspace = true
+sb-circuit.workspace = true
 sb-indexer.workspace = true
 sb-wallet.workspace = true
+ark-ff.workspace = true
+bitcoin.workspace = true
 anyhow.workspace = true
 clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+hex.workspace = true
+hkdf.workspace = true
+sha2.workspace = true
+rand.workspace = true
+log.workspace = true
+env_logger.workspace = true
+ureq.workspace = true

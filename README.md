@@ -12,7 +12,71 @@ in block order. **No change to Bitcoin consensus is required** — this is not a
 soft fork or a hard fork.
 
 > **Status: pre-alpha.** Nothing here has been audited, the trusted setup is
-> a published seed, and there is no production peg. Do not hold value with it.
+> a published seed (anyone can forge proofs), and the only peg is a custodial
+> development vault. Do not hold value with it.
+
+## What works
+
+| Layer | State |
+|---|---|
+| Profile (`docs/PROFILE.md`) | every open parameter of the paper fixed; departures listed in its §12 |
+| Primitives | Poseidon (native + R1CS, pinned constants), Jubjub encodings, DiversifyHash |
+| Core | key hierarchy, bech32m addresses, note encryption, leaves, nullifiers, 668-byte canonical envelope, note tree with historical paths |
+| Circuit | 2-in/2-out transfer relation, 84 362 constraints, Groth16/BLS12-381; prove ≈ 1.5 s, verify ≈ 4 ms (16 threads) |
+| Indexer | Bitcoin Core RPC / Esplora / mock sources, carrier rule, normative acceptance order, per-block checkpoints with reorg rollback, JSON state |
+| Wallet | scanning and sender recovery, note selection, anchor policy, change, input locks, reorg-safe rescan |
+| Boundary | development **mint** into a custodial vault (`docs/BOUNDARY.md`); withdraw not yet implemented |
+| CLI | `sb`: profile, wallets, sync, scan, mint, send; publishes carriers through Esplora with a transparent funding key |
+
+Measured on this machine (release build): setup 1.5 s, prove 1.5 s,
+verify 4 ms, envelope 668 bytes, carrier ≈ 800 vB.
+
+## Layout
+
+| Crate | Paper sections | Content |
+|---|---|---|
+| `crates/sb-primitives` | §2, §A.1 | Poseidon over BLS12-381 `Fr`, domain tags, Jubjub encodings, `DiversifyHash` |
+| `crates/sb-core` | §5, §6, §9, §12, §13, §A.3, §A.5 | keys, addresses, notes, encryption, leaves, nullifiers, envelope codec, `h_body`, note tree |
+| `crates/sb-circuit` | §14, §B | R1CS gadgets, the transfer circuit, Groth16 setup/prove/verify |
+| `crates/sb-indexer` | §8, §11, §15, §A.4, §A.6, §A.7 | chain sources, carrier extraction, replay, state, reorg handling, dev mint |
+| `crates/sb-wallet` | §10, §16, §C | scanning, recovery, note selection, anchor policy, transfer construction |
+| `crates/sb-cli` | — | `sb` command-line tool |
+| `docs/` | — | `PROFILE.md` (normative profile), `BOUNDARY.md` (dev peg) |
+| `deployments/` | profile §9 | deployment profiles |
+
+## Quick start (signet)
+
+```sh
+cargo build --release
+SB="./target/release/sb --profile deployments/signet-dev-1.json --data-dir sb-data"
+
+$SB wallet-new --name alice        # prints the shielded and the funding address
+# send signet coins to the funding address (any signet faucet), then:
+$SB sync                           # replay from the profile's activation height
+$SB mint --name alice --amount 20000   # pays the dev vault, publishes the mint envelope
+$SB sync && $SB scan --name alice      # after confirmation: balance 20000
+$SB send --name alice --to tsb1... --amount 5000   # proves and publishes a private transfer
+$SB sync && $SB scan --name alice      # change note appears, inputs marked spent
+```
+
+`--chain` selects the block source (`esplora:<url>`, default mempool.space
+signet; `rpc:<url>:<user>:<pass>`; `rpc-cookie:<url>:<path>`). Publishing
+uses the Esplora source. Everything under `sb-data/` (wallet seeds in
+plaintext, indexer state) is local and git-ignored.
+
+## Tests
+
+```sh
+cargo test --release
+```
+
+Covers: primitives against the arkworks reference, codec canonicality and
+rejections, gadget/native equivalence, every circuit block rejecting its
+violation, every public input bound by the proof, replay acceptance and all
+rejection classes, reorg rollback, fresh-replay determinism, state and wallet
+persistence, and a two-wallet mint → pay → change → reorg → repay flow.
+`cargo test -p sb-indexer --release --test esplora_live -- --ignored` hits
+public signet.
 
 ## Prior art
 
@@ -26,39 +90,15 @@ Two proof-of-concepts exist and were studied before starting this project:
 * [harshjv/shielded-bitcoin-poc](https://github.com/harshjv/shielded-bitcoin-poc) —
   TypeScript + circom browser demo, dev-only setup.
 
-This project is written from scratch, with its own implementation profile
-(`docs/PROFILE.md`), a workspace layout meant to grow into a real indexer and
-wallet, and a test-vector-first approach so that other implementations can
-interoperate.
-
-## Layout
-
-| Crate | Paper sections | Content |
-|---|---|---|
-| `crates/sb-primitives` | §2, §A.1 | Poseidon over BLS12-381 `Fr`, domain tags, Jubjub encodings, `DiversifyHash` |
-| `crates/sb-core` | §5, §6, §9, §12, §13, §A.3, §A.5 | keys, addresses, notes, encryption, leaves, nullifiers, envelope serialisation, `h_body`, note tree |
-| `crates/sb-circuit` | §14, §B | R1CS gadgets, the transfer circuit, Groth16 setup/prove/verify |
-| `crates/sb-indexer` | §8, §11, §15, §A.4, §A.6, §A.7 | chain sources (Bitcoin Core RPC/REST, Esplora, mock), carrier extraction, replay, state persistence, reorg handling |
-| `crates/sb-wallet` | §10, §16, §C | scanning, recovery, note selection, anchor policy, transfer construction |
-| `crates/sb-cli` | — | `sb` command-line tool |
-| `docs/` | — | `PROFILE.md` (normative profile), design notes, test vectors |
-| `deployments/` | §9 of the profile | deployment profiles (signet, regtest) |
+This project is written from scratch with its own profile, a workspace meant
+to grow into a real indexer and wallet, and test-vector-first interoperability.
 
 ## Roadmap
 
-1. **Primitives** — Poseidon (native + R1CS), Jubjub encodings, DiversifyHash, pinned test vectors.
-2. **Core** — key hierarchy, addresses (bech32m), note encryption, leaf/nullifier, canonical envelope codec with property tests, note tree.
-3. **Circuit** — transfer relation, Groth16 (insecure dev setup), constraint-count and timing report, negative tests (every Appendix B block must fail when violated).
-4. **Indexer** — replay engine against a mock chain, then Bitcoin Core / Esplora backends, checkpoints and reorg rollback, determinism test (two replays of the same history → identical state).
-5. **Wallet + CLI** — `sb init | address | sync | scan | send | status`, end-to-end on regtest.
-6. **Dev boundary** — non-normative mint/withdraw for test networks; signet run.
-7. Later: Electrum backend, light-client sync, ceremony tooling, upgrade/versioning rules.
-
-## Build
-
-```sh
-cargo build --release
-cargo test
-```
+1. ~~Primitives~~ 2. ~~Core~~ 3. ~~Circuit~~ 4. ~~Indexer~~ 5. ~~Wallet + CLI~~
+6. **Signet run** with the dev boundary; withdraw path; pinned test vectors
+   (`docs/TEST_VECTORS.md`).
+7. Electrum source, encrypted wallet files, light-client sync, ceremony
+   tooling, versioning/upgrade rules.
 
 Rust 1.85+ (edition 2024).
