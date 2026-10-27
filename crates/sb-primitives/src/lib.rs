@@ -13,7 +13,11 @@ pub use ark_ed_on_bls12_381::{
     EdwardsAffine as JubjubAffine, EdwardsProjective as Jubjub, Fr as JubjubScalar,
 };
 
+pub mod diversify;
 pub mod encoding;
+pub mod poseidon;
+pub mod scalar;
+pub mod tags;
 
 #[cfg(test)]
 mod tests {

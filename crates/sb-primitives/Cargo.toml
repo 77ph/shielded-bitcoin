@@ -14,7 +14,10 @@ ark-serialize.workspace = true
 ark-bls12-381.workspace = true
 ark-ed-on-bls12-381.workspace = true
 sha2.workspace = true
+ark-relations.workspace = true
+ark-r1cs-std.workspace = true
+hex.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-hex.workspace = true
+ark-crypto-primitives.workspace = true
