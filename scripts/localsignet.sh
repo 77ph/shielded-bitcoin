@@ -18,7 +18,7 @@ CORE=${CORE:-$HOME/bitcoin}
 GRIND_CPUS=${GRIND_CPUS:-4-7}
 GRIND="nice -n 19 taskset -c $GRIND_CPUS bitcoin-util grind"
 CLI="bitcoin-cli -datadir=$D -signet -rpcport=$PORT -rpccookiefile=$D/signet/.cookie"
-MINER="python3 $CORE/contrib/signet/miner --cli=$CLI --quiet"
+MINER="python3 $CORE/contrib/signet/miner"
 
 cmd=${1:-up}; shift || true
 case "$cmd" in
@@ -48,17 +48,17 @@ CONF
     if [ "$HAVE" = 0 ]; then
       # Backdate the schedule so the whole chain can be mined without waiting.
       START=$(( $(date +%s) - (HEIGHT + 50) * 600 ))
-      $MINER generate --address="$A" --grind-cmd="$GRIND" --min-nbits --set-block-time="$START"
+      $MINER --cli="$CLI" --quiet generate --address="$A" --grind-cmd="$GRIND" --min-nbits --set-block-time="$START"
     fi
     MINE=$(( HEIGHT - $($CLI getblockcount) ))
-    [ "$MINE" -gt 0 ] && $MINER generate --address="$A" --grind-cmd="$GRIND" --min-nbits --max-blocks="$MINE"
+    [ "$MINE" -gt 0 ] && $MINER --cli="$CLI" --quiet generate --address="$A" --grind-cmd="$GRIND" --min-nbits --max-blocks="$MINE"
     $CLI -rpcwallet=miner rescanblockchain 0 >/dev/null 2>&1 || true
     echo "height $($CLI getblockcount), miner balance $($CLI -rpcwallet=miner getbalance)"
     ;;
   mine)
     N=${1:-1}
     A=$($CLI -rpcwallet=miner getnewaddress)
-    $MINER generate --address="$A" --grind-cmd="$GRIND" --min-nbits --max-blocks="$N"
+    $MINER --cli="$CLI" --quiet generate --address="$A" --grind-cmd="$GRIND" --min-nbits --max-blocks="$N"
     echo "height $($CLI getblockcount)"
     ;;
   fund)
