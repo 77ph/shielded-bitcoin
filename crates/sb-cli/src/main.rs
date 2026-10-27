@@ -137,6 +137,18 @@ enum Cmd {
         #[arg(long)]
         no_broadcast: bool,
     },
+    /// Pay transparent coins from the wallet's funding address (e.g. to fund another wallet's fees).
+    FundSend {
+        #[arg(long, default_value = "default")]
+        name: String,
+        /// Destination Bitcoin address on the deployment's network.
+        #[arg(long)]
+        to: String,
+        #[arg(long)]
+        amount: u64,
+        #[arg(long, default_value = "1")]
+        fee_rate: u64,
+    },
     /// Release input locks left by unpublished transfers.
     Unlock {
         #[arg(long, default_value = "default")]
@@ -400,6 +412,27 @@ fn main() -> Result<()> {
             w.save(&ctx.wallet_path(&name))?;
             println!("new notes: {n}");
             print_wallet(&w);
+        }
+        Cmd::FundSend {
+            name,
+            to,
+            amount,
+            fee_rate,
+        } => {
+            let w = ctx.wallet(&name)?;
+            let dest: bitcoin::Address = to
+                .parse::<bitcoin::Address<bitcoin::address::NetworkUnchecked>>()?
+                .require_network(ctx.btc_network())?;
+            let publisher = ctx.publisher()?;
+            let fk = ctx.funding(&w)?;
+            let utxos = publisher.utxos(&fk.address)?;
+            let out = bitcoin::TxOut {
+                value: bitcoin::Amount::from_sat(amount),
+                script_pubkey: dest.script_pubkey(),
+            };
+            let tx = fk.build_tx(&utxos, vec![out], fee_rate)?;
+            let txid = publisher.broadcast(&tx)?;
+            println!("paid {amount} sat to {dest} in {txid} ({} vB)", tx.vsize());
         }
         Cmd::Unlock { name } => {
             let mut w = ctx.wallet(&name)?;
