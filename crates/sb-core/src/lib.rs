@@ -3,6 +3,7 @@
 
 pub mod address;
 pub mod envelope;
+pub mod event;
 pub mod keys;
 pub mod note;
 pub mod recovery;

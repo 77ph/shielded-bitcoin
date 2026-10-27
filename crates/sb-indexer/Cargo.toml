@@ -1,5 +1,6 @@
 [package]
 name = "sb-indexer"
+description = "Shielded Bitcoin: deterministic replay of transfer envelopes from the Bitcoin chain"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -7,4 +8,21 @@ license.workspace = true
 
 [dependencies]
 sb-primitives.workspace = true
+sb-core.workspace = true
+sb-circuit.workspace = true
+ark-ff.workspace = true
+sha2.workspace = true
+bitcoin.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+hex.workspace = true
 thiserror.workspace = true
+log.workspace = true
+ureq.workspace = true
+base64.workspace = true
+
+[dev-dependencies]
+sb-wallet.workspace = true
+rand.workspace = true
+rand_chacha.workspace = true
+ark-std.workspace = true

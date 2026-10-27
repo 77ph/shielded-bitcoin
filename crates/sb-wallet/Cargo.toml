@@ -1,5 +1,6 @@
 [package]
 name = "sb-wallet"
+description = "Shielded Bitcoin: wallet scanning, recovery and transfer construction"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -7,4 +8,15 @@ license.workspace = true
 
 [dependencies]
 sb-primitives.workspace = true
+sb-core.workspace = true
+sb-circuit.workspace = true
+ark-ff.workspace = true
+rand.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+hex.workspace = true
 thiserror.workspace = true
+log.workspace = true
+
+[dev-dependencies]
+rand_chacha.workspace = true

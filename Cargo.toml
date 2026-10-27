@@ -49,6 +49,10 @@ rand_chacha = "0.3"
 zeroize = { version = "1", features = ["derive"] }
 subtle = "2"
 
+# http
+ureq = { version = "2", features = ["json"] }
+base64 = "0.22"
+
 # misc
 anyhow = "1"
 thiserror = "2"
