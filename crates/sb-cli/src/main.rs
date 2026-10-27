@@ -58,6 +58,9 @@ enum Cmd {
         /// Hex scriptPubKey of the dev vault; enables mints.
         #[arg(long)]
         vault_script: Option<String>,
+        /// Operator's shielded address; enables withdrawals.
+        #[arg(long)]
+        operator_address: Option<String>,
         /// Setup seed (hex, 32 bytes); defaults to all zeros.
         #[arg(long)]
         setup_seed: Option<String>,
@@ -106,6 +109,29 @@ enum Cmd {
         to: String,
         #[arg(long)]
         amount: u64,
+        #[arg(long, default_value = "2")]
+        fee_rate: u64,
+        #[arg(long)]
+        no_broadcast: bool,
+    },
+    /// Withdraw `amount` sat to a Bitcoin address through the dev operator.
+    Withdraw {
+        #[arg(long, default_value = "default")]
+        name: String,
+        #[arg(long)]
+        amount: u64,
+        /// Destination Bitcoin address on the deployment's network.
+        #[arg(long)]
+        to: String,
+        #[arg(long, default_value = "2")]
+        fee_rate: u64,
+        #[arg(long)]
+        no_broadcast: bool,
+    },
+    /// Operator: pay pending withdraw requests from the vault.
+    Payouts {
+        #[arg(long, default_value = "operator")]
+        name: String,
         #[arg(long, default_value = "2")]
         fee_rate: u64,
         #[arg(long)]
@@ -207,6 +233,7 @@ impl Ctx {
         label: &str,
         envelope: &[u8],
         extra: Vec<bitcoin::TxOut>,
+        memo: Option<Vec<u8>>,
         fee_rate: u64,
         broadcast: bool,
     ) -> Result<()> {
@@ -225,8 +252,12 @@ impl Ctx {
         let esplora = self.esplora_url()?;
         let fk = self.funding(wallet)?;
         let utxos = fk.utxos(esplora)?;
-        let carrier = sb_indexer::carrier::carrier_output(envelope);
-        let tx = fk.build_carrier(&utxos, extra, carrier, fee_rate)?;
+        let mut outputs = extra;
+        outputs.push(sb_indexer::carrier::carrier_output(envelope));
+        if let Some(m) = memo {
+            outputs.push(sb_indexer::carrier::memo_output(&m));
+        }
+        let tx = fk.build_tx(&utxos, outputs, fee_rate)?;
         let txid = funding::broadcast(esplora, &tx)?;
         println!("broadcast {} ({} vB)", txid, tx.vsize());
         Ok(())
@@ -242,6 +273,7 @@ fn main() -> Result<()> {
         network,
         activation,
         vault_script,
+        operator_address,
         setup_seed,
         window,
     } = &cli.cmd
@@ -272,6 +304,7 @@ fn main() -> Result<()> {
             k_min: 1,
             boundary: vault_script.as_ref().map(|v| DevBoundary {
                 vault_script_hex: v.clone(),
+                operator_address: operator_address.clone(),
             }),
         };
         if let Some(p) = cli.profile.parent() {
@@ -390,7 +423,15 @@ fn main() -> Result<()> {
                         [..8]
                 )
             );
-            ctx.publish(&w, &label, &env.to_bytes(), extra, fee_rate, !no_broadcast)?;
+            ctx.publish(
+                &w,
+                &label,
+                &env.to_bytes(),
+                extra,
+                None,
+                fee_rate,
+                !no_broadcast,
+            )?;
         }
         Cmd::Send {
             name,
@@ -446,10 +487,119 @@ fn main() -> Result<()> {
                 &label,
                 &built.envelope.to_bytes(),
                 vec![],
+                None,
                 fee_rate,
                 !no_broadcast,
             )?;
             println!("inputs locked until the transfer is accepted (`sb unlock` to release)");
+        }
+        Cmd::Withdraw {
+            name,
+            amount,
+            to,
+            fee_rate,
+            no_broadcast,
+        } => {
+            let boundary = ctx
+                .deployment
+                .boundary
+                .clone()
+                .ok_or_else(|| anyhow!("profile has no dev boundary"))?;
+            let op = boundary
+                .operator_address
+                .ok_or_else(|| anyhow!("profile has no operator address"))?;
+            let (net, op_addr) = PaymentAddress::decode(&op)?;
+            if net != ctx.deployment.network {
+                bail!("operator address network mismatch");
+            }
+            let dest: bitcoin::Address = to
+                .parse::<bitcoin::Address<bitcoin::address::NetworkUnchecked>>()?
+                .require_network(ctx.btc_network())?;
+            let memo = sb_wallet::build_payout_memo(amount, dest.script_pubkey().as_bytes());
+            let idx = ctx.indexer()?;
+            let tip = idx
+                .state
+                .last_height()
+                .ok_or_else(|| anyhow!("run `sb sync` first"))?;
+            let h_anchor = anchor_for(tip, K_WALLET);
+            let size = idx
+                .state
+                .size_at(h_anchor)
+                .ok_or_else(|| anyhow!("anchor {h_anchor} not replayed"))?;
+            let mut w = ctx.wallet(&name)?;
+            w.scan(
+                &ctx.deployment.const_salt_fr(),
+                &idx.state.events,
+                &idx.state.nullifiers,
+            )?;
+            eprintln!("loading proving parameters…");
+            let params = ctx.deployment.params(&ctx.base_dir())?;
+            eprintln!("proving withdraw of {amount} sat to {dest}…");
+            let built = w.build_send(
+                &params,
+                &ctx.deployment.const_salt,
+                &idx.state.tree,
+                h_anchor,
+                size,
+                op_addr,
+                amount,
+                &mut rand::thread_rng(),
+            )?;
+            w.save(&ctx.wallet_path(&name))?;
+            let label = format!(
+                "withdraw-{}",
+                hex::encode(&sb_primitives::encoding::fr_to_bytes(&built.statement.h_body)[..8])
+            );
+            ctx.publish(
+                &w,
+                &label,
+                &built.envelope.to_bytes(),
+                vec![],
+                Some(memo),
+                fee_rate,
+                !no_broadcast,
+            )?;
+            println!("the operator pays {dest} after the transfer is accepted");
+        }
+        Cmd::Payouts {
+            name,
+            fee_rate,
+            no_broadcast,
+        } => {
+            let idx = ctx.indexer()?;
+            let mut w = ctx.wallet(&name)?;
+            w.scan(
+                &ctx.deployment.const_salt_fr(),
+                &idx.state.events,
+                &idx.state.nullifiers,
+            )?;
+            let pending = w.pending_payouts(&idx.state.events);
+            println!("{} pending payout(s)", pending.len());
+            for p in pending {
+                let spk = bitcoin::ScriptBuf::from_bytes(p.request.script_pubkey.clone());
+                let dest = bitcoin::Address::from_script(&spk, ctx.btc_network())
+                    .map(|a| a.to_string())
+                    .unwrap_or_else(|_| hex::encode(spk.as_bytes()));
+                println!(
+                    "  {} sat to {} (request in {})",
+                    p.request.amount, dest, p.note.txid
+                );
+                if no_broadcast {
+                    continue;
+                }
+                let esplora = ctx.esplora_url()?;
+                let fk = ctx.funding(&w)?;
+                let utxos = fk.utxos(esplora)?;
+                let out = bitcoin::TxOut {
+                    value: bitcoin::Amount::from_sat(p.request.amount),
+                    script_pubkey: spk,
+                };
+                let tx = fk.build_tx(&utxos, vec![out], fee_rate)?;
+                let txid = funding::broadcast(esplora, &tx)?;
+                println!("  paid in {txid}");
+                w.record_payout(&p.note.txid, &p.request, Some(txid.to_string()));
+                w.save(&ctx.wallet_path(&name))?;
+            }
         }
     }
     Ok(())

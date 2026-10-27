@@ -113,9 +113,13 @@ impl Indexer {
                 continue;
             };
             let txid = tx.compute_txid().to_byte_array();
-            let result = candidate
-                .map_err(RejectReason::from)
-                .and_then(|bytes| self.accept(id.height, tx_index as u32, txid, tx, &bytes));
+            let result = candidate.map_err(RejectReason::from).and_then(|c| {
+                self.accept(id.height, tx_index as u32, txid, tx, &c.envelope)
+                    .map(|mut ev| {
+                        ev.memo = c.memo;
+                        ev
+                    })
+            });
             match result {
                 Ok(event) => {
                     cp.nullifiers_added.extend_from_slice(&event.nullifiers);

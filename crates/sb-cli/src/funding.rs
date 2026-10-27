@@ -86,16 +86,19 @@ impl FundingKey {
             .collect()
     }
 
-    /// Build and sign a carrier transaction: `extra` outputs (e.g. the vault
-    /// payment) + the OP_RETURN carrier + change. `fee_rate` in sat/vB.
-    pub fn build_carrier(
+    /// Build and sign a transaction paying `outputs` plus change; the fee is
+    /// taken from the funding UTXOs. `fee_rate` in sat/vB.
+    pub fn build_tx(
         &self,
         utxos: &[Utxo],
-        mut extra: Vec<TxOut>,
-        carrier: TxOut,
+        outputs: Vec<TxOut>,
         fee_rate: u64,
     ) -> Result<Transaction> {
-        let target: u64 = extra.iter().map(|o| o.value.to_sat()).sum();
+        let target: u64 = outputs.iter().map(|o| o.value.to_sat()).sum();
+        let out_bytes: u64 = outputs
+            .iter()
+            .map(|o| 9 + o.script_pubkey.len() as u64)
+            .sum();
         // confirmed first, then largest first
         let mut sorted: Vec<&Utxo> = utxos.iter().collect();
         sorted.sort_by(|a, b| b.confirmed.cmp(&a.confirmed).then(b.value.cmp(&a.value)));
@@ -105,12 +108,8 @@ impl FundingKey {
         for u in sorted {
             inputs.push(u);
             total += u.value;
-            // P2WPKH input ≈ 68 vB, each output ≈ 31 vB (+ data), overhead ≈ 11 vB
-            let vbytes = 11
-                + 68 * inputs.len() as u64
-                + 31 * (extra.len() as u64 + 1)
-                + 9
-                + carrier.script_pubkey.len() as u64;
+            // P2WPKH input ≈ 68 vB, change output 31 vB, overhead ≈ 11 vB
+            let vbytes = 11 + 68 * inputs.len() as u64 + out_bytes + 31;
             fee = vbytes * fee_rate;
             if total >= target + fee + 546 {
                 break;
@@ -126,8 +125,7 @@ impl FundingKey {
             );
         }
         let change = total - target - fee;
-        let mut output = std::mem::take(&mut extra);
-        output.push(carrier);
+        let mut output = outputs;
         if change >= 546 {
             output.push(TxOut {
                 value: Amount::from_sat(change),

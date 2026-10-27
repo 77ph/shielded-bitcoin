@@ -37,14 +37,26 @@ fn op_return_payload(script: &ScriptBuf) -> Result<Option<Vec<u8>>, CarrierError
     Ok(Some(payload))
 }
 
+/// Prefix of the non-normative payout memo (docs/BOUNDARY.md), carried in a
+/// second OP_RETURN that the carrier rule ignores.
+pub const MEMO_MAGIC: [u8; 3] = *b"sbx";
+
+/// A located envelope plus the optional memo next to it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Candidate {
+    pub envelope: Vec<u8>,
+    pub memo: Option<Vec<u8>>,
+}
+
 /// The candidate envelope of a transaction, if any.
 ///
 /// * `None`: the transaction carries no Shielded Bitcoin envelope.
-/// * `Some(Ok(bytes))`: exactly one OP_RETURN output with a candidate payload.
+/// * `Some(Ok(c))`: exactly one OP_RETURN output with a candidate payload.
 /// * `Some(Err(_))`: the transaction looks like a carrier but violates the
 ///   carrier rule; replay records it as a rejection.
-pub fn extract_envelope(tx: &Transaction) -> Option<Result<Vec<u8>, CarrierError>> {
+pub fn extract_envelope(tx: &Transaction) -> Option<Result<Candidate, CarrierError>> {
     let mut found: Option<Vec<u8>> = None;
+    let mut memo: Option<Vec<u8>> = None;
     for out in &tx.output {
         if !out.script_pubkey.is_op_return() {
             continue;
@@ -55,6 +67,11 @@ pub fn extract_envelope(tx: &Transaction) -> Option<Result<Vec<u8>, CarrierError
                     return Some(Err(CarrierError::MultipleEnvelopes));
                 }
                 found = Some(payload);
+            }
+            Ok(Some(payload)) if payload.starts_with(&MEMO_MAGIC) => {
+                if memo.is_none() {
+                    memo = Some(payload);
+                }
             }
             Ok(_) => {}
             Err(e) => {
@@ -71,7 +88,13 @@ pub fn extract_envelope(tx: &Transaction) -> Option<Result<Vec<u8>, CarrierError
             }
         }
     }
-    found.map(Ok)
+    found.map(|envelope| Ok(Candidate { envelope, memo }))
+}
+
+/// A memo output (second OP_RETURN, no protocol magic).
+pub fn memo_output(memo: &[u8]) -> TxOut {
+    debug_assert!(memo.starts_with(&MEMO_MAGIC));
+    carrier_output(memo)
 }
 
 /// Build the carrier output for an envelope (one minimal push).
@@ -113,7 +136,13 @@ mod tests {
     fn extracts_single_minimal_push() {
         let e = envelope();
         let tx = tx_with(vec![carrier_output(&e)]);
-        assert_eq!(extract_envelope(&tx), Some(Ok(e.clone())));
+        assert_eq!(
+            extract_envelope(&tx),
+            Some(Ok(Candidate {
+                envelope: e.clone(),
+                memo: None
+            }))
+        );
         // PUSHDATA2 is the minimal encoding for 668 bytes
         assert_eq!(tx.output[0].script_pubkey.as_bytes()[1], 0x4d);
     }
@@ -138,7 +167,13 @@ mod tests {
                 script_pubkey: other,
             },
         ]);
-        assert_eq!(extract_envelope(&tx), Some(Ok(e.clone())));
+        assert_eq!(
+            extract_envelope(&tx),
+            Some(Ok(Candidate {
+                envelope: e.clone(),
+                memo: None
+            }))
+        );
         // two envelopes
         let tx = tx_with(vec![carrier_output(&e), carrier_output(&e)]);
         assert_eq!(

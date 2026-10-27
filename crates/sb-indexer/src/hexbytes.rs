@@ -63,3 +63,17 @@ pub mod bytes {
         hex::decode(&s).map_err(serde::de::Error::custom)
     }
 }
+
+pub mod opt_bytes {
+    use super::*;
+
+    pub fn serialize<S: Serializer>(v: &Option<Vec<u8>>, s: S) -> Result<S::Ok, S::Error> {
+        v.as_ref().map(hex::encode).serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Vec<u8>>, D::Error> {
+        let s: Option<String> = Option::deserialize(d)?;
+        s.map(|s| hex::decode(&s).map_err(serde::de::Error::custom))
+            .transpose()
+    }
+}

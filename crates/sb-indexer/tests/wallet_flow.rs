@@ -11,11 +11,11 @@ use sb_core::address::Network;
 use sb_core::envelope::MintEnvelope;
 use sb_core::keys::Seed;
 use sb_core::note::NotePlaintext;
-use sb_indexer::chain::mock::{MockChain, carrier_tx, mint_tx};
+use sb_indexer::chain::mock::{MockChain, carrier_tx, carrier_tx_with_memo, mint_tx};
 use sb_indexer::deployment::DevBoundary;
 use sb_indexer::{Deployment, Indexer, ReplayState, Setup};
 use sb_primitives::Fr;
-use sb_wallet::{K_WALLET, Wallet, WalletError, anchor_for};
+use sb_wallet::{K_WALLET, Wallet, WalletError, anchor_for, build_payout_memo};
 
 const ACTIVATION: u32 = 1000;
 
@@ -35,6 +35,7 @@ fn mint_pay_change_persist_reorg() {
         k_min: 1,
         boundary: Some(DevBoundary {
             vault_script_hex: "51".into(),
+            operator_address: None,
         }),
     };
     let salt = deployment.const_salt_fr();
@@ -45,6 +46,8 @@ fn mint_pay_change_persist_reorg() {
     );
     let mut alice = Wallet::from_seed(Seed([1u8; 32]), Network::Regtest, "mock-boundary");
     let mut bob = Wallet::from_seed(Seed([2u8; 32]), Network::Regtest, "mock-boundary");
+    let mut operator = Wallet::from_seed(Seed([9u8; 32]), Network::Regtest, "mock-boundary");
+    let operator_addr = operator.default_address();
     let alice_addr = alice.default_address();
     let (_, bob_addr) = bob.new_address();
 
@@ -237,4 +240,68 @@ fn mint_pay_change_persist_reorg() {
         .unwrap();
     assert_eq!((alice.balance(), bob.balance()), (1000, 0));
     assert_eq!(idx.state.tree.size(), 5);
+
+    // Withdraw: Alice pays 250 to the operator with a payout memo naming a script.
+    for _ in 0..2 {
+        chain.push_block(vec![]);
+    }
+    idx.sync(&chain).unwrap();
+    let tip = idx.state.last_height().unwrap();
+    let h_anchor = anchor_for(tip, K_WALLET);
+    let size = idx.state.size_at(h_anchor).unwrap();
+    let memo = build_payout_memo(
+        250,
+        &[
+            0x00, 0x14, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+        ],
+    );
+    let wd = alice
+        .build_send(
+            &params,
+            &deployment.const_salt,
+            &idx.state.tree,
+            h_anchor,
+            size,
+            operator_addr,
+            250,
+            &mut rng,
+        )
+        .unwrap();
+    chain.push_block(vec![carrier_tx_with_memo(
+        &wd.envelope.to_bytes(),
+        &memo,
+        6,
+    )]);
+    let r = idx.sync(&chain).unwrap();
+    assert_eq!(
+        (r.accepted, r.rejected),
+        (1, 0),
+        "{:?}",
+        idx.state.rejections
+    );
+    assert_eq!(
+        idx.state.events.last().unwrap().memo.as_deref(),
+        Some(&memo[..])
+    );
+    operator
+        .scan(&salt, &idx.state.events, &idx.state.nullifiers)
+        .unwrap();
+    assert_eq!(operator.balance(), 250);
+    let pending = operator.pending_payouts(&idx.state.events);
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].request.amount, 250);
+    assert_eq!(pending[0].request.script_pubkey[1], 0x14);
+    operator.record_payout(
+        &pending[0].note.txid,
+        &pending[0].request,
+        Some("deadbeef".into()),
+    );
+    assert!(operator.pending_payouts(&idx.state.events).is_empty());
+    // the memo survives state persistence
+    let reloaded = ReplayState::from_json(&idx.state.to_json()).unwrap();
+    assert_eq!(reloaded, idx.state);
+    alice
+        .scan(&salt, &idx.state.events, &idx.state.nullifiers)
+        .unwrap();
+    assert_eq!(alice.balance(), 750);
 }

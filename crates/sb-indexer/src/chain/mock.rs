@@ -11,7 +11,7 @@ use bitcoin::{
 };
 
 use super::{BlockId, ChainError, ChainSource};
-use crate::carrier::carrier_output;
+use crate::carrier::{carrier_output, memo_output};
 
 #[derive(Clone, Debug)]
 pub struct MockChain {
@@ -56,6 +56,16 @@ pub fn carrier_tx(envelope: &[u8], nonce: u32) -> Transaction {
         lock_time: LockTime::ZERO,
         input: vec![fake_input(nonce)],
         output: vec![carrier_output(envelope)],
+    }
+}
+
+/// A carrier with a payout memo in a second OP_RETURN.
+pub fn carrier_tx_with_memo(envelope: &[u8], memo: &[u8], nonce: u32) -> Transaction {
+    Transaction {
+        version: Version::TWO,
+        lock_time: LockTime::ZERO,
+        input: vec![fake_input(nonce)],
+        output: vec![carrier_output(envelope), memo_output(memo)],
     }
 }
 

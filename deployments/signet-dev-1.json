@@ -11,6 +11,7 @@
   "window_w": 100,
   "k_min": 1,
   "boundary": {
-    "vault_script_hex": "00141b895d83727b58c9f728d89122b122c1a4acdd63"
+    "vault_script_hex": "00141b895d83727b58c9f728d89122b122c1a4acdd63",
+    "operator_address": "tsb147jfp85k5qvz5wejx4atqhxvkmwdcrha0qht92eua92zcjyaala4sdyp27cu23cvnymkgw3lhrf"
   }
 }

@@ -33,6 +33,9 @@ pub enum Setup {
 pub struct DevBoundary {
     /// Hex `scriptPubKey` of the vault that mints must pay.
     pub vault_script_hex: String,
+    /// The operator's shielded address; withdrawals are transfers to it.
+    #[serde(default)]
+    pub operator_address: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

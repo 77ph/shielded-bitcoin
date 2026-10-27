@@ -37,8 +37,18 @@ every later transfer of that value is private.
 
 ## Withdraw
 
-Not yet implemented. The planned development mechanism: a transfer whose
-output 0 pays the operator's shielded address, plus a second OP_RETURN
-(without the protocol magic) naming the payout `scriptPubKey`; the operator
-pays from the vault after the transfer is accepted. Until then, value leaves
-a test deployment only by the operator's manual action.
+A withdraw is an ordinary private transfer of `amount` to the operator's
+shielded address (`boundary.operator_address`), whose carrier transaction
+additionally carries a **payout memo** in a second OP_RETURN output:
+
+```
+"sbx" 0x01 ‖ amount (u64 LE) ‖ destination scriptPubKey
+```
+
+The carrier rule ignores OP_RETURN outputs without the protocol magic, so the
+memo never affects replay; the indexer only records it next to the accepted
+event. The operator wallet (`sb payouts`) scans its received notes, matches
+each creating transfer's memo, pays `amount` (at most the note value) to the
+destination from the vault key, and records the payout so it is never made
+twice. Nothing binds the memo to the proof: a relayer that rewrote it could
+redirect a payout, which is acceptable only for a development deployment.

@@ -59,6 +59,8 @@ struct EventRecord {
     first_position: u64,
     #[serde(with = "hexbytes::fr_vec")]
     leaves: Vec<Fr>,
+    #[serde(default, with = "hexbytes::opt_bytes")]
+    memo: Option<Vec<u8>>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -167,6 +169,7 @@ impl ReplayState {
                     h_body: e.h_body,
                     first_position: e.first_position,
                     leaves: e.leaves.clone(),
+                    memo: e.memo.clone(),
                 })
                 .collect(),
             rejections: self.rejections.clone(),
@@ -194,7 +197,7 @@ impl ReplayState {
         let mut events = Vec::with_capacity(f.events.len());
         for e in f.events {
             let env = parse_envelope(&e.raw).map_err(|e| StateError::Corrupt(e.to_string()))?;
-            let ev = match env {
+            let mut ev = match env {
                 Envelope::Transfer(t) => AcceptedEvent::from_transfer(
                     e.height,
                     e.tx_index,
@@ -224,10 +227,8 @@ impl ReplayState {
                     )
                 }
             };
-            debug_assert!(matches!(
-                (ev.kind, &ev.raw),
-                (EventKind::Transfer, _) | (EventKind::Mint, _)
-            ));
+            ev.memo = e.memo;
+            debug_assert!(matches!(ev.kind, EventKind::Transfer | EventKind::Mint));
             events.push(ev);
         }
         Ok(ReplayState {

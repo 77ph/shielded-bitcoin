@@ -88,6 +88,16 @@ pub struct SentRecord {
     pub is_change: bool,
 }
 
+/// An operator payout made (or refused) for a withdraw request.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PayoutRecord {
+    /// Carrier txid of the transfer that requested the payout.
+    pub txid: String,
+    pub amount: u64,
+    pub script_hex: String,
+    pub paid_txid: Option<String>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct WalletFile {
     version: u32,
@@ -96,6 +106,8 @@ struct WalletFile {
     deployment: String,
     notes: Vec<NoteRecord>,
     sent: Vec<SentRecord>,
+    #[serde(default)]
+    payouts: Vec<PayoutRecord>,
     scanned_events: usize,
     last_scanned_txid: Option<String>,
     next_address_index: u64,
@@ -126,6 +138,7 @@ pub struct Wallet {
     pub deployment: String,
     pub notes: Vec<NoteRecord>,
     pub sent: Vec<SentRecord>,
+    pub payouts: Vec<PayoutRecord>,
     pub scanned_events: usize,
     pub last_scanned_txid: Option<[u8; 32]>,
     pub next_address_index: u64,
@@ -141,6 +154,7 @@ impl Wallet {
             deployment: deployment.to_string(),
             notes: Vec::new(),
             sent: Vec::new(),
+            payouts: Vec::new(),
             scanned_events: 0,
             last_scanned_txid: None,
             next_address_index: 0,
@@ -171,6 +185,7 @@ impl Wallet {
         let mut w = Self::from_seed(seed, f.network, &f.deployment);
         w.notes = f.notes;
         w.sent = f.sent;
+        w.payouts = f.payouts;
         w.scanned_events = f.scanned_events;
         w.last_scanned_txid = match f.last_scanned_txid {
             Some(s) => {
@@ -194,6 +209,7 @@ impl Wallet {
             deployment: self.deployment.clone(),
             notes: self.notes.clone(),
             sent: self.sent.clone(),
+            payouts: self.payouts.clone(),
             scanned_events: self.scanned_events,
             last_scanned_txid: self.last_scanned_txid.map(hex::encode),
             next_address_index: self.next_address_index,

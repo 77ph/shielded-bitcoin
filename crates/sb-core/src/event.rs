@@ -35,6 +35,9 @@ pub struct AcceptedEvent {
     pub first_position: u64,
     /// Replay-derived leaves, one per output.
     pub leaves: Vec<Fr>,
+    /// Opaque memo published next to the envelope (not covered by the proof;
+    /// deployment extensions only, see docs/BOUNDARY.md).
+    pub memo: Option<Vec<u8>>,
 }
 
 impl AcceptedEvent {
@@ -62,6 +65,7 @@ impl AcceptedEvent {
             ct_out: Some(b.ct_out),
             first_position,
             leaves,
+            memo: None,
         }
     }
 
@@ -88,6 +92,7 @@ impl AcceptedEvent {
             ct_out: None,
             first_position,
             leaves: vec![leaf],
+            memo: None,
         }
     }
 }
