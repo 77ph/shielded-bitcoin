@@ -168,9 +168,10 @@ cargo llvm-cov --workspace --release --ignore-run-fail \
   --ignore-filename-regex 'chain/fake\.rs' -- --include-ignored
 ```
 
-Measured on 28 October 2026 with the live network tests and the PostgreSQL
-tests included: **93 % of lines, 96 % of regions**; CI fails below 90 % of
-lines. The in-process fake Esplora / RPC / Electrum servers
+Measured in CI on 28 October 2026 (PostgreSQL included, live network tests
+best effort): **93 % of lines, 89 % of regions**; CI fails below 90 % of
+lines. The ceremony commands on the full-size circuit run only with
+`SB_CEREMONY_FULL=1` (minutes) and are not counted. The in-process fake Esplora / RPC / Electrum servers
 (`sb-indexer/src/chain/fake.rs`) are test support and are excluded. What
 stays uncovered is of four kinds: error arms of `?` on multi-line calls,
 interactive passphrase prompts, defensive branches that cannot be reached

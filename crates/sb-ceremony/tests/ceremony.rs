@@ -190,6 +190,23 @@ fn full_ceremony_on_the_tiny_circuit() {
     // the initial key (delta = 1) also works but is worthless; the verifier
     // of the chain is what says the delta was randomised
     assert!(q0.verify(&initial, &mut rng).unwrap().is_empty());
+    // a quick check against the published initial file instead of a recompute
+    assert_eq!(q0.initial_key().unwrap(), &initial);
+    assert_eq!(
+        q3.verify(q0.initial_key().unwrap(), &mut rng)
+            .unwrap()
+            .len(),
+        3
+    );
+    assert!(q1.initial_key().is_err());
+    let mut fake = q0.clone();
+    fake.pk.delta_g1 = q1.pk.delta_g1;
+    assert!(
+        fake.initial_key()
+            .unwrap_err()
+            .to_string()
+            .contains("delta = 1")
+    );
 
     // tampering
     let bad = |q: Phase2, needle: &str| {

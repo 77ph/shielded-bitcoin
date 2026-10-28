@@ -11,7 +11,9 @@
 #   BEACON    64-hex beacon value (a Bitcoin block hash agreed by height
 #             before the contributions started), or `mainnet:<height>` /
 #             `signet:<height>` to fetch that block's hash from mempool.space
-#             after the last contribution
+#             after the last contribution. Pick a height that is still in
+#             the future when the drill starts; for a real ceremony confirm
+#             the hash against your own node, not one web API
 #   ENTROPY*  one string per participant, mixed into that participant's
 #             secrets; the number of strings is the number of participants
 #
@@ -48,6 +50,9 @@ for entropy in "$@"; do
   prev=$i; i=$((i + 1))
   log ""; log "### Participant $i"
   run "$SB" ceremony phase2-contribute --in "$WORK/p2-$prev.bin" --out "$WORK/p2-$i.bin" --entropy "$entropy"
+  # quick check against the published initial key before the next turn;
+  # the full recompute comes at the end
+  run "$SB" ceremony phase2-verify --initial "$WORK/p2-0.bin" --final "$WORK/p2-$i.bin"
 done
 case "$BEACON" in
   mainnet:*|signet:*)

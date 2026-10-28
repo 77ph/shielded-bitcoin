@@ -158,6 +158,38 @@ pub fn import_response<R: Read + Seek>(mut r: R, power: u32, n: usize) -> Ceremo
     })
 }
 
+impl Imported {
+    /// Pin the import to the ceremony's public record: refuse unless the
+    /// response hash (and, if given, the challenge hash it answered) are the
+    /// expected ones. Without an expected response hash the import is not
+    /// tied to any record and the caller must say so loudly.
+    pub fn expect(
+        &self,
+        response: Option<&[u8; HASH_SIZE]>,
+        challenge: Option<&[u8; HASH_SIZE]>,
+    ) -> CeremonyResult<()> {
+        if let Some(want) = response {
+            if *want != self.response_hash {
+                return Err(CeremonyError::Invalid(format!(
+                    "response hash {} is not the expected {}: this is not the published transcript",
+                    hex::encode(self.response_hash),
+                    hex::encode(want)
+                )));
+            }
+        }
+        if let Some(want) = challenge {
+            if *want != self.challenge_hash {
+                return Err(CeremonyError::Invalid(format!(
+                    "the response answers challenge {} , not the expected {}",
+                    hex::encode(self.challenge_hash),
+                    hex::encode(want)
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Write a phase 1 accumulator of exactly `2^power` powers as a response
 /// file, with `challenge_hash` in front and `public_key` (1152 bytes, not
 /// interpreted here) at the end. For tests and for feeding other tools.
@@ -246,6 +278,20 @@ mod tests {
         let expected: [u8; 64] = Blake2b512::digest(&file).into();
         assert_eq!(imp.response_hash, expected);
         imp.phase1.verify_shape(&mut rng).unwrap();
+        // pinning to the public record
+        imp.expect(Some(&expected), Some(&[9u8; HASH_SIZE]))
+            .unwrap();
+        imp.expect(None, None).unwrap();
+        let e = imp
+            .expect(Some(&[1u8; HASH_SIZE]), None)
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("not the published transcript"), "{e}");
+        let e = imp
+            .expect(Some(&expected), Some(&[1u8; HASH_SIZE]))
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("not the expected"), "{e}");
         // a smaller domain takes the prefixes
         let small = import_response(Cursor::new(&file), 4, 4).unwrap().phase1;
         assert_eq!(small.n, 4);

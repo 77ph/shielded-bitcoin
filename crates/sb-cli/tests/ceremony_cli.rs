@@ -199,6 +199,31 @@ fn ceremony_commands_and_a_ceremony_profile() {
         ],
         "beacon hex",
     );
+    // the quick check against the published initial file, then the full one
+    let quick = ok(&[
+        "ceremony",
+        "phase2-verify",
+        "--initial",
+        &p("p2-0.bin"),
+        "--final",
+        &p("p2-final.bin"),
+    ]);
+    assert!(quick.contains("valid: 3 contribution(s)"), "{quick}");
+    fails(
+        &[
+            "ceremony",
+            "phase2-verify",
+            "--initial",
+            &p("p2-1.bin"),
+            "--final",
+            &p("p2-final.bin"),
+        ],
+        "already has contributions",
+    );
+    fails(
+        &["ceremony", "phase2-verify", "--final", &p("p2-final.bin")],
+        "required",
+    );
     let verified = ok(&[
         "ceremony",
         "phase2-verify",
@@ -278,7 +303,56 @@ fn ceremony_commands_and_a_ceremony_profile() {
             "--out",
             &p("p1-imp.bin"),
         ]);
-        assert!(imported.contains("response hash"), "{imported}");
+        assert!(
+            imported.contains("WARNING: no --expect-response-hash"),
+            "{imported}"
+        );
+        let got = field(&imported, "response hash").to_string();
+        // pinned to the record: the right hashes pass, a wrong one is refused
+        let pinned = ok(&[
+            "ceremony",
+            "phase1-import",
+            "--response",
+            &p("response_17"),
+            "--power",
+            "17",
+            "--out",
+            &p("p1-imp.bin"),
+            "--expect-response-hash",
+            &got,
+            "--expect-challenge-hash",
+            &"01".repeat(64),
+        ]);
+        assert!(pinned.contains("matches the expected"), "{pinned}");
+        for (flag, value, needle) in [
+            (
+                "--expect-response-hash",
+                "02".repeat(64),
+                "not the published transcript",
+            ),
+            (
+                "--expect-challenge-hash",
+                "02".repeat(64),
+                "not the expected",
+            ),
+            ("--expect-response-hash", "zz".into(), "64 bytes of hex"),
+        ] {
+            fails(
+                &[
+                    "ceremony",
+                    "phase1-import",
+                    "--response",
+                    &p("response_17"),
+                    "--power",
+                    "17",
+                    "--out",
+                    &p("x.bin"),
+                    flag,
+                    &value,
+                ],
+                needle,
+            );
+        }
         fails(
             &[
                 "ceremony",

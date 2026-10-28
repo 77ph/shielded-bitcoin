@@ -153,6 +153,25 @@ impl Phase2 {
         self.apply(delta, s)
     }
 
+    /// The initial key of a phase 2 file that has no contributions yet (for
+    /// a quick per-transition check from the published `p2-0` file; the
+    /// final verification recomputes it from phase 1 instead).
+    pub fn initial_key(&self) -> CeremonyResult<&ProvingKey<Bls12_381>> {
+        if !self.contributions.is_empty() {
+            return Err(CeremonyError::Invalid(
+                "this phase 2 file already has contributions; the initial key is a file without any".into(),
+            ));
+        }
+        let g1 = G1Projective::generator().into_affine();
+        let g2 = G2Projective::generator().into_affine();
+        if self.pk.delta_g1 != g1 || self.pk.vk.delta_g2 != g2 {
+            return Err(CeremonyError::Invalid(
+                "an initial key has delta = 1".into(),
+            ));
+        }
+        Ok(&self.pk)
+    }
+
     /// Verify `self` against the recomputed initial key: the circuit part
     /// is untouched, every contribution's proof holds and chains, and `H`
     /// and `L` were divided by exactly the final `δ`. Returns the

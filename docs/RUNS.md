@@ -187,3 +187,21 @@ verifies against the previous one, that the beacon can be a public
 value chosen by height before anyone contributed, and that the log is
 enough for a third party to re-verify. What it does not give is secure
 keys: one person held every secret.
+
+## Drill, 28 October 2026: three roles, run by the owner
+
+`scripts/ceremony.sh sb-data-drill-2 mainnet:973586 …` with three entropy
+strings, started by the owner at 19:00 UTC with the beacon height chosen
+one block ahead of the tip, finished 19:18 UTC:
+
+| Step | Result |
+|---|---|
+| phase 1, roles 1–3 | digests `ca6f8a83…3767ea`, `a928ea37…cb0ca7`, `4432a1d9…e8bc35`, every transition valid |
+| key derivation | initial key digest `07d8b041…a8543e` |
+| phase 2, roles 1–3 | contributions `23c93b3c…67278a`, `b605147d…d8f138`, `89b11e87…0ecf07` |
+| beacon | mainnet block 973586, hash `00000000000000000001a86209d92c442d35a81f4d5fd60e27df60801b80a82c`; contribution `f57ec38e…ead172` |
+| phase 2 verification against phase 1 | valid, 4 contributions |
+| export | `transfer.vk` sha256 `166d80bfd0261ae7a89cb2adc9dcc16bbcef87aaa8abf9dc9989fcca27f8b798` |
+
+Same caveat as the first drill: one person held every secret, so the keys
+prove the procedure, not anything else.

@@ -52,6 +52,12 @@ pub enum CeremonyCmd {
         /// Domain size to keep as a power of two (default: what the transfer circuit needs).
         #[arg(long)]
         domain_power: Option<u32>,
+        /// BLAKE2b-512 of the response as the ceremony published it (hex); the import is refused on a mismatch.
+        #[arg(long)]
+        expect_response_hash: Option<String>,
+        /// BLAKE2b-512 of the challenge the response answered, as published (hex).
+        #[arg(long)]
+        expect_challenge_hash: Option<String>,
     },
     /// Check that `after` is a valid contribution on top of `before`.
     Phase1Verify {
@@ -86,10 +92,15 @@ pub enum CeremonyCmd {
         #[arg(long)]
         beacon: String,
     },
-    /// Recompute the initial key from phase 1 and verify every phase 2 contribution.
+    /// Verify every phase 2 contribution against the initial key: recomputed from phase 1 (`--phase1`,
+    /// minutes, the final word) or taken from the published initial file (`--initial`, seconds, for a
+    /// check after each contribution).
     Phase2Verify {
+        #[arg(long, conflicts_with = "initial", required_unless_present = "initial")]
+        phase1: Option<PathBuf>,
+        /// The phase 2 file before any contribution (`phase2-new` output).
         #[arg(long)]
-        phase1: PathBuf,
+        initial: Option<PathBuf>,
         #[arg(long = "final")]
         final_: PathBuf,
     },
@@ -173,7 +184,21 @@ pub fn run(cmd: CeremonyCmd) -> Result<()> {
             power,
             out,
             domain_power,
+            expect_response_hash,
+            expect_challenge_hash,
         } => {
+            let parse_hash = |h: &Option<String>, what: &str| -> Result<Option<[u8; 64]>> {
+                h.as_deref()
+                    .map(|h| {
+                        hex::decode(h)
+                            .ok()
+                            .and_then(|b| b.try_into().ok())
+                            .ok_or_else(|| anyhow::anyhow!("{what}: expected 64 bytes of hex"))
+                    })
+                    .transpose()
+            };
+            let want_response = parse_hash(&expect_response_hash, "--expect-response-hash")?;
+            let want_challenge = parse_hash(&expect_challenge_hash, "--expect-challenge-hash")?;
             let needed = domain_size(TransferCircuit::default())?;
             let n = match domain_power {
                 Some(p) if (1..=28).contains(&p) => 1usize << p,
@@ -187,6 +212,7 @@ pub fn run(cmd: CeremonyCmd) -> Result<()> {
                 std::fs::File::open(&response).with_context(|| response.display().to_string())?;
             eprintln!("reading a 2^{power} response, keeping a domain of {n}…");
             let imp = import_response(std::io::BufReader::new(file), power, n)?;
+            imp.expect(want_response.as_ref(), want_challenge.as_ref())?;
             eprintln!("checking the accumulator's shape…");
             imp.phase1.verify_shape(&mut rng_for_checks)?;
             let d = write_file(&out, &imp.phase1.to_bytes()?)?;
@@ -196,10 +222,18 @@ pub fn run(cmd: CeremonyCmd) -> Result<()> {
                 "the response answers a challenge with hash {}",
                 hex::encode(imp.challenge_hash)
             );
-            println!(
-                "response hash {} (compare with the ceremony's published record)",
-                hex::encode(imp.response_hash)
-            );
+            match want_response {
+                Some(_) => println!(
+                    "response hash {} matches the expected one",
+                    hex::encode(imp.response_hash)
+                ),
+                None => {
+                    println!("response hash {}", hex::encode(imp.response_hash));
+                    println!(
+                        "WARNING: no --expect-response-hash given, so this import is not tied to any published record; do not build keys for value on it"
+                    );
+                }
+            }
         }
         CeremonyCmd::Phase1Verify { before, after } => {
             let (b, d) = read_phase1(&before)?;
@@ -249,12 +283,26 @@ pub fn run(cmd: CeremonyCmd) -> Result<()> {
             println!("beacon contribution written to {}", out.display());
             println!("contribution hash {}", hex::encode(key.hash()));
         }
-        CeremonyCmd::Phase2Verify { phase1, final_ } => {
-            let (p, _) = read_phase1(&phase1)?;
-            p.verify_shape(&mut rng_for_checks)?;
+        CeremonyCmd::Phase2Verify {
+            phase1,
+            initial,
+            final_,
+        } => {
             let q = read_phase2(&final_)?;
-            eprintln!("recomputing the initial key…");
-            let initial = initial_proving_key(TransferCircuit::default(), &p)?;
+            let initial = match (phase1, initial) {
+                (Some(phase1), _) => {
+                    let (p, _) = read_phase1(&phase1)?;
+                    p.verify_shape(&mut rng_for_checks)?;
+                    eprintln!("recomputing the initial key…");
+                    initial_proving_key(TransferCircuit::default(), &p)?
+                }
+                (None, Some(initial)) => {
+                    let q0 = read_phase2(&initial)?;
+                    eprintln!("checking against the initial key file (not recomputed)…");
+                    q0.initial_key()?.clone()
+                }
+                (None, None) => bail!("--phase1 or --initial is needed"),
+            };
             let hashes = q.verify(&initial, &mut rng_for_checks)?;
             println!("valid: {} contribution(s)", hashes.len());
             for (i, h) in hashes.iter().enumerate() {

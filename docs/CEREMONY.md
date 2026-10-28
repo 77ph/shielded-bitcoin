@@ -50,20 +50,27 @@ most Groth16 deployments on BLS12-381 build on one of them rather than
 run their own phase 1.
 
 ```sh
-sb ceremony phase1-import --response response_N --power 21 --out p1-imported.bin
+sb ceremony phase1-import --response response_N --power 21 --out p1-imported.bin \
+  --expect-response-hash <BLAKE2b-512 of response_N as the ceremony published it> \
+  --expect-challenge-hash <BLAKE2b-512 of the challenge it answered>
 ```
 
 reads the first `2n − 1` and `n` elements of each vector for the circuit's
 domain (seeking over the rest, so the 600 MB Sapling file is not loaded),
 validates every point and checks the accumulator's shape with the same
-pairing checks as a native contribution. What it cannot do is verify the
+pairing checks as a native contribution. The shape check proves
+consistency, not honesty: an accumulator built from a known `τ` has a
+perfect shape. What ties the import to the real ceremony is the hash of
+the file, and the tool **refuses** the import when the hash differs from
+the expected one; the operator's only job is to take that hash from the
+ceremony's public record once. Without `--expect-response-hash` the tool
+imports anyway, prints a warning that the accumulator is tied to no
+record, and such keys must not hold value. The importer cannot verify the
 ceremony's own chain of contributions, which needs every challenge and
-response: it prints the BLAKE2b-512 hash of the response and the hash of
-the challenge it answered, to compare with the ceremony's published
-record. The imported accumulator then takes phase 2 like any other. The
-point encoding is the Zcash one, which arkworks' BLS12-381 shares; the
-importer is tested on synthetic files in that format, not yet on the real
-transcripts (that is a download, not code).
+response. The imported accumulator then takes phase 2 like any other.
+The point encoding is the Zcash one, which arkworks' BLS12-381 shares;
+the importer is tested on synthetic files in that format, not yet on the
+real transcripts (that is a download, not code).
 
 ## Key derivation
 
@@ -82,8 +89,9 @@ every verifier recomputes it instead of trusting the file.
 
 ```sh
 sb ceremony phase2-contribute --in p2-0.bin --out p2-1.bin
+sb ceremony phase2-verify --initial p2-0.bin --final p2-1.bin     # seconds, after each contribution
 sb ceremony phase2-beacon --in p2-K.bin --out p2-final.bin --beacon <hex>
-sb ceremony phase2-verify --phase1 p1-N.bin --final p2-final.bin
+sb ceremony phase2-verify --phase1 p1-N.bin --final p2-final.bin  # minutes, recomputes the initial key
 sb ceremony export --final p2-final.bin --pk transfer.pk --vk transfer.vk
 ```
 
@@ -95,9 +103,14 @@ from a public value nobody could predict while the participants were
 working, agreed on in advance, for example the hash of a Bitcoin block at
 a chosen height. That makes the final key independent of the order and
 choices of the participants and lets anyone recompute the last step.
-Verification recomputes the initial key, checks that the circuit part is
-untouched, walks the contributions, and checks `H` and `L` against the
-final `δ` with one batched pairing each. `export` refuses a key without
+Verification checks that the circuit part is untouched against the
+initial key, walks the contributions, and checks `H` and `L` against the
+final `δ` with one batched pairing each. With `--initial` the initial key
+comes from the published `phase2-new` file (a file without contributions
+and `δ = 1`), which takes seconds and is what a coordinator runs after
+every contribution; with `--phase1` it is recomputed from the accumulator
+and the circuit, which takes minutes and is the final word, since it
+trusts no phase 2 file at all. `export` refuses a key without
 contributions.
 
 `sb profile-new … --ceremony-vk transfer.vk --ceremony-pk transfer.pk` pins
@@ -132,7 +145,9 @@ who holds the secrets, and that is the whole point of a real ceremony.
   A public phase 1 transcript can be imported (above); our phase 2 files
   cannot be fed to their tools.
 * The tooling has not been reviewed by anyone outside this project. Before
-  a ceremony whose keys will hold value, it should be.
+  a ceremony whose keys will hold value, it should be. The project's own
+  review of the crate against BGM17, with its findings and their status,
+  is `docs/REVIEW-CEREMONY.md`.
 * Files are read with full point validation (subgroup checks), which takes
   a while for a `2^17` domain; that is deliberate.
 * A participant's secrets are never written to disk and are overwritten
