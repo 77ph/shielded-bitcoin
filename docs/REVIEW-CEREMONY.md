@@ -7,15 +7,16 @@ Multi-party Computation for zk-SNARK Parameters in the Random Beacon
 Model"* (BGM17), the one the Zcash Sapling parameters were made with — and
 against general trusted-setup soundness.
 
-**Reviewed at:** `bb2f379` (the tooling) and `f5db2ae` (the two fixes
-below, the transcript importer, and the drill script). Curve BLS12-381,
+**Reviewed at:** `bb2f379` (the tooling), `f5db2ae` (the transcript
+importer, the drill script, and findings F-1/F-2), and `7bd8f48` (finding
+F-3 and the per-contribution phase-2 check). Curve BLS12-381,
 `arkworks` 0.5.0.
 
 **Verdict:** the core is a faithful BGM17 implementation and its soundness
-holds. The two findings of the first pass are fixed and re-verified. One
-design finding (F-3) remains, scoped to importing a *foreign* transcript
-for a value-holding deployment; it does not affect a ceremony that runs
-its own phase 1, nor the development setup.
+holds. All three findings below are fixed and re-verified firsthand. One
+small residual, noted under F-3, is a forward-looking belt rather than a
+gap: it is left to operator discipline and documentation today, which is
+right for a setup whose keys do not yet hold value.
 
 This review is **not** a substitute for an independent specialist audit
 before a ceremony whose keys will hold value. `CEREMONY.md` already states
@@ -75,7 +76,14 @@ groups; `H` and `L` are length-checked and batch-pairing-checked to be the
 initial queries scaled by exactly the final `1/δ`. The transcript chain
 binds the order of contributions (each commits to the exact prefix before
 it, anchored to the digest of the recomputed initial key), so a
-contribution cannot be inserted, removed or reordered.
+contribution cannot be inserted, removed or reordered. The authoritative
+verification (`phase2-verify --phase1`) recomputes the initial key from the
+accumulator and the circuit and so trusts no phase-2 file; a fast
+per-contribution mode (`--initial`) checks the same chain against the
+published initial file, which is accepted only if it carries no
+contributions and `δ = 1`. The fast mode is a coordinator's early-warning
+check, not a trust root — the recompute remains the final word, and an
+independent verifier should use it.
 
 **The beacon provides unbiasedness, not secrecy** — correctly, and as
 `CEREMONY.md` states. Its `δ'` is derived publicly from the transcript and
@@ -126,7 +134,7 @@ copies the wipe does not reach, and a machine that swaps or dumps core can
 still leak them — so a contribution should run on a trusted machine. The
 claim that secrets are "never written to disk" is accurate. Verified.
 
-### F-3 — a foreign transcript's provenance should be enforced, not printed (OPEN, design)
+### F-3 — a foreign transcript's provenance is now enforced, not printed (FIXED, `7bd8f48`)
 
 **Scope: only the import of a foreign powers-of-tau transcript for a
 value-holding deployment. It does not affect a ceremony that runs its own
@@ -143,26 +151,38 @@ transcript (whose `τ` no one knows, by the honesty of its participants)
 from such a forgery is that its bytes hash to the value that ceremony
 published.
 
-The importer computes that hash (BLAKE2b-512 of the response, and the
-challenge hash it carries) and **prints** it for the operator to compare by
-eye against the published record. It does not take the expected hash as an
-argument and refuse on a mismatch. That makes a human comparison the single
-security link at the root of the whole setup: if the operator does not
-compare, or compares the wrong value, a forged transcript with a known `τ`
-is accepted, and a known `τ` means forgeable proofs.
+As first reviewed, the importer only **printed** that hash (BLAKE2b-512 of
+the response, and the challenge hash it carries) for the operator to
+compare by eye against the published record — which made a human comparison
+the single security link at the root of the setup: if the operator did not
+compare, or compared the wrong value, a forged transcript with a known `τ`
+would be accepted, and a known `τ` means forgeable proofs.
 
-The trust model — trust the ceremony's public record, as every reuser of
-the Sapling transcript does — is the right one. What should change is the
-*enforcement* of it: `phase1-import` should accept
-`--expect-challenge-hash` / `--expect-response-hash`, compute the hashes,
-and refuse unless they match. That reduces the operator's role to supplying
-one authoritative value from the public record (irreducible), and makes the
-tool, not an eye, enforce it — the same pin-and-verify pattern the code
-already uses for the verifying-key hash in a deployment profile.
+The fix makes the tool enforce the match. `phase1-import` now takes
+`--expect-response-hash` and `--expect-challenge-hash`; `Imported::expect`
+recomputes the response's BLAKE2b-512 and the embedded challenge hash and
+**refuses** the import unless they equal the expected values ("this is not
+the published transcript" / "not the expected"). The operator's role is now
+to supply one authoritative value from the public record once; the tool,
+not an eye, enforces it — the same pin-and-verify pattern the code uses for
+the verifying-key hash in a deployment profile. Both directions are tested
+(right hashes pass, wrong response/challenge and malformed hex are
+refused). `CEREMONY.md` now states plainly that the shape check is
+consistency, not honesty, and that the hash is what ties an import to the
+real ceremony.
 
-**Recommended before importing any real transcript for a value
-deployment.** Until then, an import is only as sound as the operator's
-manual hash comparison.
+**Residual (forward-looking, not blocking).** The pins are optional: an
+import run without `--expect-response-hash` still succeeds, after printing a
+loud warning that the accumulator is tied to no record and its keys must
+not hold value. That is the right default for drills and experiments, which
+generate their own parameters and have no published hash to pin to. The one
+thing a tool cannot catch today is an operator who imports a real transcript
+without the pin, ignores the warning, and carries the key to a value
+deployment anyway. A future belt would thread the import's pinned/unpinned
+provenance through to profile creation, so that a mainnet profile refuses a
+verifying key whose phase-1 origin was never pinned. Until then this rests
+on the warning and on this document; given that no deployment holds value
+yet, that is a reasonable place to leave it.
 
 ---
 
@@ -193,6 +213,8 @@ manual hash comparison.
 
 ---
 
-*Reviewed 2026-10-28 against `bb2f379` / `f5db2ae`. Findings F-1 and F-2
-verified fixed; F-3 open by design, scoped to foreign-transcript import for
-value deployments.*
+*Reviewed 2026-10-28 against `bb2f379` / `f5db2ae` / `7bd8f48`. Findings
+F-1, F-2 and F-3 verified fixed; one forward-looking residual noted under
+F-3 (optional provenance pin), left to the warning and this document while
+no keys hold value. An independent specialist review is still owed before a
+value-holding ceremony.*
