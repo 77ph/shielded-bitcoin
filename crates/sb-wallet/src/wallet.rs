@@ -637,7 +637,8 @@ mod private_branches {
         });
         let params = TransferParams::insecure_setup(&[0u8; 32]).unwrap();
         let mut rng = ChaCha20Rng::from_seed([1u8; 32]);
-        let tree = NoteTree::new();
+        let mut tree = NoteTree::new();
+        tree.append(Fr::from(99u64)); // some other leaf sits at the record's position
         let r = w.build_send(&params, &[0u8; 32], &tree, 5, 1, addr, 10, &mut rng);
         assert!(matches!(
             r,
