@@ -5,11 +5,16 @@
 //! ```
 
 mod funding;
+mod relay;
 
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Parser, Subcommand};
+use serde::{Deserialize, Serialize};
+
+use funding::FundingState;
 
 use sb_circuit::vk_sha256;
 use sb_core::address::{Network as SbNetwork, PaymentAddress};
@@ -88,11 +93,11 @@ enum Cmd {
         #[arg(long, default_value = "default")]
         name: String,
     },
-    /// Show the wallet's shielded address (and the transparent funding address).
+    /// Show the wallet's shielded address and the transparent funding address to pay fees from.
     Address {
         #[arg(long, default_value = "default")]
         name: String,
-        /// Derive a fresh receive path.
+        /// Derive a fresh shielded receive path and a fresh funding address.
         #[arg(long)]
         new: bool,
     },
@@ -113,7 +118,7 @@ enum Cmd {
         amount: u64,
         #[arg(long, default_value = "2")]
         fee_rate: u64,
-        /// Publish through Esplora (default) or only write the envelope to the outbox.
+        /// Only write the carrier to the outbox (fund it elsewhere, or `sb publish` it later).
         #[arg(long)]
         no_broadcast: bool,
     },
@@ -127,8 +132,12 @@ enum Cmd {
         amount: u64,
         #[arg(long, default_value = "2")]
         fee_rate: u64,
+        /// Only write the carrier to the outbox (fund it elsewhere, or `sb publish` it later).
         #[arg(long)]
         no_broadcast: bool,
+        /// Hand the envelope to a sponsored relayer (`http://host:port`) instead of paying the carrier.
+        #[arg(long, conflicts_with = "no_broadcast")]
+        relay: Option<String>,
     },
     /// Withdraw `amount` sat to a Bitcoin address through the dev operator.
     Withdraw {
@@ -141,8 +150,40 @@ enum Cmd {
         to: String,
         #[arg(long, default_value = "2")]
         fee_rate: u64,
+        /// Only write the carrier to the outbox (fund it elsewhere, or `sb publish` it later).
         #[arg(long)]
         no_broadcast: bool,
+        /// Hand the envelope to a sponsored relayer (`http://host:port`) instead of paying the carrier.
+        #[arg(long, conflicts_with = "no_broadcast")]
+        relay: Option<String>,
+    },
+    /// Publish a carrier from the outbox: pay it from a wallet's fee coins, or hand it to a relayer.
+    Publish {
+        /// Outbox label (`transfer-…`, `mint-…`, `withdraw-…`) or a path to its `.json`.
+        label: String,
+        /// Wallet whose fee coins pay the carrier (any wallet, not only the sender's).
+        #[arg(long, default_value = "default")]
+        name: String,
+        #[arg(long, default_value = "2")]
+        fee_rate: u64,
+        /// Hand the envelope to a sponsored relayer (`http://host:port`) instead of paying the carrier.
+        #[arg(long)]
+        relay: Option<String>,
+    },
+    /// Run a sponsored relayer: publish other people's transfers from this wallet's fee coins.
+    RelayServe {
+        #[arg(long, default_value = "default")]
+        name: String,
+        #[arg(long, default_value = "127.0.0.1:8787")]
+        listen: String,
+        #[arg(long, default_value = "2")]
+        fee_rate: u64,
+        /// Carriers paid per hour at most.
+        #[arg(long, default_value = "20")]
+        max_per_hour: u32,
+        /// Exit after this many requests (tests).
+        #[arg(long)]
+        max_requests: Option<u32>,
     },
     /// Operator: pay pending withdraw requests from the vault.
     Payouts {
@@ -316,47 +357,205 @@ impl Ctx {
         }
     }
 
-    fn funding(&self, wallet: &Wallet) -> Result<funding::FundingKey> {
+    fn funding(&self, wallet: &Wallet) -> Result<funding::FundingWallet> {
         let seed = hex::decode(wallet.seed_hex())?;
-        funding::FundingKey::from_seed(&seed.try_into().unwrap(), self.btc_network())
+        Ok(funding::FundingWallet::new(
+            seed.try_into().unwrap(),
+            self.btc_network(),
+        ))
     }
 
-    /// Fund, sign and broadcast a carrier (or just write it to the outbox).
-    #[allow(clippy::too_many_arguments)]
+    fn funding_state(wallet: &Wallet) -> FundingState {
+        FundingState {
+            receive: wallet.funding_receive,
+            change: wallet.funding_change,
+        }
+    }
+
+    /// The funding address to show: the first receive index not used yet.
+    fn funding_address(&self, wallet: &Wallet) -> Result<bitcoin::Address> {
+        self.funding(wallet)?
+            .receive_address(Self::funding_state(wallet))
+    }
+
+    /// Pay `outputs` from the wallet's fee coins, broadcast, and persist the
+    /// address counters the payment advanced.
+    fn pay(
+        &self,
+        wallet: &mut Wallet,
+        name: &str,
+        outputs: Vec<bitcoin::TxOut>,
+        fee_rate: u64,
+    ) -> Result<bitcoin::Transaction> {
+        let publisher = self.publisher()?;
+        let (tx, next) = self.funding(wallet)?.pay(
+            publisher.as_ref(),
+            Self::funding_state(wallet),
+            outputs,
+            fee_rate,
+        )?;
+        publisher.broadcast(&tx)?;
+        wallet.funding_receive = next.receive;
+        wallet.funding_change = next.change;
+        wallet.save(&self.wallet_path(name))?;
+        Ok(tx)
+    }
+
+    /// Write a carrier to the outbox and publish it as `mode` says; `payer`
+    /// is the wallet (and its name) whose fee coins pay when self-funding.
     fn publish(
         &self,
-        wallet: &Wallet,
+        payer: Option<(&mut Wallet, &str)>,
         label: &str,
-        envelope: &[u8],
-        extra: Vec<bitcoin::TxOut>,
-        memo: Option<Vec<u8>>,
+        entry: &OutboxEntry,
         fee_rate: u64,
-        broadcast: bool,
+        mode: PublishMode,
     ) -> Result<()> {
         let outbox = self.data_dir.join("outbox");
         std::fs::create_dir_all(&outbox)?;
-        let path = outbox.join(format!("{label}.hex"));
-        std::fs::write(&path, hex::encode(envelope))?;
+        let envelope = hex::decode(&entry.envelope)?;
+        let outputs = entry.outputs()?;
+        let json_path = outbox.join(format!("{label}.json"));
+        std::fs::write(&json_path, serde_json::to_string_pretty(entry)?)?;
+        std::fs::write(outbox.join(format!("{label}.hex")), hex::encode(&envelope))?;
+        let tx_path = outbox.join(format!("{label}.tx"));
+        std::fs::write(&tx_path, unfunded_hex(&outputs))?;
         println!(
             "envelope ({} bytes) written to {}",
             envelope.len(),
-            path.display()
+            json_path.display()
         );
-        if !broadcast {
-            return Ok(());
+        match mode {
+            PublishMode::Outbox => {
+                println!("unfunded carrier (no inputs) in {}", tx_path.display());
+                println!("publish it from any wallet, e.g. Bitcoin Core:");
+                println!(
+                    "  bitcoin-cli fundrawtransaction $(cat {0}) | jq -r .hex | xargs bitcoin-cli signrawtransactionwithwallet | jq -r .hex | xargs bitcoin-cli sendrawtransaction",
+                    tx_path.display()
+                );
+                println!(
+                    "or from an sb wallet holding fee coins:  sb publish {label} --name <wallet>"
+                );
+                if entry.extra.is_empty() {
+                    println!(
+                        "or through a sponsored relayer:         sb publish {label} --relay http://host:port"
+                    );
+                }
+            }
+            PublishMode::Relay(url) => {
+                if !entry.extra.is_empty() {
+                    bail!("a mint pays the vault; a relayer only publishes transfers");
+                }
+                let memo = entry.memo.as_deref().map(hex::decode).transpose()?;
+                let txid = relay::submit(&url, &envelope, memo.as_deref())?;
+                println!("relayed by {url}: {txid}");
+            }
+            PublishMode::SelfFund => {
+                let (wallet, name) = payer.ok_or_else(|| anyhow!("no wallet to pay from"))?;
+                let tx = self.pay(wallet, name, outputs, fee_rate)?;
+                println!("broadcast {} ({} vB)", tx.compute_txid(), tx.vsize());
+            }
         }
-        let publisher = self.publisher()?;
-        let fk = self.funding(wallet)?;
-        let utxos = publisher.utxos(&fk.address)?;
-        let mut outputs = extra;
-        outputs.push(sb_indexer::carrier::carrier_output(envelope));
-        if let Some(m) = memo {
-            outputs.push(sb_indexer::carrier::memo_output(&m));
-        }
-        let tx = fk.build_tx(&utxos, outputs, fee_rate)?;
-        let txid = publisher.broadcast(&tx)?;
-        println!("broadcast {} ({} vB)", txid, tx.vsize());
         Ok(())
+    }
+}
+
+/// A transaction with these outputs and no inputs, framed the way Bitcoin
+/// Core's `createrawtransaction` writes it (legacy framing: version, empty
+/// input list, outputs, lock time). The segwit framing would put a marker
+/// and flag where Core expects the input count, and Core rejects it.
+fn unfunded_hex(outputs: &[bitcoin::TxOut]) -> String {
+    use bitcoin::consensus::Encodable;
+    let mut v = Vec::new();
+    v.extend_from_slice(&2i32.to_le_bytes());
+    v.push(0);
+    bitcoin::VarInt(outputs.len() as u64)
+        .consensus_encode(&mut v)
+        .expect("vec");
+    for o in outputs {
+        o.consensus_encode(&mut v).expect("vec");
+    }
+    v.extend_from_slice(&0u32.to_le_bytes());
+    hex::encode(v)
+}
+
+/// How a built carrier leaves the wallet.
+enum PublishMode {
+    /// Only the outbox: fund it elsewhere or `sb publish` it later.
+    Outbox,
+    /// Pay from this wallet's fee coins.
+    SelfFund,
+    /// Hand the envelope to a sponsored relayer at this URL.
+    Relay(String),
+}
+
+impl PublishMode {
+    #[cfg(test)]
+    fn name(&self) -> &'static str {
+        match self {
+            PublishMode::Outbox => "outbox",
+            PublishMode::SelfFund => "self-fund",
+            PublishMode::Relay(_) => "relay",
+        }
+    }
+
+    fn pick(no_broadcast: bool, relay: Option<String>) -> Self {
+        match (no_broadcast, relay) {
+            (true, _) => PublishMode::Outbox,
+            (false, Some(url)) => PublishMode::Relay(url),
+            (false, None) => PublishMode::SelfFund,
+        }
+    }
+}
+
+/// A carrier waiting in the outbox: the envelope, the optional payout memo
+/// and the extra outputs the carrier must have (a mint's vault payment).
+#[derive(Debug, Serialize, Deserialize)]
+struct OutboxEntry {
+    envelope: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    memo: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    extra: Vec<ExtraOutput>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ExtraOutput {
+    value: u64,
+    script_hex: String,
+}
+
+impl OutboxEntry {
+    fn new(envelope: &[u8], memo: Option<Vec<u8>>, extra: Vec<bitcoin::TxOut>) -> Self {
+        OutboxEntry {
+            envelope: hex::encode(envelope),
+            memo: memo.map(hex::encode),
+            extra: extra
+                .into_iter()
+                .map(|o| ExtraOutput {
+                    value: o.value.to_sat(),
+                    script_hex: hex::encode(o.script_pubkey.as_bytes()),
+                })
+                .collect(),
+        }
+    }
+
+    /// Carrier outputs: the extra ones, the envelope, then the memo.
+    fn outputs(&self) -> Result<Vec<bitcoin::TxOut>> {
+        let mut out = Vec::new();
+        for e in &self.extra {
+            out.push(bitcoin::TxOut {
+                value: bitcoin::Amount::from_sat(e.value),
+                script_pubkey: bitcoin::ScriptBuf::from_bytes(hex::decode(&e.script_hex)?),
+            });
+        }
+        out.push(sb_indexer::carrier::carrier_output(&hex::decode(
+            &self.envelope,
+        )?));
+        if let Some(m) = &self.memo {
+            out.push(sb_indexer::carrier::memo_output(&hex::decode(m)?));
+        }
+        Ok(out)
     }
 }
 
@@ -462,20 +661,21 @@ fn main() -> Result<()> {
                 "shielded address: {}",
                 w.default_address().encode(ctx.deployment.network)
             );
-            println!("funding address:  {}", ctx.funding(&w)?.address);
+            println!("funding address:  {}", ctx.funding_address(&w)?);
         }
         Cmd::Address { name, new } => {
             let mut w = ctx.wallet(&name)?;
             let addr = if new {
                 let (i, a) = w.new_address();
+                w.funding_receive += 1;
                 w.save(&ctx.wallet_path(&name))?;
-                println!("receive path {i}");
+                println!("receive path {i}, funding index {}", w.funding_receive);
                 a
             } else {
                 w.default_address()
             };
             println!("shielded address: {}", addr.encode(ctx.deployment.network));
-            println!("funding address:  {}", ctx.funding(&w)?.address);
+            println!("funding address:  {}", ctx.funding_address(&w)?);
         }
         Cmd::Sync => {
             let (mut idx, mut store) = ctx.indexer()?;
@@ -503,20 +703,20 @@ fn main() -> Result<()> {
             amount,
             fee_rate,
         } => {
-            let w = ctx.wallet(&name)?;
+            let mut w = ctx.wallet(&name)?;
             let dest: bitcoin::Address = to
                 .parse::<bitcoin::Address<bitcoin::address::NetworkUnchecked>>()?
                 .require_network(ctx.btc_network())?;
-            let publisher = ctx.publisher()?;
-            let fk = ctx.funding(&w)?;
-            let utxos = publisher.utxos(&fk.address)?;
             let out = bitcoin::TxOut {
                 value: bitcoin::Amount::from_sat(amount),
                 script_pubkey: dest.script_pubkey(),
             };
-            let tx = fk.build_tx(&utxos, vec![out], fee_rate)?;
-            let txid = publisher.broadcast(&tx)?;
-            println!("paid {amount} sat to {dest} in {txid} ({} vB)", tx.vsize());
+            let tx = ctx.pay(&mut w, &name, vec![out], fee_rate)?;
+            println!(
+                "paid {amount} sat to {dest} in {} ({} vB)",
+                tx.compute_txid(),
+                tx.vsize()
+            );
         }
         Cmd::ElectrumFingerprint { server } => {
             let (host, port) = server
@@ -547,7 +747,7 @@ fn main() -> Result<()> {
                 .boundary
                 .clone()
                 .ok_or_else(|| anyhow!("profile has no dev boundary"))?;
-            let w = ctx.wallet(&name)?;
+            let mut w = ctx.wallet(&name)?;
             let addr = w.default_address();
             let note = NotePlaintext {
                 value: amount,
@@ -570,15 +770,13 @@ fn main() -> Result<()> {
                         [..8]
                 )
             );
-            ctx.publish(
-                &w,
-                &label,
-                &env.to_bytes(),
-                extra,
-                None,
-                fee_rate,
-                !no_broadcast,
-            )?;
+            let entry = OutboxEntry::new(&env.to_bytes(), None, extra);
+            let mode = if no_broadcast {
+                PublishMode::Outbox
+            } else {
+                PublishMode::SelfFund
+            };
+            ctx.publish(Some((&mut w, &name)), &label, &entry, fee_rate, mode)?;
         }
         Cmd::Send {
             name,
@@ -586,6 +784,7 @@ fn main() -> Result<()> {
             amount,
             fee_rate,
             no_broadcast,
+            relay,
         } => {
             let (net, to_addr) = PaymentAddress::decode(&to)?;
             if net != ctx.deployment.network {
@@ -629,14 +828,13 @@ fn main() -> Result<()> {
                 "transfer-{}",
                 hex::encode(&sb_primitives::encoding::fr_to_bytes(&built.statement.h_body)[..8])
             );
+            let entry = OutboxEntry::new(&built.envelope.to_bytes(), None, vec![]);
             ctx.publish(
-                &w,
+                Some((&mut w, &name)),
                 &label,
-                &built.envelope.to_bytes(),
-                vec![],
-                None,
+                &entry,
                 fee_rate,
-                !no_broadcast,
+                PublishMode::pick(no_broadcast, relay),
             )?;
             println!("inputs locked until the transfer is accepted (`sb unlock` to release)");
         }
@@ -646,6 +844,7 @@ fn main() -> Result<()> {
             to,
             fee_rate,
             no_broadcast,
+            relay,
         } => {
             let boundary = ctx
                 .deployment
@@ -703,16 +902,84 @@ fn main() -> Result<()> {
                 "withdraw-{}",
                 hex::encode(&sb_primitives::encoding::fr_to_bytes(&built.statement.h_body)[..8])
             );
+            let entry = OutboxEntry::new(&built.envelope.to_bytes(), Some(memo), vec![]);
             ctx.publish(
-                &w,
+                Some((&mut w, &name)),
                 &label,
-                &built.envelope.to_bytes(),
-                vec![],
-                Some(memo),
+                &entry,
                 fee_rate,
-                !no_broadcast,
+                PublishMode::pick(no_broadcast, relay),
             )?;
             println!("the operator pays {dest} after the transfer is accepted");
+        }
+        Cmd::Publish {
+            label,
+            name,
+            fee_rate,
+            relay,
+        } => {
+            let path = if label.contains('/') || label.ends_with(".json") {
+                PathBuf::from(&label)
+            } else {
+                ctx.data_dir.join("outbox").join(format!("{label}.json"))
+            };
+            let text = std::fs::read_to_string(&path).with_context(|| {
+                format!(
+                    "{} (`sb <mint|send|withdraw> --no-broadcast` writes it)",
+                    path.display()
+                )
+            })?;
+            let entry: OutboxEntry = serde_json::from_str(&text)?;
+            let label = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("carrier")
+                .to_string();
+            // a relayer pays: no wallet of ours is involved
+            let mut payer = match relay {
+                Some(_) => None,
+                None => Some(ctx.wallet(&name)?),
+            };
+            ctx.publish(
+                payer.as_mut().map(|w| (w, name.as_str())),
+                &label,
+                &entry,
+                fee_rate,
+                PublishMode::pick(false, relay),
+            )?;
+        }
+        Cmd::RelayServe {
+            name,
+            listen,
+            fee_rate,
+            max_per_hour,
+            max_requests,
+        } => {
+            let (idx, store) = ctx.indexer()?;
+            let chain = ctx.chain_source()?;
+            let publisher = ctx.publisher()?;
+            let w = ctx.wallet(&name)?;
+            let fw = ctx.funding(&w)?;
+            let listener = std::net::TcpListener::bind(&listen)
+                .with_context(|| format!("listen on {listen}"))?;
+            println!(
+                "relayer listening on http://{} (deployment {}, wallet {name}, {fee_rate} sat/vB, {max_per_hour} carriers/hour)",
+                listener.local_addr()?,
+                ctx.deployment.name
+            );
+            std::io::stdout().flush()?;
+            let mut r = relay::Relayer::new(
+                idx,
+                store,
+                chain,
+                publisher,
+                fw,
+                w,
+                ctx.wallet_path(&name),
+                fee_rate,
+                max_per_hour,
+            );
+            r.serve(listener, max_requests)?;
         }
         Cmd::Payouts {
             name,
@@ -749,15 +1016,11 @@ fn main() -> Result<()> {
                 if no_broadcast {
                     continue;
                 }
-                let publisher = ctx.publisher()?;
-                let fk = ctx.funding(&w)?;
-                let utxos = publisher.utxos(&fk.address)?;
                 let out = bitcoin::TxOut {
                     value: bitcoin::Amount::from_sat(p.request.amount),
                     script_pubkey: spk,
                 };
-                let tx = fk.build_tx(&utxos, vec![out], fee_rate)?;
-                let txid = publisher.broadcast(&tx)?;
+                let txid = ctx.pay(&mut w, &name, vec![out], fee_rate)?.compute_txid();
                 println!("  paid in {txid}");
                 w.record_payout(&p.note.txid, &p.request, Some(txid.to_string()));
                 w.save(&ctx.wallet_path(&name))?;
@@ -829,5 +1092,28 @@ fn print_wallet(w: &Wallet) {
             s.height,
             if s.is_change { "(change)" } else { "" }
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The unfunded template decodes as Bitcoin Core's own framing: a
+    /// 2-byte prefix of version + empty inputs, then the outputs, then the
+    /// lock time, with no segwit marker.
+    #[test]
+    fn unfunded_template_uses_legacy_framing() {
+        let out = sb_indexer::carrier::carrier_output(&[0xab; 10]);
+        let hex = unfunded_hex(std::slice::from_ref(&out));
+        let mut expect = String::from("02000000") + "00" + "01";
+        expect += &hex::encode(bitcoin::consensus::encode::serialize(&out));
+        expect += "00000000";
+        assert_eq!(hex, expect);
+        let entry = OutboxEntry::new(&[0xab; 10], Some(b"sbx\x01".to_vec()), vec![out]);
+        assert_eq!(entry.outputs().unwrap().len(), 3);
+        assert_eq!(PublishMode::pick(true, Some("x".into())).name(), "outbox");
+        assert_eq!(PublishMode::pick(false, Some("x".into())).name(), "relay");
+        assert_eq!(PublishMode::pick(false, None).name(), "self-fund");
     }
 }

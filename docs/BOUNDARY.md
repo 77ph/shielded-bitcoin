@@ -53,30 +53,94 @@ destination from the vault key, and records the payout so it is never made
 twice. Nothing binds the memo to the proof: a relayer that rewrote it could
 redirect a payout, which is acceptable only for a development deployment.
 
-## Funding key (fee payment)
+## Fee funding
 
-Every carrier transaction a wallet publishes — the mint payment, a transfer,
-a withdraw, `fund-send` — is paid from one transparent key:
-`HKDF-SHA256(seed, "sb/v1/funding")` → secp256k1 → P2WPKH, one address per
-wallet, never rotated. The builder selects confirmed coins from that address
-and sends the change back to the same address.
+Every carrier transaction needs Bitcoin inputs to pay its miner fee, and
+those inputs are what links carriers at the Bitcoin layer (paper §20.5):
+the transfer proof says nothing about them. The paper requires any fee
+model to state who pays, what each party sees, and what happens when a
+service is unavailable. `sb` implements three, all outside the profile
+(`PROFILE.md` §14); the PIPE-based fee vault the paper intends is not one of
+them.
 
-**What this reveals on-chain.** Anyone who looks at the funding address sees
-every carrier the wallet ever paid for, chained through its change outputs:
-how many mints, transfers and withdraws the wallet made, when, and that they
-belong together (mint ↔ transfer ↔ withdraw). What stays hidden is what the
-paper's privacy argument covers: note values, recipients, which note a
-transfer spends, and the link between a sender's carrier and the recipient.
-A recipient who never publishes is invisible; once it spends what it
-received, its own carriers cluster the same way under its own funding
-address.
+### 1. Self-funding from the wallet's fee wallet (default)
 
-The paper (§20.5) excludes fee funding from its privacy claims and names
-funding inputs, change outputs and wallet clustering as visible. This
-boundary is the **maximal form** of that exposure, chosen for development
-deployments because it needs nothing beyond the wallet's own seed; the fee
-model is outside the profile (`PROFILE.md` §14). Mitigations, each a
-deployment-layer change and none implemented: pay carriers through a
-relayer; fund each carrier from an external wallet (PSBT) unconnected to the
-shielded wallet; use a fresh address per carrier with no change back.
-Choosing one is a roadmap item.
+Each shielded wallet has a transparent **fee wallet** derived from its seed:
+secp256k1 keys on two chains, receive (`"sb/v1/funding"` for index 0, the
+pre-HD key, then `"sb/v1/funding/<i>"`) and change
+(`"sb/v1/funding/change/<i>"`), all P2WPKH. `sb address` shows the first
+unused receive address; `--new` hands out the next one. Change always goes
+to a fresh change address, and the wallet looks for coins up to five
+indices past the last known one on each chain.
+
+* Who pays: the wallet itself, from coins sent to its receive addresses.
+* What is visible: the carrier's inputs and change output. No address is
+  used twice, so a casual address lookup no longer lists every carrier, but
+  the **change chain still links them**: whoever follows the change output of
+  one carrier into the next sees the same cluster as before, with its count
+  and timing of mints, transfers and withdraws, and the mint ↔ transfer ↔
+  withdraw connection (the vault payment and the withdraw carrier are paid
+  from the same wallet). Note values, recipients, the spent note and the
+  sender ↔ recipient link stay hidden, and a recipient that never publishes
+  is invisible. This is still the maximal form of the leak the paper names.
+* Unavailable: never; it needs only the chain source.
+
+### 2. External funding (any other wallet pays)
+
+`--no-broadcast` writes the carrier to the outbox as three files:
+`<label>.json` (envelope, memo, required extra outputs), `<label>.hex`
+(the envelope alone) and `<label>.tx`, the **unfunded transaction**: the
+carrier's outputs with no inputs, framed as Bitcoin Core's
+`createrawtransaction` frames it. Any wallet can add inputs and a change
+output and broadcast it; with Bitcoin Core:
+
+```sh
+bitcoin-cli fundrawtransaction $(cat outbox/<label>.tx) | jq -r .hex \
+  | xargs bitcoin-cli signrawtransactionwithwallet | jq -r .hex \
+  | xargs bitcoin-cli sendrawtransaction
+```
+
+`sb publish <label> --name <wallet>` does the same from another `sb` wallet's
+fee coins (a friend's, or a wallet kept only for fees). The sender's notes
+stay locked until the transfer is seen accepted (`sb unlock` releases them
+if it never is).
+
+* Who pays: the owner of the funding wallet.
+* What is visible: that wallet's inputs and change. If it is unconnected
+  to the shielded wallet's other carriers, the carrier joins that wallet's
+  cluster instead; the paper's "dedicated fee wallet" model.
+* Unavailable: the carrier waits in the outbox; any of the other models
+  publishes it later.
+
+### 3. Sponsored relayer
+
+`sb relay-serve --name <wallet>` runs an HTTP service that publishes other
+people's **transfer** envelopes from its own fee wallet: `POST /relay
+{"envelope": "<hex>", "memo": "<hex>"?}` answers with the carrier txid,
+`GET /info` with deployment, network, replayed tip and fee rate. Before
+paying, the relayer replays to the chain tip and checks the envelope
+exactly as the indexer will at the next block (parse, anchor window and
+root, unspent nullifiers, proof); it refuses mints (they pay the vault),
+envelopes it already paid for that still wait for a block, memos that are
+not a payout memo, and more than `--max-per-hour` carriers. Clients use
+`sb send --relay http://host:port`, `sb withdraw --relay …` or `sb publish
+<label> --relay …`.
+
+* Who pays: the relayer's operator. There is no fee channel back to it in
+  this design (a fee note would take the transfer's second output), so it
+  is **sponsored publication**: a development service, or one that is paid
+  out of band.
+* What is visible: the relayer sees the envelope and memo (public on chain
+  anyway), the client's network address and the submission time; it cannot
+  read notes or alter the body, and a transfer it relays is bound to its
+  nullifiers, not to the relayer. On chain the carrier joins the relayer's
+  cluster, which says nothing about which wallet built it beyond "a client
+  of this relayer". Network metadata is the client's problem (Tor or a
+  trusted relayer).
+* Unavailable: the client gets an error and the carrier stays in the
+  outbox; publish it with model 1 or 2 or another relayer. A relayer can
+  censor but not forge, replay or redirect a transfer.
+
+What none of the three does: hide the **fact** of publication, the carrier
+size (700-byte envelopes in ~830–890 vB transactions), the anchor age or
+the fee rate; those fingerprints are the paper's §22.1.

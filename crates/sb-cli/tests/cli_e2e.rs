@@ -67,6 +67,27 @@ fn field<'a>(text: &'a str, label: &str) -> &'a str {
         .unwrap()
 }
 
+/// A child process that does not outlive the test, whatever happens.
+struct KillOnDrop(std::process::Child);
+
+impl Drop for KillOnDrop {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// The outbox label from a `written to …/outbox/<label>.json` line.
+fn outbox_label(text: &str) -> String {
+    let path = field(text, "envelope (");
+    Path::new(path)
+        .file_stem()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string()
+}
+
 fn script_of(addr: &str) -> ScriptBuf {
     addr.parse::<bitcoin::Address<bitcoin::address::NetworkUnchecked>>()
         .unwrap()
@@ -309,6 +330,10 @@ fn full_cycle_on_fake_node() {
     cli.ok(&["sync"]);
     assert_eq!(balance(&cli.ok(&["scan", "--name", "alice"])), 5000);
     assert!(cli.ok(&["status"]).contains("Mint"));
+    // the mint spent the only coin on receive address 0 and its change went
+    // to a fresh change address: nothing is left on the address that was
+    // funded, so no address is used twice
+    assert!(shared.utxos(&script_of(&alice_funding)).is_empty());
 
     // private payment alice -> bob (anchor depth: two more blocks)
     shared.mine(3);
@@ -386,6 +411,215 @@ fn full_cycle_on_fake_node() {
     shared.mine(6);
     shared.mine(7);
     cli.ok(&["sync"]);
+
+    // third-party funding: alice builds, bob's fee coins publish
+    cli.fails(&["publish", "nothing"], "writes it");
+    let built = cli.ok(&[
+        "send",
+        "--name",
+        "alice",
+        "--to",
+        &bob_shielded,
+        "--amount",
+        "500",
+        "--no-broadcast",
+    ]);
+    assert!(built.contains("fundrawtransaction"), "{built}");
+    let label = outbox_label(&built);
+    // Core's framing of a transaction without inputs: version, 0 inputs,
+    // 1 output (the OP_RETURN carrier), lock time
+    let unfunded = std::fs::read_to_string(dir.join("outbox").join(format!("{label}.tx"))).unwrap();
+    let envelope =
+        std::fs::read_to_string(dir.join("outbox").join(format!("{label}.hex"))).unwrap();
+    assert!(unfunded.starts_with("020000000001") && unfunded.ends_with("00000000"));
+    assert!(unfunded.contains(&envelope));
+    let published = cli.ok(&["publish", &label, "--name", "bob", "--fee-rate", "1"]);
+    assert!(published.contains("broadcast"), "{published}");
+    shared.mine(60);
+    cli.ok(&["sync"]);
+    assert_eq!(balance(&cli.ok(&["scan", "--name", "alice"])), 2500);
+    assert_eq!(balance(&cli.ok(&["scan", "--name", "bob"])), 2500);
+    // the same carrier again is a double spend: replay rejects it
+    cli.ok(&["publish", &label, "--name", "bob", "--fee-rate", "1"]);
+    shared.mine(61);
+    assert!(cli.ok(&["sync"]).contains("rejected: 1"));
+
+    // sponsored relayer with its own wallet and data directory
+    let relay_dir = dir.join("relay");
+    std::fs::create_dir_all(&relay_dir).unwrap();
+    std::fs::write(relay_dir.join("pass"), "relay passphrase\n").unwrap();
+    let relay_cli = Cli {
+        data: relay_dir.clone(),
+        profile: dir.join("profile.json"),
+        chain: cli.chain.clone(),
+    };
+    let relay_wallet = relay_cli.ok(&["wallet-new", "--name", "relay"]);
+    let relay_funding = field(&relay_wallet, "funding address:").to_string();
+    shared.fund(&script_of(&relay_funding), 100_000);
+    shared.mine(62);
+    cli.ok(&["sync"]);
+    relay_cli.fails(
+        &["relay-serve", "--name", "relay", "--listen", "256.0.0.1:1"],
+        "listen on",
+    );
+    let server = Command::new(env!("CARGO_BIN_EXE_sb"))
+        .arg("--profile")
+        .arg(&relay_cli.profile)
+        .arg("--data-dir")
+        .arg(&relay_cli.data)
+        .arg("--chain")
+        .arg(&relay_cli.chain)
+        .arg("--passphrase-file")
+        .arg(relay_dir.join("pass"))
+        .args([
+            "relay-serve",
+            "--name",
+            "relay",
+            "--listen",
+            "127.0.0.1:0",
+            "--fee-rate",
+            "1",
+            "--max-requests",
+            "8",
+        ])
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut server = KillOnDrop(server);
+    let relay_url = {
+        use std::io::BufRead;
+        let mut line = String::new();
+        std::io::BufReader::new(server.0.stdout.take().unwrap())
+            .read_line(&mut line)
+            .unwrap();
+        let start = line.find("http://").unwrap();
+        line[start..].split_whitespace().next().unwrap().to_string()
+    };
+    // 1. info
+    let info: serde_json::Value = ureq::get(&format!("{relay_url}/info"))
+        .call()
+        .unwrap()
+        .into_json()
+        .unwrap();
+    assert_eq!(info["deployment"], "e2e");
+    assert_eq!(info["network"], "regtest");
+    assert!(info["tip"].as_u64().is_some(), "{info}");
+    // 2. a transfer relayed end to end
+    cli.fails(
+        &[
+            "send",
+            "--name",
+            "alice",
+            "--to",
+            &bob_shielded,
+            "--amount",
+            "300",
+            "--relay",
+            &relay_url,
+            "--no-broadcast",
+        ],
+        "cannot be used with",
+    );
+    let relayed = cli.ok(&[
+        "send",
+        "--name",
+        "alice",
+        "--to",
+        &bob_shielded,
+        "--amount",
+        "300",
+        "--relay",
+        &relay_url,
+    ]);
+    assert!(relayed.contains("relayed by"), "{relayed}");
+    let relayed_label = outbox_label(&relayed);
+    // 3. the same envelope again, while it waits in the mempool
+    cli.fails(
+        &["publish", &relayed_label, "--relay", &relay_url],
+        "already relayed",
+    );
+    // 4. a mint is refused before any request leaves the client
+    let mint_label = outbox_label(&cli.ok(&[
+        "mint",
+        "--name",
+        "alice",
+        "--amount",
+        "700",
+        "--no-broadcast",
+    ]));
+    cli.fails(
+        &["publish", &mint_label, "--relay", &relay_url],
+        "pays the vault",
+    );
+    // …and by the server when posted directly
+    let mint_hex =
+        std::fs::read_to_string(dir.join("outbox").join(format!("{mint_label}.hex"))).unwrap();
+    let post = |body: &str| -> (u16, String) {
+        match ureq::post(&format!("{relay_url}/relay")).send_string(body) {
+            Ok(r) => (200, r.into_string().unwrap()),
+            Err(ureq::Error::Status(c, r)) => (c, r.into_string().unwrap()),
+            Err(e) => panic!("{e}"),
+        }
+    };
+    let (code, text) = post(&format!("{{\"envelope\":\"{mint_hex}\"}}"));
+    assert!(
+        code == 400 && text.contains("pays the vault"),
+        "{code} {text}"
+    );
+    // 5. a tampered proof
+    let mut tampered = hex::decode(
+        std::fs::read_to_string(dir.join("outbox").join(format!("{relayed_label}.hex"))).unwrap(),
+    )
+    .unwrap();
+    let last = tampered.len() - 1;
+    tampered[last] ^= 1;
+    let (code, text) = post(&format!("{{\"envelope\":\"{}\"}}", hex::encode(&tampered)));
+    assert!(code == 400 && text.contains("rejected"), "{code} {text}");
+    // 6. junk and 7. an unknown path
+    let (code, text) = post("not json");
+    assert!(code == 400 && text.contains("bad request"), "{code} {text}");
+    let (code, _) = post("{\"envelope\":\"zz\"}");
+    assert_eq!(code, 400);
+    let status = ureq::get(&format!("{relay_url}/nothing"))
+        .call()
+        .unwrap_err();
+    assert!(matches!(status, ureq::Error::Status(404, _)));
+    assert!(server.0.wait().unwrap().success());
+    shared.mine(63);
+    cli.ok(&["sync"]);
+    assert_eq!(balance(&cli.ok(&["scan", "--name", "alice"])), 2200);
+    assert_eq!(balance(&cli.ok(&["scan", "--name", "bob"])), 2800);
+
+    // fresh funding addresses: `--new` hands out the next receive index,
+    // and coins sent there are found and spent
+    let fresh_funding = field(
+        &cli.ok(&["address", "--name", "alice", "--new"]),
+        "funding address:",
+    )
+    .to_string();
+    assert_ne!(fresh_funding, alice_funding);
+    assert_eq!(
+        field(&cli.ok(&["address", "--name", "alice"]), "funding address:"),
+        fresh_funding
+    );
+    shared.fund(&script_of(&fresh_funding), 30_000);
+    shared.mine(64);
+    // more than any one coin: the payment needs the fresh coin too
+    cli.ok(&[
+        "fund-send",
+        "--name",
+        "alice",
+        "--to",
+        &bob_funding,
+        "--amount",
+        "100000",
+        "--fee-rate",
+        "1",
+    ]);
+    shared.mine(65);
+    assert!(shared.utxos(&script_of(&fresh_funding)).is_empty());
+    cli.ok(&["sync"]);
+
     // withdraw: dust refused, then 1000 to alice's funding address
     cli.fails(
         &[
@@ -425,7 +659,7 @@ fn full_cycle_on_fake_node() {
     assert!(w.contains("operator pays"), "{w}");
     shared.mine(8);
     cli.ok(&["sync"]);
-    assert_eq!(balance(&cli.ok(&["scan", "--name", "bob"])), 1000);
+    assert_eq!(balance(&cli.ok(&["scan", "--name", "bob"])), 1800);
     let listed = cli.ok(&["payouts", "--name", "operator", "--no-broadcast"]);
     assert!(listed.contains("1 pending"), "{listed}");
     let paid = cli.ok(&["payouts", "--name", "operator", "--fee-rate", "1"]);

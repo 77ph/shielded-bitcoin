@@ -43,6 +43,14 @@ pub enum RejectReason {
     MintDiversifier,
 }
 
+/// What [`Indexer::check_transfer`] learned about a valid transfer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TransferCheck {
+    pub h_body: Fr,
+    pub h_anchor: u32,
+    pub nullifiers: [Fr; 2],
+}
+
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct BlockReport {
     pub accepted: usize,
@@ -171,6 +179,30 @@ impl Indexer {
         }
     }
 
+    /// Would this envelope be accepted if its carrier were included at
+    /// `height`? Read-only: profile §11 steps 1–6 against the current state.
+    /// A publisher that pays the carrier fee for someone else runs this
+    /// before spending (docs/BOUNDARY.md, "Fee funding"). Mints are not
+    /// checkable here (`None`): their validity depends on the carrier's
+    /// vault output.
+    pub fn check_transfer(
+        &self,
+        bytes: &[u8],
+        height: u32,
+    ) -> Result<Option<TransferCheck>, RejectReason> {
+        match parse_envelope(bytes)? {
+            Envelope::Mint(_) => Ok(None),
+            Envelope::Transfer(env) => {
+                let h_body = self.validate_transfer(height, &env)?;
+                Ok(Some(TransferCheck {
+                    h_body,
+                    h_anchor: env.body.h_anchor,
+                    nullifiers: env.body.nullifiers,
+                }))
+            }
+        }
+    }
+
     /// Validate and, if accepted, apply one transfer (profile §11).
     fn accept_transfer(
         &mut self,
@@ -179,6 +211,16 @@ impl Indexer {
         txid: [u8; 32],
         envelope: TransferEnvelope,
     ) -> Result<AcceptedEvent, RejectReason> {
+        let h_body = self.validate_transfer(height, &envelope)?;
+        self.apply_transfer(height, tx_index, txid, envelope, h_body)
+    }
+
+    /// Profile §11 steps 2–6; returns `h_body`.
+    fn validate_transfer(
+        &self,
+        height: u32,
+        envelope: &TransferEnvelope,
+    ) -> Result<Fr, RejectReason> {
         let body = &envelope.body;
         // 2. h_body
         let h_body = body.h_body(&self.deployment.const_salt);
@@ -219,8 +261,20 @@ impl Indexer {
         if !self.verifier.verify(&statement, &envelope.proof) {
             return Err(RejectReason::ProofInvalid);
         }
-        // 7. apply
-        let salt_fe = d.const_salt_fr();
+        Ok(h_body)
+    }
+
+    /// Profile §11 step 7.
+    fn apply_transfer(
+        &mut self,
+        height: u32,
+        tx_index: u32,
+        txid: [u8; 32],
+        envelope: TransferEnvelope,
+        h_body: Fr,
+    ) -> Result<AcceptedEvent, RejectReason> {
+        let body = &envelope.body;
+        let salt_fe = self.deployment.const_salt_fr();
         let first_position = self.state.tree.size();
         let mut leaves = Vec::with_capacity(N_OUT);
         for j in 0..N_OUT {

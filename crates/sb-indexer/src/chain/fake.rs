@@ -344,23 +344,31 @@ fn rpc(s: &Shared, req: &Value) -> (u16, Value) {
         }
         Some("scantxoutset") => {
             drop(chain);
-            let desc = params
+            // every `addr(...)` descriptor, like Core: each unspent names
+            // its scriptPubKey so the caller can tell them apart
+            let descs: Vec<String> = params
                 .get(1)
                 .and_then(|v| v.as_array())
-                .and_then(|a| a.first())
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            let addr = desc.trim_start_matches("addr(").trim_end_matches(')');
-            let script = addr
-                .parse::<bitcoin::Address<bitcoin::address::NetworkUnchecked>>()
-                .map(|a| a.assume_checked().script_pubkey())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(str::to_string))
+                        .collect()
+                })
                 .unwrap_or_default();
-            let unspents: Vec<Value> = s
-                .utxos(&script)
-                .into_iter()
-                .filter(|(_, _, h)| h.is_some())
-                .map(|(op, value, h)| json!({"txid": op.txid.to_string(), "vout": op.vout, "amount": value as f64 / 1e8, "height": h}))
-                .collect();
+            let mut unspents: Vec<Value> = Vec::new();
+            for desc in descs {
+                let addr = desc.trim_start_matches("addr(").trim_end_matches(')');
+                let script = addr
+                    .parse::<bitcoin::Address<bitcoin::address::NetworkUnchecked>>()
+                    .map(|a| a.assume_checked().script_pubkey())
+                    .unwrap_or_default();
+                unspents.extend(
+                    s.utxos(&script)
+                        .into_iter()
+                        .filter(|(_, _, h)| h.is_some())
+                        .map(|(op, value, h)| json!({"txid": op.txid.to_string(), "vout": op.vout, "scriptPubKey": hex::encode(script.as_bytes()), "amount": value as f64 / 1e8, "height": h})),
+                );
+            }
             ok(json!({"success": true, "unspents": unspents}))
         }
         Some("sendrawtransaction") => {

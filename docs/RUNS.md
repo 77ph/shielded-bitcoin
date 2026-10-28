@@ -87,3 +87,22 @@ mistake, not on the protocol: the requested amount was dust. `sb withdraw`
 now refuses amounts below 546 sat and `sb payouts` records such requests as
 refused instead of retrying them; Esplora rejection texts are surfaced.
 
+
+## Private signet, 28 October 2026: fee-funding models
+
+Same chain and wallets, continued at height 147 (alice 30 000, bob 15 000,
+operator 5 000 shielded). Two carriers that the sending wallet did **not**
+pay for:
+
+| Step | Height | Carrier | Size |
+|---|---|---|---|
+| alice pays bob 7 000 shielded, change 23 000, built with `--no-broadcast`; the unfunded template was funded, signed and sent by the node's own Bitcoin Core wallet (`fundrawtransaction` → `signrawtransactionwithwallet` → `sendrawtransaction`, taproot change) | 148 | `c1ae15857f6e7cfe86a7bc8b4d239da8750dc7bc85fbc4bc3cb66831396b2981` | 837 vB |
+| bob pays alice 4 000 shielded, change 18 000, handed to `sb relay-serve` run from the operator wallet (`sb send --relay http://127.0.0.1:8787`); the relayer replayed to 148, checked the envelope against the next block, paid and broadcast it | 149 | `66ec8c2cb395e18a5cd3690bd7da49ac08e40a55087e95fc79dabca893e27735` | 825 vB |
+
+End state at 149: 5 accepted events, alice 27 000, bob 18 000, operator
+5 000. Neither carrier spends a coin of the wallet that built the transfer.
+One lesson from the first attempt: a transaction with no inputs must be
+framed the legacy way (version, empty input list, outputs, lock time); the
+segwit framing puts a marker and flag where Core expects the input count
+and `fundrawtransaction` answers `TX decode failed`. `sb` now writes the
+template as Core's `createrawtransaction` does.

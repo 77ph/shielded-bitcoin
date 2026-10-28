@@ -26,7 +26,7 @@ soft fork or a hard fork.
 | Indexer | Bitcoin Core RPC / Esplora / Electrum / mock sources, carrier rule, normative acceptance order, per-block checkpoints with reorg rollback, JSON or PostgreSQL state |
 | Wallet | scanning and sender recovery, note selection, anchor policy, change, input locks, reorg-safe rescan |
 | Boundary | development **mint** into a custodial vault and **withdraw** via payout memos (`docs/BOUNDARY.md`) |
-| CLI | `sb`: profile, wallets, sync, scan, mint, send; publishes carriers through Esplora with a transparent funding key |
+| CLI | `sb`: profile, wallets, sync, scan, mint, send, withdraw, payouts; carriers self-funded (fresh addresses), externally funded (`--no-broadcast` + `publish`) or relayed (`relay-serve`, `--relay`) |
 
 Measured on this machine (release build): setup 1.5 s, prove 1.5 s,
 verify 4 ms, envelope 700 bytes, carrier ≈ 830 vB.
@@ -83,12 +83,16 @@ are not validated. For anything that holds value, run your own node and use
 the RPC source; that is also the assumption the paper makes about the
 publication layer.
 
-**Funding key.** Each wallet pays its carriers from one transparent P2WPKH
-address derived from its seed, with change returning to it. That address
-links every mint, transfer and withdraw the wallet publishes into one
-visible cluster. The shielded layer stays hidden, but this is the maximal
-form of the fee-funding exposure the paper leaves outside its privacy claims
-(§20.5); see "Funding key" in `docs/BOUNDARY.md`.
+**Fee funding.** A carrier's inputs link carriers at the Bitcoin layer,
+outside the paper's privacy claims (§20.5). `sb` offers three models, all
+outside the profile: self-funding from a per-wallet fee wallet with fresh
+addresses (the change chain still clusters a wallet's carriers), external
+funding of an unfunded carrier template by any other wallet (Bitcoin Core's
+`fundrawtransaction` or `sb publish --name <other wallet>`), and a sponsored
+relayer (`sb relay-serve`, `sb send --relay`) that checks and pays
+transfers from its own coins. Who pays, what each party sees and what
+happens when a service is down are stated per model in "Fee funding" in
+`docs/BOUNDARY.md`.
 
 Indexer state lives in a JSON file by default; `--db "<libpq string>"`
 (e.g. `host=/var/run/postgresql dbname=shielded_bitcoin`) keeps it in
@@ -163,8 +167,8 @@ to grow into a real indexer and wallet, and test-vector-first interoperability.
 6. ~~End-to-end runs on real nodes~~ (private and public signet, see
    `docs/RUNS.md`).
 7. ~~Encrypted wallet files~~, ~~profile versioning rules~~, ~~Electrum
-   source~~, ~~PostgreSQL-backed indexer state~~; fee-funding privacy
-   (relayer, external PSBT or fresh address per carrier), light-client
+   source~~, ~~PostgreSQL-backed indexer state~~, ~~fee-funding models
+   (fresh addresses, external funding, sponsored relayer)~~; light-client
    sync, ceremony tooling.
 
 Rust 1.85+ (edition 2024).

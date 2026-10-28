@@ -11,6 +11,6 @@ pub mod store;
 
 pub use chain::{BlockId, ChainError, ChainSource};
 pub use deployment::{Deployment, DeploymentError, Setup};
-pub use replay::{BlockReport, Indexer, RejectReason, SyncError, SyncReport};
+pub use replay::{BlockReport, Indexer, RejectReason, SyncError, SyncReport, TransferCheck};
 pub use state::{BlockCheckpoint, Rejection, ReplayState, StateError};
 pub use store::{JsonStore, PgStore, StateStore, StoreError};

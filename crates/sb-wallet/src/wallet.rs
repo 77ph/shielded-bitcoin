@@ -176,6 +176,12 @@ struct WalletFile {
     scanned_events: usize,
     last_scanned_txid: Option<String>,
     next_address_index: u64,
+    /// Next transparent funding receive index (deployment layer, docs/BOUNDARY.md).
+    #[serde(default)]
+    funding_receive: u32,
+    /// Next transparent funding change index.
+    #[serde(default)]
+    funding_change: u32,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -212,6 +218,10 @@ pub struct Wallet {
     pub scanned_events: usize,
     pub last_scanned_txid: Option<[u8; 32]>,
     pub next_address_index: u64,
+    /// Next transparent funding receive index (docs/BOUNDARY.md, "Fee funding").
+    pub funding_receive: u32,
+    /// Next transparent funding change index.
+    pub funding_change: u32,
 }
 
 impl Wallet {
@@ -229,6 +239,8 @@ impl Wallet {
             scanned_events: 0,
             last_scanned_txid: None,
             next_address_index: 0,
+            funding_receive: 0,
+            funding_change: 0,
         }
     }
 
@@ -307,6 +319,8 @@ impl Wallet {
             None => None,
         };
         w.next_address_index = f.next_address_index;
+        w.funding_receive = f.funding_receive;
+        w.funding_change = f.funding_change;
         Ok(w)
     }
 
@@ -337,6 +351,8 @@ impl Wallet {
             scanned_events: self.scanned_events,
             last_scanned_txid: self.last_scanned_txid.map(hex::encode),
             next_address_index: self.next_address_index,
+            funding_receive: self.funding_receive,
+            funding_change: self.funding_change,
         }
     }
 
@@ -614,6 +630,8 @@ mod private_branches {
             scanned_events: 0,
             last_scanned_txid: None,
             next_address_index: 0,
+            funding_receive: 0,
+            funding_change: 0,
         };
         assert!(matches!(
             Wallet::from_body(body, None),
