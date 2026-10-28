@@ -160,3 +160,30 @@ the server (glibc 2.35, where the glibc build did not) and replayed the
 private signet from the node there directly: 55 blocks, 5 accepted events,
 4 rejections (the two v0.1 envelopes and the two carriers of the ceremony
 deployment, which this deployment's key and vault refuse).
+
+## Drill, 28 October 2026: a two-role ceremony with a real beacon
+
+`scripts/ceremony.sh sb-data-drill mainnet:973580 "<entropy 1>" "<entropy 2>"`,
+both roles played on one laptop (the owner's drill format: the commands
+are those of a distributed ceremony, only the holder of the secrets is
+the same). 26 minutes end to end, every transition verified before the
+next role's turn, the full log with every digest in `sb-data-drill/LOG.md`
+(local, not committed):
+
+| Step | Result |
+|---|---|
+| phase 1, initial accumulator | digest `0863cd70…a32dee` |
+| phase 1, role 1 | digest `f971d51a…d97b55`, transition valid |
+| phase 1, role 2 | digest `0b4e77d7…e2a216`, transition valid |
+| key derivation | from digest `0b4e77d7…e2a216` |
+| phase 2, role 1 | contribution `35ad19df…50aae55` |
+| phase 2, role 2 | contribution `3aa9f44d…5df4fa` |
+| beacon | mainnet block 973580, hash `000000000000000000001b1ebd09f8cc443853440687acd474b0196c40681c98`, fetched after the last contribution; contribution `8967f221…b24a53` |
+| phase 2 verification against phase 1 | valid, 3 contributions |
+| export | `transfer.vk` sha256 `aa1303eb79d654343d8716a5af6c5acf9c0efdec370a91900b92cffd05900b03` |
+
+What the drill checks is the procedure and the tooling: that each file
+verifies against the previous one, that the beacon can be a public
+value chosen by height before anyone contributed, and that the log is
+enough for a third party to re-verify. What it does not give is secure
+keys: one person held every secret.

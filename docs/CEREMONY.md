@@ -40,6 +40,31 @@ powers, with batched pairing checks over random linear combinations. The
 digest a contributor publishes is the digest of their output file, so a
 coordinator cannot silently replace a contribution.
 
+### Importing a public transcript instead
+
+Phase 1 does not depend on the circuit, and its value lies in how many
+independent people contributed. The Zcash Sapling MPC (2018, about ninety
+participants, `2^21` powers) and Filecoin's extension of it (`2^27`)
+published their transcripts in the `powersoftau` response format, and
+most Groth16 deployments on BLS12-381 build on one of them rather than
+run their own phase 1.
+
+```sh
+sb ceremony phase1-import --response response_N --power 21 --out p1-imported.bin
+```
+
+reads the first `2n − 1` and `n` elements of each vector for the circuit's
+domain (seeking over the rest, so the 600 MB Sapling file is not loaded),
+validates every point and checks the accumulator's shape with the same
+pairing checks as a native contribution. What it cannot do is verify the
+ceremony's own chain of contributions, which needs every challenge and
+response: it prints the BLAKE2b-512 hash of the response and the hash of
+the challenge it answered, to compare with the ceremony's published
+record. The imported accumulator then takes phase 2 like any other. The
+point encoding is the Zcash one, which arkworks' BLS12-381 shares; the
+importer is tested on synthetic files in that format, not yet on the real
+transcripts (that is a download, not code).
+
 ## Key derivation
 
 ```sh
@@ -80,6 +105,18 @@ the verifying key's hash in a deployment profile with `"setup": {"kind":
 "ceremony", …}`; indexers need only the verifying key, wallets the proving
 key too.
 
+## Drills
+
+`scripts/ceremony.sh WORKDIR BEACON ENTROPY…` runs every step above for as
+many participants as entropy strings it gets, verifies each transition
+before the next participant's turn, takes the beacon either as a hash or
+as `mainnet:<height>` / `signet:<height>` (fetched from mempool.space once
+the block exists), exports the keys and writes `WORKDIR/LOG.md` with every
+digest and hash. The commands are the same whether one person plays all
+the roles on one machine, as in this project's drills, or each role runs
+on its own machine and the files travel between them; what changes is only
+who holds the secrets, and that is the whole point of a real ceremony.
+
 ## What it does and does not give
 
 * Secure keys if at least one participant per phase destroyed their
@@ -90,12 +127,15 @@ key too.
   of knowledge hold in the generic group model, as in BGM17.
 * The implementation is from scratch over arkworks. Transcript hashing is
   SHA-256 and hashing to `G2` samples a point from a ChaCha20 stream seeded
-  by SHA-256, instead of the BLAKE2b of the Sapling tools, so the files
-  are **not** interchangeable with Sapling or Filecoin transcripts;
-  reusing one of those public phase 1 transcripts would need a format
-  adapter, which does not exist yet. A real ceremony for this circuit
-  therefore runs its own phase 1.
+  by SHA-256, instead of the BLAKE2b of the Sapling tools, so our own
+  files are **not** interchangeable with Sapling or Filecoin transcripts.
+  A public phase 1 transcript can be imported (above); our phase 2 files
+  cannot be fed to their tools.
 * The tooling has not been reviewed by anyone outside this project. Before
   a ceremony whose keys will hold value, it should be.
 * Files are read with full point validation (subgroup checks), which takes
   a while for a `2^17` domain; that is deliberate.
+* A participant's secrets are never written to disk and are overwritten
+  in memory after the contribution, as far as the arithmetic allows (the
+  scalars are copied during the computation); a machine that swaps or
+  dumps core can still leak them, so contribute on a machine you trust.

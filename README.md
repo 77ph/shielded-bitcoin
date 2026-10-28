@@ -203,7 +203,8 @@ to grow into a real indexer and wallet, and test-vector-first interoperability.
    (fresh addresses, external funding, sponsored relayer)~~, ~~verified
    sync from an indexer (`sb serve`, `--chain light:`)~~, ~~ceremony
    tooling~~, ~~proving-key cache~~.
-8. Outside review of the ceremony tooling; a format adapter for public
-   powers-of-tau transcripts; a ceremony with independent participants.
+8. ~~Import of public powers-of-tau transcripts~~; outside review of the
+   ceremony tooling and a ceremony with independent participants are
+   operational steps for whoever deploys, not code.
 
 Rust 1.85+ (edition 2024).

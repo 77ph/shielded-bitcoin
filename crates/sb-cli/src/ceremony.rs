@@ -15,6 +15,7 @@ use sha2::{Digest, Sha256};
 use sb_ceremony::keygen::{domain_size, initial_proving_key};
 use sb_ceremony::phase1::Phase1;
 use sb_ceremony::phase2::Phase2;
+use sb_ceremony::powersoftau::import_response;
 use sb_ceremony::transcript::digest;
 use sb_circuit::{TransferCircuit, TransferParams, vk_sha256, vk_to_bytes};
 
@@ -37,6 +38,20 @@ pub enum CeremonyCmd {
         /// Extra entropy mixed into the secrets (type anything).
         #[arg(long)]
         entropy: Option<String>,
+    },
+    /// Import a public powers-of-tau transcript (Sapling `powersoftau` response format) as the phase 1 accumulator.
+    Phase1Import {
+        /// The response file of the ceremony's last contribution.
+        #[arg(long)]
+        response: PathBuf,
+        /// The ceremony's size as a power of two (21 for Sapling, 27 for Filecoin).
+        #[arg(long)]
+        power: u32,
+        #[arg(long)]
+        out: PathBuf,
+        /// Domain size to keep as a power of two (default: what the transfer circuit needs).
+        #[arg(long)]
+        domain_power: Option<u32>,
     },
     /// Check that `after` is a valid contribution on top of `before`.
     Phase1Verify {
@@ -152,6 +167,39 @@ pub fn run(cmd: CeremonyCmd) -> Result<()> {
             println!("contribution written to {}", out.display());
             println!("digest {}", hex::encode(d2));
             println!("publish this digest; the secrets were never written anywhere");
+        }
+        CeremonyCmd::Phase1Import {
+            response,
+            power,
+            out,
+            domain_power,
+        } => {
+            let needed = domain_size(TransferCircuit::default())?;
+            let n = match domain_power {
+                Some(p) if (1..=28).contains(&p) => 1usize << p,
+                Some(p) => bail!("domain power {p} is out of range (1..=28)"),
+                None => needed,
+            };
+            if n < needed {
+                bail!("the transfer circuit needs a domain of {needed}; {n} is too small");
+            }
+            let file =
+                std::fs::File::open(&response).with_context(|| response.display().to_string())?;
+            eprintln!("reading a 2^{power} response, keeping a domain of {n}…");
+            let imp = import_response(std::io::BufReader::new(file), power, n)?;
+            eprintln!("checking the accumulator's shape…");
+            imp.phase1.verify_shape(&mut rng_for_checks)?;
+            let d = write_file(&out, &imp.phase1.to_bytes()?)?;
+            println!("phase 1 accumulator written to {}", out.display());
+            println!("digest {}", hex::encode(d));
+            println!(
+                "the response answers a challenge with hash {}",
+                hex::encode(imp.challenge_hash)
+            );
+            println!(
+                "response hash {} (compare with the ceremony's published record)",
+                hex::encode(imp.response_hash)
+            );
         }
         CeremonyCmd::Phase1Verify { before, after } => {
             let (b, d) = read_phase1(&before)?;

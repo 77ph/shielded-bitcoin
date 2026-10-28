@@ -18,12 +18,14 @@
 //! of knowledge is bound to the digest of the state it was made from.
 //! Transcript hashing and hashing to `G2` use SHA-256 and a ChaCha20
 //! sampler rather than the BLAKE2b of the Sapling tools, so the files are
-//! not interchangeable with those; importing a public powers-of-tau
-//! transcript would need a format adapter.
+//! not interchangeable with those. A public powers-of-tau transcript in the
+//! Sapling `powersoftau` response format can be imported as a phase 1
+//! accumulator instead ([`powersoftau`]).
 
 pub mod keygen;
 pub mod phase1;
 pub mod phase2;
+pub mod powersoftau;
 pub mod transcript;
 
 pub use ark_bls12_381::{Bls12_381, Fr, G1Affine, G1Projective, G2Affine, G2Projective};

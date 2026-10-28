@@ -89,10 +89,17 @@ impl Phase2 {
         h.finalize().into()
     }
 
-    fn apply(&self, delta: Fr, s: G1Affine) -> CeremonyResult<Self> {
-        let delta_inv = delta
+    fn apply(&self, mut delta: Fr, s: G1Affine) -> CeremonyResult<Self> {
+        let mut delta_inv = delta
             .inverse()
             .ok_or_else(|| CeremonyError::Invalid("zero delta".into()))?;
+        let out = self.apply_inner(delta, delta_inv, s);
+        crate::phase1::wipe(&mut delta);
+        crate::phase1::wipe(&mut delta_inv);
+        out
+    }
+
+    fn apply_inner(&self, delta: Fr, delta_inv: Fr, s: G1Affine) -> CeremonyResult<Self> {
         let mut pk = self.pk.clone();
         pk.delta_g1 = (pk.delta_g1 * delta).into_affine();
         pk.vk.delta_g2 = (pk.vk.delta_g2 * delta).into_affine();
@@ -124,9 +131,11 @@ impl Phase2 {
 
     /// Contribute a fresh random `δ'`; it exists only inside this call.
     pub fn contribute<R: RngCore + CryptoRng>(&self, rng: &mut R) -> CeremonyResult<Self> {
-        let delta = Fr::rand(rng);
+        let mut delta = Fr::rand(rng);
         let s = G1Projective::rand(rng).into_affine();
-        self.apply(delta, s)
+        let out = self.apply(delta, s);
+        crate::phase1::wipe(&mut delta);
+        out
     }
 
     /// The final contribution from a public random beacon (a value nobody

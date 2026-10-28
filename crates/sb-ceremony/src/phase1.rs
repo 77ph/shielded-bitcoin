@@ -17,6 +17,19 @@ use ark_ff::{Field, UniformRand};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Read, Write};
 use rand::{CryptoRng, RngCore};
 use rayon::prelude::*;
+use zeroize::Zeroize;
+
+/// Overwrite a scalar's limbs. The scalars are `Copy`, so this clears what
+/// we hold, not every copy the arithmetic made: best effort.
+pub(crate) fn wipe(x: &mut Fr) {
+    x.0.0.zeroize();
+}
+
+pub(crate) fn wipe_all(v: &mut [Fr]) {
+    for x in v {
+        wipe(x);
+    }
+}
 
 use crate::transcript::{
     hash_to_g2, point_bytes, power_pairs_g1, power_pairs_g2, same_ratio, valid_g1, valid_g2,
@@ -152,10 +165,14 @@ impl Phase1 {
     /// `digest` is the digest of the file this accumulator was read from.
     /// The secrets exist only inside this call.
     pub fn contribute<R: RngCore + CryptoRng>(&self, digest: [u8; 32], rng: &mut R) -> Self {
-        let tau = Fr::rand(rng);
-        let alpha = Fr::rand(rng);
-        let beta = Fr::rand(rng);
-        self.contribute_with(tau, alpha, beta, digest, rng)
+        let mut tau = Fr::rand(rng);
+        let mut alpha = Fr::rand(rng);
+        let mut beta = Fr::rand(rng);
+        let out = self.contribute_with(tau, alpha, beta, digest, rng);
+        wipe(&mut tau);
+        wipe(&mut alpha);
+        wipe(&mut beta);
+        out
     }
 
     /// [`Self::contribute`] with the secrets chosen by the caller: for
@@ -173,10 +190,10 @@ impl Phase1 {
             alpha: Pok::make(alpha, b"alpha", &digest, rng),
             beta: Pok::make(beta, b"beta", &digest, rng),
         };
-        let tau_powers = powers(tau, 2 * self.n - 1);
-        let alpha_tau: Vec<Fr> = tau_powers[..self.n].iter().map(|t| *t * alpha).collect();
-        let beta_tau: Vec<Fr> = tau_powers[..self.n].iter().map(|t| *t * beta).collect();
-        Phase1 {
+        let mut tau_powers = powers(tau, 2 * self.n - 1);
+        let mut alpha_tau: Vec<Fr> = tau_powers[..self.n].iter().map(|t| *t * alpha).collect();
+        let mut beta_tau: Vec<Fr> = tau_powers[..self.n].iter().map(|t| *t * beta).collect();
+        let out = Phase1 {
             n: self.n,
             prev_digest: digest,
             key: Some(key),
@@ -185,7 +202,11 @@ impl Phase1 {
             alpha_tau_g1: scale_g1(&self.alpha_tau_g1, &alpha_tau),
             beta_tau_g1: scale_g1(&self.beta_tau_g1, &beta_tau),
             beta_g2: (self.beta_g2 * beta).into_affine(),
-        }
+        };
+        wipe_all(&mut tau_powers);
+        wipe_all(&mut alpha_tau);
+        wipe_all(&mut beta_tau);
+        out
     }
 
     /// Is `after` a valid contribution on top of `before`, whose file has
@@ -265,6 +286,15 @@ impl Phase1 {
         }
         if !same_ratio(power_pairs_g1(&self.beta_tau_g1, rng), tau_g2) {
             return Err(bad("beta powers are inconsistent"));
+        }
+        // the same β in G1 and G2, so the shape check stands on its own
+        // (a key derived from an accumulator failing this would verify no
+        // honest proof)
+        if !same_ratio(
+            (self.tau_g1[0], self.beta_tau_g1[0]),
+            (self.tau_g2[0], self.beta_g2),
+        ) {
+            return Err(bad("beta differs between G1 and G2"));
         }
         Ok(())
     }
@@ -403,6 +433,15 @@ mod tests {
         t.beta_g2 = p1.beta_g2;
         let e = Phase1::verify_transition(&p1, d1, &t, &mut rng).unwrap_err();
         assert!(e.to_string().contains("beta differs"), "{e}");
+        // beta applied to G1 but not G2 is a shape failure on its own
+        let mut t = p2.clone();
+        t.beta_g2 = p1.beta_g2;
+        assert!(
+            t.verify_shape(&mut rng)
+                .unwrap_err()
+                .to_string()
+                .contains("beta differs")
+        );
         // index 0 replaced
         let mut t = p2.clone();
         t.tau_g1[0] = t.tau_g1[1];

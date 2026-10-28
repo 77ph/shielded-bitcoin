@@ -1954,6 +1954,7 @@ dependencies = [
  "ark-serialize",
  "ark-snark",
  "ark-std",
+ "blake2",
  "hex",
  "rand 0.8.8",
  "rand_chacha 0.3.1",
@@ -1963,6 +1964,7 @@ dependencies = [
  "sb-primitives",
  "sha2 0.10.9",
  "thiserror",
+ "zeroize",
 ]
 
 [[package]]

@@ -256,6 +256,80 @@ fn ceremony_commands_and_a_ceremony_profile() {
         "not a phase 2",
     );
 
+    // the import path: a synthetic 2^17 response in the powersoftau format
+    // from a native accumulator, imported, contributed to, and taken
+    // through phase 2 like any other
+    {
+        use sb_ceremony::phase1::Phase1;
+        use sb_ceremony::powersoftau::{HASH_SIZE, write_response};
+        use sb_ceremony::transcript::digest;
+        let base = Phase1::read(&std::fs::read(dir.join("p1-1.bin")).unwrap()[..]).unwrap();
+        let mut file =
+            std::io::BufWriter::new(std::fs::File::create(dir.join("response_17")).unwrap());
+        write_response(&base, 17, &[1u8; HASH_SIZE], &[0u8; 1152], &mut file).unwrap();
+        drop(file);
+        let imported = ok(&[
+            "ceremony",
+            "phase1-import",
+            "--response",
+            &p("response_17"),
+            "--power",
+            "17",
+            "--out",
+            &p("p1-imp.bin"),
+        ]);
+        assert!(imported.contains("response hash"), "{imported}");
+        fails(
+            &[
+                "ceremony",
+                "phase1-import",
+                "--response",
+                &p("response_17"),
+                "--power",
+                "18",
+                "--out",
+                &p("x.bin"),
+            ],
+            "bytes",
+        );
+        fails(
+            &[
+                "ceremony",
+                "phase1-import",
+                "--response",
+                &p("response_17"),
+                "--power",
+                "17",
+                "--out",
+                &p("x.bin"),
+                "--domain-power",
+                "16",
+            ],
+            "too small",
+        );
+        let imp = Phase1::read(&std::fs::read(dir.join("p1-imp.bin")).unwrap()[..]).unwrap();
+        assert_eq!(imp.tau_g1, base.tau_g1);
+        assert!(imp.key.is_none());
+        assert_eq!(imp.prev_digest.len(), digest(b"x").len());
+        ok(&[
+            "ceremony",
+            "phase1-contribute",
+            "--in",
+            &p("p1-imp.bin"),
+            "--out",
+            &p("p1-imp-1.bin"),
+        ]);
+        ok(&[
+            "ceremony",
+            "phase1-verify",
+            "--before",
+            &p("p1-imp.bin"),
+            "--after",
+            &p("p1-imp-1.bin"),
+        ]);
+        eprintln!("import path: {:?}", t.elapsed());
+    }
+
     // a profile pinned to the ceremony, and a transfer proven with its key
     let mut chain = MockChain::new(10);
     chain.push_block(vec![]);

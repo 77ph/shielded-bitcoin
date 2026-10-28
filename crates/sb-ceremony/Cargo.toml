@@ -20,6 +20,8 @@ rand.workspace = true
 rand_chacha.workspace = true
 rayon.workspace = true
 sha2.workspace = true
+blake2.workspace = true
+zeroize.workspace = true
 thiserror.workspace = true
 hex.workspace = true
 
