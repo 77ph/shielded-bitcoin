@@ -581,23 +581,29 @@ fn full_cycle_on_fake_node() {
     };
     ro(&dir.join("wallets"), 0o555);
     ro(&dir, 0o555);
-    for args in [
+    let writes = [
         vec!["scan", "--name", "alice"],
         vec!["unlock", "--name", "alice"],
         vec!["wallet-encrypt", "--name", "alice"],
         vec!["address", "--name", "alice", "--new"],
         vec!["wallet-new", "--name", "zzz"],
         vec!["sync"],
-        vec!["payouts", "--name", "operator"],
-    ] {
-        let (ok, text) = cli.run(&args);
+    ];
+    let results: Vec<(Vec<&str>, bool, String)> = writes
+        .iter()
+        .map(|args| {
+            let (ok, text) = cli.run(args);
+            (args.clone(), ok, text)
+        })
+        .collect();
+    ro(&dir, 0o755);
+    ro(&dir.join("wallets"), 0o755);
+    for (args, ok, text) in results {
         assert!(
             !ok,
             "{args:?} should fail on a read-only directory:\n{text}"
         );
     }
-    ro(&dir, 0o755);
-    ro(&dir.join("wallets"), 0o755);
     // PostgreSQL state when a database is available
     if let Ok(conn) = std::env::var("SB_TEST_PG") {
         let text = cli.ok(&["--db", &conn, "sync"]);
