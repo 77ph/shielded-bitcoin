@@ -26,6 +26,10 @@ pub struct Shared {
     pub truncate: Arc<AtomicBool>,
     /// Electrum: close the connection after the next request (reconnect test).
     pub drop_next: Arc<AtomicBool>,
+    /// Electrum: close the connection when the next request is a batch.
+    pub drop_next_batch: Arc<AtomicBool>,
+    /// Electrum: send an id-less notification line before the next answer.
+    pub notify_first: Arc<AtomicBool>,
 }
 
 impl Shared {
@@ -35,6 +39,8 @@ impl Shared {
             mempool: Arc::new(Mutex::new(Vec::new())),
             truncate: Arc::new(AtomicBool::new(false)),
             drop_next: Arc::new(AtomicBool::new(false)),
+            drop_next_batch: Arc::new(AtomicBool::new(false)),
+            notify_first: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -405,6 +411,12 @@ impl FakeElectrum {
     /// TLS variant with a fresh self-signed certificate; returns the server
     /// and the certificate's SHA-256 fingerprint (what a client would pin).
     pub fn start_tls(shared: Shared) -> (Self, [u8; 32]) {
+        Self::start_tls_with(shared, false)
+    }
+
+    /// `tls12_only` restricts the server to TLS 1.2 (the client's TLS 1.2
+    /// signature path is otherwise never taken).
+    pub fn start_tls_with(shared: Shared, tls12_only: bool) -> (Self, [u8; 32]) {
         let certified = rcgen::generate_simple_self_signed(vec![
             "localhost".to_string(),
             "127.0.0.1".to_string(),
@@ -414,14 +426,20 @@ impl FakeElectrum {
         let fingerprint = sha256::Hash::hash(cert_der.as_ref()).to_byte_array();
         let key =
             rustls::pki_types::PrivateKeyDer::Pkcs8(certified.key_pair.serialize_der().into());
-        let config = rustls::ServerConfig::builder_with_provider(StdArc::new(
+        let builder = rustls::ServerConfig::builder_with_provider(StdArc::new(
             rustls::crypto::ring::default_provider(),
-        ))
-        .with_safe_default_protocol_versions()
-        .unwrap()
-        .with_no_client_auth()
-        .with_single_cert(vec![cert_der], key)
-        .unwrap();
+        ));
+        let builder = if tls12_only {
+            builder
+                .with_protocol_versions(&[&rustls::version::TLS12])
+                .unwrap()
+        } else {
+            builder.with_safe_default_protocol_versions().unwrap()
+        };
+        let config = builder
+            .with_no_client_auth()
+            .with_single_cert(vec![cert_der], key)
+            .unwrap();
         let config = StdArc::new(config);
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
@@ -454,6 +472,15 @@ fn handle_electrum<S: Read + Write>(conn: S, s: &Shared) {
             Ok(v) => v,
             Err(_) => return,
         };
+        if req.is_array() && s.drop_next_batch.swap(false, Ordering::SeqCst) {
+            return;
+        }
+        if s.notify_first.swap(false, Ordering::SeqCst) {
+            let note = "{\"jsonrpc\":\"2.0\",\"method\":\"blockchain.headers.subscribe\",\"params\":[{\"height\":0,\"hex\":\"\"}]}\n";
+            if reader.get_mut().write_all(note.as_bytes()).is_err() {
+                return;
+            }
+        }
         let resp = match req {
             Value::Array(items) => Value::Array(items.iter().map(|r| electrum_one(s, r)).collect()),
             other => electrum_one(s, &other),

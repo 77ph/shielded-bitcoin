@@ -187,3 +187,16 @@ fn electrum_tls_pinning_offline() {
     let hash = good.block_hash(102).unwrap().unwrap();
     assert_eq!(good.block(&hash).unwrap().txdata.len(), 2);
 }
+
+#[test]
+fn electrum_tls12_pinned() {
+    let shared = chain();
+    let (srv, fp) = FakeElectrum::start_tls_with(shared.clone(), true);
+    let good = Electrum::new(&format!(
+        "ssl-pin://127.0.0.1:{}/{}",
+        srv.addr.port(),
+        hex::encode(fp)
+    ))
+    .unwrap();
+    assert_eq!(good.tip().unwrap().height, 102);
+}
