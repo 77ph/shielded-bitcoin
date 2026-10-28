@@ -40,6 +40,9 @@ pub struct DevBoundary {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Deployment {
+    /// `docs/PROFILE.md` version this deployment follows (must equal
+    /// `sb_core::PROFILE_VERSION`).
+    pub profile: String,
     pub name: String,
     pub network: Network,
     /// First block height replay looks at.
@@ -67,6 +70,8 @@ pub enum DeploymentError {
     Proof(#[from] sb_circuit::ProofError),
     #[error("verifying key hash mismatch: profile pins {expected}, keys give {got}")]
     VkMismatch { expected: String, got: String },
+    #[error("deployment follows profile {found} but this build implements {expected}")]
+    ProfileMismatch { found: String, expected: String },
 }
 
 impl Deployment {
@@ -84,7 +89,14 @@ impl Deployment {
     }
 
     pub fn from_json(json: &str) -> Result<Self, DeploymentError> {
-        Ok(serde_json::from_str(json)?)
+        let d: Deployment = serde_json::from_str(json)?;
+        if d.profile != sb_core::PROFILE_VERSION {
+            return Err(DeploymentError::ProfileMismatch {
+                found: d.profile,
+                expected: sb_core::PROFILE_VERSION.to_string(),
+            });
+        }
+        Ok(d)
     }
 
     pub fn load(path: &Path) -> Result<Self, DeploymentError> {
@@ -147,6 +159,7 @@ mod tests {
     #[test]
     fn json_round_trip() {
         let d = Deployment {
+            profile: sb_core::PROFILE_VERSION.into(),
             name: "regtest-dev".into(),
             network: Network::Regtest,
             activation_height: 100,
@@ -160,5 +173,13 @@ mod tests {
         let json = d.to_json();
         assert!(json.contains("\"insecure-seed\""));
         assert_eq!(Deployment::from_json(&json).unwrap(), d);
+        let other = json.replace(
+            &format!("\"profile\": \"{}\"", sb_core::PROFILE_VERSION),
+            "\"profile\": \"0.0\"",
+        );
+        assert!(matches!(
+            Deployment::from_json(&other),
+            Err(DeploymentError::ProfileMismatch { .. })
+        ));
     }
 }

@@ -10,3 +10,8 @@ pub mod recovery;
 pub mod tree;
 
 pub use sb_primitives::{Fr, Jubjub, JubjubAffine, JubjubScalar};
+
+/// Version of docs/PROFILE.md this code implements. A deployment profile
+/// names the version it was written for and is refused on mismatch
+/// (PROFILE.md §13).
+pub const PROFILE_VERSION: &str = "0.2";

@@ -1,4 +1,5 @@
 {
+  "profile": "0.2",
   "name": "localsignet-dev",
   "network": "signet",
   "activation_height": 100,

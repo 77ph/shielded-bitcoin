@@ -27,6 +27,7 @@ impl World {
     fn new() -> Self {
         let params = TransferParams::insecure_setup(&[0u8; 32]).unwrap();
         let deployment = Deployment {
+            profile: sb_core::PROFILE_VERSION.into(),
             name: "mock".into(),
             network: Network::Regtest,
             activation_height: ACTIVATION,

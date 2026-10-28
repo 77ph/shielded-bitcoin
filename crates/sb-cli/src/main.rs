@@ -324,6 +324,7 @@ fn main() -> Result<()> {
         eprintln!("running the insecure setup to pin the verifying key…");
         let params = sb_circuit::TransferParams::insecure_setup(&seed)?;
         let d = Deployment {
+            profile: sb_core::PROFILE_VERSION.into(),
             name: name.clone(),
             network,
             activation_height: *activation,

@@ -25,6 +25,7 @@ fn mint_pay_change_persist_reorg() {
     let params = TransferParams::insecure_setup(&[0u8; 32]).unwrap();
     let vault = ScriptBuf::from_bytes(vec![0x51]);
     let deployment = Deployment {
+        profile: sb_core::PROFILE_VERSION.into(),
         name: "mock-boundary".into(),
         network: Network::Regtest,
         activation_height: ACTIVATION,

@@ -405,7 +405,25 @@ events) and rolls back to the fork point, then replays forward.
 | DiversifyHash unspecified | §4.2 | — |
 | Public statement listed as a tuple | identical, 16 `Fr` public inputs, no projection | — |
 
-## 13. Changelog
+## 13. Versioning
+
+* The **profile version** (`vMAJOR.MINOR`, this document's title) names the
+  bundle of choices in §1–§11. A deployment profile (§9) carries `"profile"`,
+  and an implementation refuses a deployment written for another version:
+  two implementations that disagree on the profile would derive divergent
+  state from the same chain (paper §A).
+* The **wire version byte** (`version = 1`, §7.1) is what envelopes carry.
+  While the profile is a draft (`0.x`) it stays `1` and every incompatible
+  change bumps the profile MINOR; envelopes of an older draft are simply
+  invalid under the newer one (§11 step 1) and are listed as rejections.
+  From `1.0` on, any change that alters acceptance of an envelope bumps the
+  wire version byte, old-version envelopes keep being accepted by the rules
+  of their version, and a deployment states the heights at which each
+  version is active.
+* Local choices (`K_wallet`, storage layout, chain source) never affect the
+  profile version.
+
+### Changelog
 
 * **v0.2** — `ct_out` made key-committing with a 32-byte zero prefix
   (padding fix), closing the last departure of §12 that weakened a property

@@ -312,7 +312,16 @@ impl Indexer {
 
         let mut h = self.next_height();
         while h <= tip.height {
-            let Some(hash) = chain.block_hash(h)? else {
+            // An Esplora tip height can run ahead of its block-hash lookup for a
+            // few seconds; retry briefly before giving up on this round.
+            let mut hash = chain.block_hash(h)?;
+            let mut tries = 0;
+            while hash.is_none() && tries < 10 {
+                tries += 1;
+                std::thread::sleep(std::time::Duration::from_secs(3));
+                hash = chain.block_hash(h)?;
+            }
+            let Some(hash) = hash else {
                 break;
             };
             let block = chain.block(&hash)?;

@@ -1,4 +1,5 @@
 {
+  "profile": "0.2",
   "name": "signet-dev-2",
   "network": "signet",
   "activation_height": 328300,
