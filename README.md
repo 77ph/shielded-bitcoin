@@ -23,7 +23,7 @@ soft fork or a hard fork.
 | Primitives | Poseidon (native + R1CS, pinned constants), Jubjub encodings, DiversifyHash |
 | Core | key hierarchy, bech32m addresses, note encryption, leaves, nullifiers, 700-byte canonical envelope, note tree with historical paths |
 | Circuit | 2-in/2-out transfer relation, 84 362 constraints, Groth16/BLS12-381; prove ≈ 1.5 s, verify ≈ 4 ms (16 threads) |
-| Indexer | Bitcoin Core RPC / Esplora / Electrum / mock sources, carrier rule, normative acceptance order, per-block checkpoints with reorg rollback, JSON state |
+| Indexer | Bitcoin Core RPC / Esplora / Electrum / mock sources, carrier rule, normative acceptance order, per-block checkpoints with reorg rollback, JSON or PostgreSQL state |
 | Wallet | scanning and sender recovery, note selection, anchor policy, change, input locks, reorg-safe rescan |
 | Boundary | development **mint** into a custodial vault and **withdraw** via payout memos (`docs/BOUNDARY.md`) |
 | CLI | `sb`: profile, wallets, sync, scan, mint, send; publishes carriers through Esplora with a transparent funding key |
@@ -71,6 +71,12 @@ certificate fingerprint: `sb electrum-fingerprint host:port`, then
 (UTXOs via `scantxoutset`, broadcast via `sendrawtransaction`, no node
 wallet needed). Everything under `sb-data*/` is local and git-ignored.
 
+Indexer state lives in a JSON file by default; `--db "<libpq string>"`
+(e.g. `host=/var/run/postgresql dbname=shielded_bitcoin`) keeps it in
+PostgreSQL instead, one transaction per replayed block, rolled back by
+height on a reorganisation. Tables are shared across deployments and keyed
+by deployment name.
+
 Wallet files are encrypted with a passphrase (Argon2id, 64 MiB / 3 passes,
 then ChaCha20-Poly1305). The passphrase comes from `--passphrase-file`, the
 `SB_WALLET_PASSPHRASE` environment variable, or a terminal prompt.
@@ -97,7 +103,8 @@ violation, every public input bound by the proof, replay acceptance and all
 rejection classes, reorg rollback, fresh-replay determinism, state and wallet
 persistence, and a two-wallet mint → pay → change → reorg → repay flow.
 `cargo test -p sb-indexer --release --test esplora_live -- --ignored` and
-`--test electrum_live` hit public signet.
+`--test electrum_live` hit public signet; `--test pg_store` needs
+`SB_TEST_PG` pointing at a PostgreSQL database.
 
 ## Prior art
 
@@ -120,6 +127,7 @@ to grow into a real indexer and wallet, and test-vector-first interoperability.
 6. ~~End-to-end run on a real node~~ (private signet, see `docs/RUNS.md`);
    public signet run waits for coins on the funding address.
 7. ~~Encrypted wallet files~~, ~~profile versioning rules~~, ~~Electrum
-   source~~; light-client sync, ceremony tooling.
+   source~~, ~~PostgreSQL-backed indexer state~~; light-client sync,
+   ceremony tooling.
 
 Rust 1.85+ (edition 2024).
