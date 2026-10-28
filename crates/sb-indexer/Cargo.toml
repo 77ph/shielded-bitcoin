@@ -24,6 +24,7 @@ rustls.workspace = true
 webpki-roots.workspace = true
 
 [dev-dependencies]
+hex.workspace = true
 sb-wallet.workspace = true
 rand.workspace = true
 rand_chacha.workspace = true

@@ -64,8 +64,10 @@ $SB payouts --name operator            # operator: pays pending withdraw request
 `--chain` selects the block source and the publisher: `esplora:<url>`
 (default mempool.space signet), `electrum:ssl://host:port` (also `tcp://`;
 blocks are rebuilt from `id_from_pos` + `transaction.get` in batches and
-checked against the header's merkle root; the server certificate must be
-publicly valid), `rpc:<url>:<user>:<pass>` or `rpc-cookie:<url>:<path>`
+checked against the header's merkle root; a self-signed server is pinned by
+certificate fingerprint: `sb electrum-fingerprint host:port`, then
+`electrum:ssl-pin://host:port/<sha256>`), `rpc:<url>:<user>:<pass>` or
+`rpc-cookie:<url>:<path>`
 (UTXOs via `scantxoutset`, broadcast via `sendrawtransaction`, no node
 wallet needed). Everything under `sb-data*/` is local and git-ignored.
 

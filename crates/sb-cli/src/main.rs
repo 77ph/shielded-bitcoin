@@ -37,7 +37,7 @@ struct Cli {
     /// File holding the wallet passphrase (else `SB_WALLET_PASSPHRASE`, else a prompt).
     #[arg(long, global = true)]
     passphrase_file: Option<PathBuf>,
-    /// Block source: `esplora:<url>`, `electrum:ssl://host:port` (or `tcp://`),
+    /// Block source: `esplora:<url>`, `electrum:ssl://host:port` (or `ssl-pin://host:port/<sha256>`, `tcp://`),
     /// `rpc:<url>:<user>:<pass>` or `rpc-cookie:<url>:<cookie-path>`.
     #[arg(
         long,
@@ -160,6 +160,11 @@ enum Cmd {
         amount: u64,
         #[arg(long, default_value = "1")]
         fee_rate: u64,
+    },
+    /// Show the TLS certificate fingerprint of an Electrum server for `ssl-pin://` (trust on first use).
+    ElectrumFingerprint {
+        /// `host:port`
+        server: String,
     },
     /// Release input locks left by unpublished transfers.
     Unlock {
@@ -500,6 +505,18 @@ fn main() -> Result<()> {
             let tx = fk.build_tx(&utxos, vec![out], fee_rate)?;
             let txid = publisher.broadcast(&tx)?;
             println!("paid {amount} sat to {dest} in {txid} ({} vB)", tx.vsize());
+        }
+        Cmd::ElectrumFingerprint { server } => {
+            let (host, port) = server
+                .rsplit_once(':')
+                .ok_or_else(|| anyhow!("expected host:port"))?;
+            let fp = sb_indexer::chain::electrum::Electrum::fingerprint(host, port.parse()?)?;
+            println!("{}", hex::encode(fp));
+            println!(
+                "use: --chain electrum:ssl-pin://{host}:{port}/{}",
+                hex::encode(fp)
+            );
+            println!("verify this fingerprint out of band before trusting it");
         }
         Cmd::Unlock { name } => {
             let mut w = ctx.wallet(&name)?;

@@ -24,10 +24,138 @@ use super::{BlockId, ChainError, ChainSource};
 trait ReadWrite: Read + Write {}
 impl<T: Read + Write> ReadWrite for T {}
 
+/// SHA-256 of a DER certificate, the fingerprint Electrum clients pin.
+fn fingerprint(cert: &rustls::pki_types::CertificateDer<'_>) -> [u8; 32] {
+    sha256::Hash::hash(cert.as_ref()).to_byte_array()
+}
+
+/// Accepts exactly one server certificate, identified by its SHA-256
+/// fingerprint (`ssl-pin://`): the usual Electrum trust-on-first-use pin.
+/// TLS signatures are still verified with the provider's algorithms.
+#[derive(Debug)]
+struct PinnedCert {
+    pin: [u8; 32],
+    provider: Arc<rustls::crypto::CryptoProvider>,
+}
+
+impl rustls::client::danger::ServerCertVerifier for PinnedCert {
+    fn verify_server_cert(
+        &self,
+        end_entity: &rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        _server_name: &rustls::pki_types::ServerName<'_>,
+        _ocsp: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        if fingerprint(end_entity) == self.pin {
+            Ok(rustls::client::danger::ServerCertVerified::assertion())
+        } else {
+            Err(rustls::Error::InvalidCertificate(
+                rustls::CertificateError::ApplicationVerificationFailure,
+            ))
+        }
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(
+            message,
+            cert,
+            dss,
+            &self.provider.signature_verification_algorithms,
+        )
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(
+            message,
+            cert,
+            dss,
+            &self.provider.signature_verification_algorithms,
+        )
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        self.provider
+            .signature_verification_algorithms
+            .supported_schemes()
+    }
+}
+
+/// Records the fingerprint of the certificate a server presents and then
+/// rejects the handshake, so [`Electrum::fingerprint`] never exchanges
+/// application data with an unverified peer.
+#[derive(Debug)]
+struct CaptureFingerprint {
+    seen: std::sync::Mutex<Option<[u8; 32]>>,
+    provider: Arc<rustls::crypto::CryptoProvider>,
+}
+
+impl rustls::client::danger::ServerCertVerifier for CaptureFingerprint {
+    fn verify_server_cert(
+        &self,
+        end_entity: &rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        _server_name: &rustls::pki_types::ServerName<'_>,
+        _ocsp: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        *self.seen.lock().unwrap() = Some(fingerprint(end_entity));
+        Err(rustls::Error::InvalidCertificate(
+            rustls::CertificateError::ApplicationVerificationFailure,
+        ))
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(
+            message,
+            cert,
+            dss,
+            &self.provider.signature_verification_algorithms,
+        )
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(
+            message,
+            cert,
+            dss,
+            &self.provider.signature_verification_algorithms,
+        )
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        self.provider
+            .signature_verification_algorithms
+            .supported_schemes()
+    }
+}
+
 pub struct Electrum {
     host: String,
     port: u16,
     tls: bool,
+    /// `ssl-pin://`: accept only the certificate with this SHA-256 fingerprint.
+    pin: Option<[u8; 32]>,
     stream: RefCell<Option<BufReader<Box<dyn ReadWrite>>>>,
     next_id: Cell<u64>,
     /// `block_hash` results, so `block(hash)` knows the height.
@@ -35,14 +163,29 @@ pub struct Electrum {
 }
 
 impl Electrum {
-    /// `url` like `ssl://mempool.space:60602` or `tcp://host:50001`.
+    /// `url` like `ssl://mempool.space:60602` (certificate checked against the
+    /// public roots), `ssl-pin://host:port/<sha256-hex>` (self-signed server
+    /// pinned by fingerprint, see [`Electrum::fingerprint`]) or `tcp://host:50001`.
     pub fn new(url: &str) -> Result<Self, ChainError> {
-        let (tls, rest) = if let Some(r) = url.strip_prefix("ssl://") {
-            (true, r)
+        let (tls, rest, pin) = if let Some(r) = url.strip_prefix("ssl-pin://") {
+            let (hp, fp) = r.split_once('/').ok_or_else(|| {
+                ChainError::Rpc(format!(
+                    "electrum url {url:?}: expected ssl-pin://host:port/<sha256-hex>"
+                ))
+            })?;
+            let fp: [u8; 32] = hex::decode(fp)
+                .ok()
+                .and_then(|v| v.try_into().ok())
+                .ok_or_else(|| {
+                    ChainError::Rpc("ssl-pin fingerprint must be 32 bytes of hex".into())
+                })?;
+            (true, hp, Some(fp))
+        } else if let Some(r) = url.strip_prefix("ssl://") {
+            (true, r, None)
         } else if let Some(r) = url.strip_prefix("tcp://") {
-            (false, r)
+            (false, r, None)
         } else {
-            (true, url)
+            (true, url, None)
         };
         let (host, port) = rest
             .rsplit_once(':')
@@ -54,31 +197,89 @@ impl Electrum {
             host: host.to_string(),
             port,
             tls,
+            pin,
             stream: RefCell::new(None),
             next_id: Cell::new(1),
             headers: RefCell::new(HashMap::new()),
         })
     }
 
-    fn connect(&self) -> Result<BufReader<Box<dyn ReadWrite>>, ChainError> {
-        let addr = (self.host.as_str(), self.port)
-            .to_socket_addrs()?
-            .next()
-            .ok_or_else(|| ChainError::Rpc(format!("cannot resolve {}", self.host)))?;
-        let tcp = TcpStream::connect_timeout(&addr, Duration::from_secs(15))?;
-        tcp.set_read_timeout(Some(Duration::from_secs(60)))?;
-        tcp.set_write_timeout(Some(Duration::from_secs(30)))?;
-        let stream: Box<dyn ReadWrite> = if self.tls {
-            let roots = rustls::RootCertStore {
-                roots: webpki_roots::TLS_SERVER_ROOTS.iter().cloned().collect(),
-            };
-            let config = rustls::ClientConfig::builder_with_provider(Arc::new(
-                rustls::crypto::ring::default_provider(),
-            ))
+    /// Connect to the first reachable address (hosts often publish an IPv6
+    /// address that the client cannot route).
+    fn tcp(&self) -> Result<TcpStream, ChainError> {
+        let addrs: Vec<_> = (self.host.as_str(), self.port).to_socket_addrs()?.collect();
+        if addrs.is_empty() {
+            return Err(ChainError::Rpc(format!("cannot resolve {}", self.host)));
+        }
+        let mut last = None;
+        for addr in addrs {
+            match TcpStream::connect_timeout(&addr, Duration::from_secs(10)) {
+                Ok(tcp) => {
+                    tcp.set_read_timeout(Some(Duration::from_secs(60)))?;
+                    tcp.set_write_timeout(Some(Duration::from_secs(30)))?;
+                    return Ok(tcp);
+                }
+                Err(e) => last = Some(e),
+            }
+        }
+        Err(last.unwrap().into())
+    }
+
+    fn tls_builder() -> Result<
+        (
+            rustls::ConfigBuilder<rustls::ClientConfig, rustls::WantsVerifier>,
+            Arc<rustls::crypto::CryptoProvider>,
+        ),
+        ChainError,
+    > {
+        let provider = Arc::new(rustls::crypto::ring::default_provider());
+        let builder = rustls::ClientConfig::builder_with_provider(provider.clone())
             .with_safe_default_protocol_versions()
-            .map_err(|e| ChainError::Rpc(format!("tls: {e}")))?
-            .with_root_certificates(roots)
+            .map_err(|e| ChainError::Rpc(format!("tls: {e}")))?;
+        Ok((builder, provider))
+    }
+
+    /// The SHA-256 fingerprint of the certificate `host:port` presents, for
+    /// trust-on-first-use pinning. The handshake is aborted after the
+    /// certificate is seen; nothing is sent or received.
+    pub fn fingerprint(host: &str, port: u16) -> Result<[u8; 32], ChainError> {
+        let (builder, provider) = Self::tls_builder()?;
+        let capture = Arc::new(CaptureFingerprint {
+            seen: std::sync::Mutex::new(None),
+            provider,
+        });
+        let config = builder
+            .dangerous()
+            .with_custom_certificate_verifier(capture.clone())
             .with_no_client_auth();
+        let name = rustls::pki_types::ServerName::try_from(host.to_string())
+            .map_err(|e| ChainError::Rpc(format!("tls name: {e}")))?;
+        let probe = Electrum::new(&format!("tcp://{host}:{port}"))?;
+        let mut tcp = probe.tcp()?;
+        let mut conn = rustls::ClientConnection::new(Arc::new(config), name)
+            .map_err(|e| ChainError::Rpc(format!("tls: {e}")))?;
+        // Drive the handshake until the verifier has run (it always fails).
+        let _ = conn.complete_io(&mut tcp);
+        let seen = *capture.seen.lock().unwrap();
+        seen.ok_or_else(|| ChainError::Rpc("server presented no certificate".into()))
+    }
+
+    fn connect(&self) -> Result<BufReader<Box<dyn ReadWrite>>, ChainError> {
+        let tcp = self.tcp()?;
+        let stream: Box<dyn ReadWrite> = if self.tls {
+            let (builder, provider) = Self::tls_builder()?;
+            let config = match self.pin {
+                Some(pin) => builder
+                    .dangerous()
+                    .with_custom_certificate_verifier(Arc::new(PinnedCert { pin, provider }))
+                    .with_no_client_auth(),
+                None => {
+                    let roots = rustls::RootCertStore {
+                        roots: webpki_roots::TLS_SERVER_ROOTS.iter().cloned().collect(),
+                    };
+                    builder.with_root_certificates(roots).with_no_client_auth()
+                }
+            };
             let name = rustls::pki_types::ServerName::try_from(self.host.clone())
                 .map_err(|e| ChainError::Rpc(format!("tls name: {e}")))?;
             let conn = rustls::ClientConnection::new(Arc::new(config), name)
