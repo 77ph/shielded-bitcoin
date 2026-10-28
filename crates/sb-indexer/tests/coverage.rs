@@ -321,3 +321,24 @@ fn mock_chain_edges() {
     use bitcoin::hashes::Hash;
     let _ = BlockHash::all_zeros();
 }
+
+#[test]
+fn json_store_direct() {
+    let dir = std::env::temp_dir().join(format!("sb-json-store-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("state.json");
+    let mut store = JsonStore::new(path.clone());
+    assert_eq!(
+        store.load().unwrap().blocks.len(),
+        0,
+        "no file yet means an empty state"
+    );
+    let state = ReplayState::new();
+    store.commit_block(&state, 0).unwrap();
+    store.rollback_to(&state, 0).unwrap();
+    assert!(!path.exists(), "per-block hooks do not write; flush does");
+    store.flush(&state).unwrap();
+    assert!(path.exists());
+    assert_eq!(JsonStore::new(path).load().unwrap(), state);
+    std::fs::remove_dir_all(&dir).unwrap();
+}

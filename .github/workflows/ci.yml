@@ -32,3 +32,13 @@ jobs:
           SB_TEST_PG: postgresql://postgres:postgres@localhost:5432/shielded_bitcoin
       # Poseidon constants re-derived independently of arkworks.
       - run: python3 scripts/poseidon_params_check.py
+      # Line coverage gate (test-support fake servers excluded). Live network
+      # tests are included; a failing one does not abort the measurement.
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - run: >-
+          cargo llvm-cov --workspace --release --ignore-run-fail
+          --ignore-filename-regex 'chain/fake\.rs'
+          --fail-under-lines 90
+          -- --include-ignored
+        env:
+          SB_TEST_PG: postgresql://postgres:postgres@localhost:5432/shielded_bitcoin
