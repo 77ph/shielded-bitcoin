@@ -348,6 +348,23 @@ impl Indexer {
                 break;
             };
             let block = chain.block(&hash)?;
+            // The source is trusted for chain selection, not for block
+            // contents: the block must be the one named by the hash and must
+            // extend the block replayed before it.
+            if block.block_hash() != hash {
+                return Err(
+                    ChainError::Decode(format!("block at {h} does not hash to {hash}")).into(),
+                );
+            }
+            if let Some(prev) = self.state.blocks.last() {
+                if block.header.prev_blockhash != prev.hash {
+                    return Err(ChainError::Decode(format!(
+                        "block {h} ({hash}) does not extend replayed block {} ({})",
+                        prev.height, prev.hash
+                    ))
+                    .into());
+                }
+            }
             let r = self.replay_block(BlockId { height: h, hash }, &block);
             if let Some(s) = store.as_deref_mut() {
                 s.commit_block(&self.state, self.state.blocks.len() - 1)?;

@@ -4,7 +4,11 @@
 //! `blockchain.block.header`, `blockchain.transaction.id_from_pos` (enumerated
 //! until the server reports the end of the block) and
 //! `blockchain.transaction.get`; the result is checked against the header's
-//! merkle root, so a lying or truncating server cannot alter replay input.
+//! merkle root, so the server cannot alter or truncate the transactions of
+//! the header it reports. Which header sits at a height is still taken from
+//! the server: like every remote source here, Electrum is trusted for chain
+//! selection (see the trust boundary note in the README); only the replay
+//! loop's hash and `prev_blockhash` checks tie consecutive blocks together.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;

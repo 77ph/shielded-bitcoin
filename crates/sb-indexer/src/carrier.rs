@@ -138,7 +138,7 @@ mod tests {
                 memo: None
             }))
         );
-        // PUSHDATA2 is the minimal encoding for 668 bytes
+        // PUSHDATA2 is the minimal encoding for a 700-byte envelope
         assert_eq!(tx.output[0].script_pubkey.as_bytes()[1], 0x4d);
     }
 

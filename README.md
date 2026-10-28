@@ -71,6 +71,18 @@ certificate fingerprint: `sb electrum-fingerprint host:port`, then
 (UTXOs via `scantxoutset`, broadcast via `sendrawtransaction`, no node
 wallet needed). Everything under `sb-data*/` is local and git-ignored.
 
+**Trust boundary of chain sources.** Replay verifies every envelope itself,
+so no source can forge a shielded transfer. What a source is trusted for is
+*chain selection*: which block hash sits at a height and where the tip is.
+Esplora and Electrum are remote APIs; the indexer checks that each block
+hashes to the hash it asked for, extends the block replayed before it, and
+(Electrum) matches its header's merkle root, so a server cannot alter or
+truncate a block, but a server that serves a self-consistent fake chain
+would lead the indexer onto a fake history. Proof-of-work and difficulty
+are not validated. For anything that holds value, run your own node and use
+the RPC source; that is also the assumption the paper makes about the
+publication layer.
+
 Indexer state lives in a JSON file by default; `--db "<libpq string>"`
 (e.g. `host=/var/run/postgresql dbname=shielded_bitcoin`) keeps it in
 PostgreSQL instead, one transaction per replayed block, rolled back by
