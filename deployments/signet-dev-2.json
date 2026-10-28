@@ -1,0 +1,17 @@
+{
+  "name": "signet-dev-2",
+  "network": "signet",
+  "activation_height": 328300,
+  "const_salt": "614dc84c7047270f139a7fb4713d702c74f01b1ba37bf9e14074552e25d5e0cc",
+  "transfer_vk_sha256": "58b0ee44d0e969f873c0137f364659ac6c8f5878746a1abb2fee1d31befd95fd",
+  "setup": {
+    "kind": "insecure-seed",
+    "seed": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "window_w": 100,
+  "k_min": 1,
+  "boundary": {
+    "vault_script_hex": "00141b895d83727b58c9f728d89122b122c1a4acdd63",
+    "operator_address": "tsb147jfp85k5qvz5wejx4atqhxvkmwdcrha0qht92eua92zcjyaala4sdyp27cu23cvnymkgw3lhrf"
+  }
+}
