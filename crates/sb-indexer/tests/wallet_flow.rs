@@ -179,10 +179,31 @@ fn mint_pay_change_persist_reorg() {
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("alice.json");
     alice.save(&path).unwrap();
-    let reloaded = Wallet::load(&path).unwrap();
+    let reloaded = Wallet::load(&path, None).unwrap();
     assert_eq!(reloaded.balance(), 400);
     assert_eq!(reloaded.notes, alice.notes);
     assert_eq!(reloaded.scanned_events, alice.scanned_events);
+    // encrypted file: needs the passphrase, rejects a wrong one, round-trips
+    let mut enc = Wallet::load(&path, None).unwrap();
+    enc.set_passphrase("correct horse", &mut rng).unwrap();
+    let epath = dir.join("alice.enc.json");
+    enc.save(&epath).unwrap();
+    assert!(
+        std::fs::read_to_string(&epath)
+            .unwrap()
+            .contains("\"version\": 2")
+    );
+    assert!(matches!(
+        Wallet::load(&epath, None),
+        Err(WalletError::PassphraseRequired)
+    ));
+    assert!(matches!(
+        Wallet::load(&epath, Some("wrong")),
+        Err(WalletError::WrongPassphrase)
+    ));
+    let dec = Wallet::load(&epath, Some("correct horse")).unwrap();
+    assert_eq!(dec.balance(), 400);
+    assert!(dec.is_encrypted());
     std::fs::remove_dir_all(&dir).unwrap();
 
     // Reorg drops the payment block: Alice's note is unspent again, Bob has nothing.

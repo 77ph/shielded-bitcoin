@@ -2,14 +2,18 @@
 //! incremental scanning with reorg-safe rescans, input selection and
 //! transfer construction (paper §10, §16.4, Appendix C).
 //!
-//! **The wallet file stores the seed in plaintext.** Encrypting it is a
-//! deployment concern not addressed in this version.
+//! Wallet files are encrypted with a passphrase (Argon2id → ChaCha20-Poly1305,
+//! file version 2). Version-1 files (plaintext seed) still load so they can
+//! be migrated with [`Wallet::set_passphrase`] + [`Wallet::save`].
 
 use std::collections::HashSet;
 use std::path::Path;
 
+use chacha20poly1305::aead::{Aead, KeyInit, Payload};
+use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce};
 use rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use sb_circuit::TransferParams;
 use sb_core::address::{Network, PaymentAddress};
@@ -98,6 +102,67 @@ pub struct PayoutRecord {
     pub paid_txid: Option<String>,
 }
 
+/// Encrypted wallet file (version 2).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct EncryptedFile {
+    version: u32,
+    kdf: String,
+    salt: String,
+    m_cost_kib: u32,
+    t_cost: u32,
+    p_cost: u32,
+    nonce: String,
+    ciphertext: String,
+}
+
+const WALLET_AAD: &[u8] = b"sb/v1/wallet";
+const KDF_M_COST_KIB: u32 = 65536;
+const KDF_T_COST: u32 = 3;
+const KDF_P_COST: u32 = 1;
+
+/// Derived file key and the KDF parameters it came from.
+#[derive(Clone, Zeroize, ZeroizeOnDrop)]
+pub struct WalletCrypto {
+    key: [u8; 32],
+    salt: [u8; 16],
+    m_cost_kib: u32,
+    t_cost: u32,
+    p_cost: u32,
+}
+
+impl WalletCrypto {
+    fn derive(
+        passphrase: &str,
+        salt: [u8; 16],
+        m_cost_kib: u32,
+        t_cost: u32,
+        p_cost: u32,
+    ) -> Result<Self, WalletError> {
+        let params = argon2::Params::new(m_cost_kib, t_cost, p_cost, Some(32))
+            .map_err(|e| WalletError::Corrupt(format!("kdf params: {e}")))?;
+        let argon =
+            argon2::Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params);
+        let mut key = [0u8; 32];
+        argon
+            .hash_password_into(passphrase.as_bytes(), &salt, &mut key)
+            .map_err(|e| WalletError::Corrupt(format!("kdf: {e}")))?;
+        Ok(WalletCrypto {
+            key,
+            salt,
+            m_cost_kib,
+            t_cost,
+            p_cost,
+        })
+    }
+
+    fn fresh<R: RngCore + CryptoRng>(passphrase: &str, rng: &mut R) -> Result<Self, WalletError> {
+        let mut salt = [0u8; 16];
+        rng.fill_bytes(&mut salt);
+        Self::derive(passphrase, salt, KDF_M_COST_KIB, KDF_T_COST, KDF_P_COST)
+    }
+}
+
+/// Plaintext wallet body (also the version-1 file format).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct WalletFile {
     version: u32,
@@ -129,10 +194,15 @@ pub enum WalletError {
     NothingUnderAnchor,
     #[error("build: {0}")]
     Build(#[from] BuildError),
+    #[error("wallet file is encrypted; a passphrase is required")]
+    PassphraseRequired,
+    #[error("wrong passphrase (or corrupt wallet file)")]
+    WrongPassphrase,
 }
 
 pub struct Wallet {
     seed: Seed,
+    crypto: Option<WalletCrypto>,
     pub keys: WalletKeys,
     pub network: Network,
     pub deployment: String,
@@ -149,6 +219,7 @@ impl Wallet {
         let keys = WalletKeys::from_seed(&seed);
         Wallet {
             seed,
+            crypto: None,
             keys,
             network,
             deployment: deployment.to_string(),
@@ -169,11 +240,48 @@ impl Wallet {
         hex::encode(self.seed.0)
     }
 
-    pub fn load(path: &Path) -> Result<Self, WalletError> {
-        let f: WalletFile = serde_json::from_str(&std::fs::read_to_string(path)?)?;
+    /// Load a wallet file. Version-2 files need `passphrase`; version-1
+    /// (plaintext) files load without one.
+    pub fn load(path: &Path, passphrase: Option<&str>) -> Result<Self, WalletError> {
+        let text = std::fs::read_to_string(path)?;
+        let probe: serde_json::Value = serde_json::from_str(&text)?;
+        match probe.get("version").and_then(|v| v.as_u64()) {
+            Some(1) => Self::from_body(serde_json::from_str(&text)?, None),
+            Some(2) => {
+                let f: EncryptedFile = serde_json::from_str(&text)?;
+                if f.kdf != "argon2id" {
+                    return Err(WalletError::Corrupt(format!("unknown kdf {}", f.kdf)));
+                }
+                let passphrase = passphrase.ok_or(WalletError::PassphraseRequired)?;
+                let salt: [u8; 16] = hex::decode(&f.salt)
+                    .map_err(|e| WalletError::Corrupt(e.to_string()))?
+                    .try_into()
+                    .map_err(|_| WalletError::Corrupt("salt".into()))?;
+                let crypto =
+                    WalletCrypto::derive(passphrase, salt, f.m_cost_kib, f.t_cost, f.p_cost)?;
+                let nonce =
+                    hex::decode(&f.nonce).map_err(|e| WalletError::Corrupt(e.to_string()))?;
+                let ct =
+                    hex::decode(&f.ciphertext).map_err(|e| WalletError::Corrupt(e.to_string()))?;
+                let body = ChaCha20Poly1305::new(Key::from_slice(&crypto.key))
+                    .decrypt(
+                        Nonce::from_slice(&nonce),
+                        Payload {
+                            msg: &ct,
+                            aad: WALLET_AAD,
+                        },
+                    )
+                    .map_err(|_| WalletError::WrongPassphrase)?;
+                Self::from_body(serde_json::from_slice(&body)?, Some(crypto))
+            }
+            other => Err(WalletError::Corrupt(format!("unknown version {other:?}"))),
+        }
+    }
+
+    fn from_body(f: WalletFile, crypto: Option<WalletCrypto>) -> Result<Self, WalletError> {
         if f.version != 1 {
             return Err(WalletError::Corrupt(format!(
-                "unknown version {}",
+                "unknown body version {}",
                 f.version
             )));
         }
@@ -183,6 +291,7 @@ impl Wallet {
                 .map_err(|_| WalletError::Corrupt("seed length".into()))?,
         );
         let mut w = Self::from_seed(seed, f.network, &f.deployment);
+        w.crypto = crypto;
         w.notes = f.notes;
         w.sent = f.sent;
         w.payouts = f.payouts;
@@ -201,8 +310,23 @@ impl Wallet {
         Ok(w)
     }
 
-    pub fn save(&self, path: &Path) -> Result<(), WalletError> {
-        let f = WalletFile {
+    /// Is this wallet saved encrypted?
+    pub fn is_encrypted(&self) -> bool {
+        self.crypto.is_some()
+    }
+
+    /// Encrypt the file under `passphrase` from the next `save` on.
+    pub fn set_passphrase<R: RngCore + CryptoRng>(
+        &mut self,
+        passphrase: &str,
+        rng: &mut R,
+    ) -> Result<(), WalletError> {
+        self.crypto = Some(WalletCrypto::fresh(passphrase, rng)?);
+        Ok(())
+    }
+
+    fn body(&self) -> WalletFile {
+        WalletFile {
             version: 1,
             seed: self.seed_hex(),
             network: self.network,
@@ -213,9 +337,40 @@ impl Wallet {
             scanned_events: self.scanned_events,
             last_scanned_txid: self.last_scanned_txid.map(hex::encode),
             next_address_index: self.next_address_index,
+        }
+    }
+
+    /// Write the wallet file (encrypted when a passphrase is set).
+    pub fn save(&self, path: &Path) -> Result<(), WalletError> {
+        let text = match &self.crypto {
+            None => serde_json::to_string_pretty(&self.body())?,
+            Some(c) => {
+                let mut nonce = [0u8; 12];
+                rand::thread_rng().fill_bytes(&mut nonce);
+                let plain = serde_json::to_vec(&self.body())?;
+                let ct = ChaCha20Poly1305::new(Key::from_slice(&c.key))
+                    .encrypt(
+                        Nonce::from_slice(&nonce),
+                        Payload {
+                            msg: &plain,
+                            aad: WALLET_AAD,
+                        },
+                    )
+                    .expect("encryption cannot fail");
+                serde_json::to_string_pretty(&EncryptedFile {
+                    version: 2,
+                    kdf: "argon2id".into(),
+                    salt: hex::encode(c.salt),
+                    m_cost_kib: c.m_cost_kib,
+                    t_cost: c.t_cost,
+                    p_cost: c.p_cost,
+                    nonce: hex::encode(nonce),
+                    ciphertext: hex::encode(ct),
+                })?
+            }
         };
         let tmp = path.with_extension("tmp");
-        std::fs::write(&tmp, serde_json::to_string_pretty(&f)?)?;
+        std::fs::write(&tmp, text)?;
         std::fs::rename(tmp, path)?;
         Ok(())
     }

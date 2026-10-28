@@ -29,3 +29,4 @@ rand.workspace = true
 log.workspace = true
 env_logger.workspace = true
 ureq.workspace = true
+rpassword.workspace = true

@@ -65,8 +65,13 @@ $SB payouts --name operator            # operator: pays pending withdraw request
 default mempool.space signet; `rpc:<url>:<user>:<pass>`;
 `rpc-cookie:<url>:<path>`). With an RPC source, UTXOs come from
 `scantxoutset` and transactions go out through `sendrawtransaction`, so no
-node wallet is needed. Everything under `sb-data*/` (wallet seeds in
-plaintext, indexer state) is local and git-ignored.
+node wallet is needed. Everything under `sb-data*/` is local and git-ignored.
+
+Wallet files are encrypted with a passphrase (Argon2id, 64 MiB / 3 passes,
+then ChaCha20-Poly1305). The passphrase comes from `--passphrase-file`, the
+`SB_WALLET_PASSPHRASE` environment variable, or a terminal prompt.
+`wallet-new --no-encrypt` writes a plaintext file; `wallet-encrypt` migrates
+one (or changes the passphrase).
 
 ### Private signet
 
@@ -110,7 +115,7 @@ to grow into a real indexer and wallet, and test-vector-first interoperability.
 1. ~~Primitives~~ 2. ~~Core~~ 3. ~~Circuit~~ 4. ~~Indexer~~ 5. ~~Wallet + CLI~~
 6. ~~End-to-end run on a real node~~ (private signet, see `docs/RUNS.md`);
    public signet run waits for coins on the funding address.
-7. Electrum source, encrypted wallet files, light-client sync, ceremony
-   tooling, versioning/upgrade rules.
+7. ~~Encrypted wallet files~~, ~~profile versioning rules~~; Electrum source,
+   light-client sync, ceremony tooling.
 
 Rust 1.85+ (edition 2024).

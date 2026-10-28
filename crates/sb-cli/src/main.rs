@@ -34,6 +34,9 @@ struct Cli {
     /// Directory for indexer state and wallets.
     #[arg(long, global = true, default_value = "sb-data")]
     data_dir: PathBuf,
+    /// File holding the wallet passphrase (else `SB_WALLET_PASSPHRASE`, else a prompt).
+    #[arg(long, global = true)]
+    passphrase_file: Option<PathBuf>,
     /// Block source: `esplora:<url>` or `rpc:<url>:<user>:<pass>` or `rpc-cookie:<url>:<cookie-path>`.
     #[arg(
         long,
@@ -67,8 +70,16 @@ enum Cmd {
         #[arg(long, default_value = "100")]
         window: u32,
     },
-    /// Create a wallet.
+    /// Create a wallet (encrypted unless --no-encrypt).
     WalletNew {
+        #[arg(long, default_value = "default")]
+        name: String,
+        /// Store the seed in plaintext (development only).
+        #[arg(long)]
+        no_encrypt: bool,
+    },
+    /// Encrypt an existing plaintext wallet file (or change the passphrase).
+    WalletEncrypt {
         #[arg(long, default_value = "default")]
         name: String,
     },
@@ -157,6 +168,7 @@ enum Cmd {
 }
 
 struct Ctx {
+    passphrase_file: Option<PathBuf>,
     profile_path: PathBuf,
     deployment: Deployment,
     data_dir: PathBuf,
@@ -236,9 +248,38 @@ impl Ctx {
         Ok(Indexer::new(self.deployment.clone(), verifier, state))
     }
 
+    /// Passphrase from --passphrase-file, then SB_WALLET_PASSPHRASE, then a prompt.
+    fn passphrase(&self, prompt: &str, confirm: bool) -> Result<String> {
+        if let Some(p) = &self.passphrase_file {
+            return Ok(std::fs::read_to_string(p)?
+                .trim_end_matches(['\n', '\r'])
+                .to_string());
+        }
+        if let Ok(p) = std::env::var("SB_WALLET_PASSPHRASE") {
+            return Ok(p);
+        }
+        let p = rpassword::prompt_password(prompt)?;
+        if confirm && rpassword::prompt_password("Repeat passphrase: ")? != p {
+            bail!("passphrases differ");
+        }
+        Ok(p)
+    }
+
     fn wallet(&self, name: &str) -> Result<Wallet> {
-        Wallet::load(&self.wallet_path(name))
-            .with_context(|| format!("wallet {name} (run `sb wallet-new`)"))
+        let path = self.wallet_path(name);
+        match Wallet::load(&path, None) {
+            Ok(w) => {
+                eprintln!(
+                    "warning: wallet {name} is stored in plaintext; run `sb wallet-encrypt --name {name}`"
+                );
+                Ok(w)
+            }
+            Err(sb_wallet::WalletError::PassphraseRequired) => {
+                let pass = self.passphrase(&format!("Passphrase for wallet {name}: "), false)?;
+                Wallet::load(&path, Some(&pass)).with_context(|| format!("wallet {name}"))
+            }
+            Err(e) => Err(e).with_context(|| format!("wallet {name} (run `sb wallet-new`)")),
+        }
     }
 
     fn btc_network(&self) -> bitcoin::Network {
@@ -351,6 +392,7 @@ fn main() -> Result<()> {
         .with_context(|| format!("profile {}", cli.profile.display()))?;
     std::fs::create_dir_all(cli.data_dir.join("wallets"))?;
     let ctx = Ctx {
+        passphrase_file: cli.passphrase_file.clone(),
         profile_path: cli.profile.clone(),
         deployment,
         data_dir: cli.data_dir.clone(),
@@ -359,20 +401,36 @@ fn main() -> Result<()> {
 
     match cli.cmd {
         Cmd::ProfileNew { .. } => unreachable!(),
-        Cmd::WalletNew { name } => {
+        Cmd::WalletEncrypt { name } => {
+            let mut w = ctx.wallet(&name)?;
+            let pass = ctx.passphrase("New passphrase: ", true)?;
+            w.set_passphrase(&pass, &mut rand::thread_rng())?;
+            w.save(&ctx.wallet_path(&name))?;
+            println!("wallet {name} encrypted (Argon2id + ChaCha20-Poly1305)");
+        }
+        Cmd::WalletNew { name, no_encrypt } => {
             let path = ctx.wallet_path(&name);
             if path.exists() {
                 bail!("{} exists", path.display());
             }
-            let w = Wallet::create(
+            let mut w = Wallet::create(
                 &mut rand::thread_rng(),
                 ctx.deployment.network,
                 &ctx.deployment.name,
             );
+            if !no_encrypt {
+                let pass = ctx.passphrase("Passphrase for the new wallet: ", true)?;
+                w.set_passphrase(&pass, &mut rand::thread_rng())?;
+            }
             w.save(&path)?;
             println!(
-                "wallet {} written (seed stored in plaintext)",
-                path.display()
+                "wallet {} written ({})",
+                path.display(),
+                if w.is_encrypted() {
+                    "encrypted"
+                } else {
+                    "seed stored in plaintext"
+                }
             );
             println!(
                 "shielded address: {}",
