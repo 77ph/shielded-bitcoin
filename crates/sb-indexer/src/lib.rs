@@ -7,8 +7,10 @@ pub mod deployment;
 pub mod hexbytes;
 pub mod replay;
 pub mod state;
+pub mod store;
 
 pub use chain::{BlockId, ChainError, ChainSource};
 pub use deployment::{Deployment, DeploymentError, Setup};
-pub use replay::{BlockReport, Indexer, RejectReason, SyncReport};
+pub use replay::{BlockReport, Indexer, RejectReason, SyncError, SyncReport};
 pub use state::{BlockCheckpoint, Rejection, ReplayState, StateError};
+pub use store::{JsonStore, PgStore, StateStore, StoreError};

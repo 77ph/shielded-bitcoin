@@ -16,6 +16,7 @@ use crate::carrier::{CarrierError, extract_envelope};
 use crate::chain::{BlockId, ChainError, ChainSource};
 use crate::deployment::Deployment;
 use crate::state::{BlockCheckpoint, Rejection, ReplayState};
+use crate::store::{StateStore, StoreError};
 
 /// Why an envelope did not mutate state (profile §11, steps 1–6).
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -46,6 +47,14 @@ pub enum RejectReason {
 pub struct BlockReport {
     pub accepted: usize,
     pub rejected: usize,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum SyncError {
+    #[error("chain: {0}")]
+    Chain(#[from] ChainError),
+    #[error("store: {0}")]
+    Store(#[from] StoreError),
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -279,8 +288,19 @@ impl Indexer {
     }
 
     /// Roll back to the last block that is still on the active chain, then
-    /// replay every block up to the tip.
-    pub fn sync(&mut self, chain: &dyn ChainSource) -> Result<SyncReport, ChainError> {
+    /// replay every block up to the tip (state kept in memory only).
+    pub fn sync(&mut self, chain: &dyn ChainSource) -> Result<SyncReport, SyncError> {
+        self.sync_with(chain, None)
+    }
+
+    /// [`Self::sync`] that also persists through `store`: a rollback is
+    /// recorded before replay resumes and every replayed block is committed
+    /// as soon as it is applied, so a crash loses at most the block in flight.
+    pub fn sync_with(
+        &mut self,
+        chain: &dyn ChainSource,
+        mut store: Option<&mut dyn StateStore>,
+    ) -> Result<SyncReport, SyncError> {
         let mut report = SyncReport::default();
         let tip = chain.tip()?;
         report.tip = Some(tip.height);
@@ -306,6 +326,9 @@ impl Indexer {
                 } else {
                     self.state.rollback_to(rollback_to);
                 }
+                if let Some(s) = store.as_deref_mut() {
+                    s.rollback_to(&self.state, rollback_to)?;
+                }
                 report.rolled_back_to = Some(rollback_to);
             }
         }
@@ -326,10 +349,16 @@ impl Indexer {
             };
             let block = chain.block(&hash)?;
             let r = self.replay_block(BlockId { height: h, hash }, &block);
+            if let Some(s) = store.as_deref_mut() {
+                s.commit_block(&self.state, self.state.blocks.len() - 1)?;
+            }
             report.blocks += 1;
             report.accepted += r.accepted;
             report.rejected += r.rejected;
             h += 1;
+        }
+        if let Some(s) = store.as_deref_mut() {
+            s.flush(&self.state)?;
         }
         Ok(report)
     }

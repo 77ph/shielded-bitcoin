@@ -18,7 +18,7 @@ use sb_core::note::NotePlaintext;
 use sb_indexer::chain::esplora::Esplora;
 use sb_indexer::chain::rpc::BitcoinCoreRpc;
 use sb_indexer::deployment::DevBoundary;
-use sb_indexer::{ChainSource, Deployment, Indexer, ReplayState, Setup};
+use sb_indexer::{ChainSource, Deployment, Indexer, Setup};
 use sb_wallet::{K_WALLET, Wallet, anchor_for};
 
 #[derive(Parser)]
@@ -34,6 +34,10 @@ struct Cli {
     /// Directory for indexer state and wallets.
     #[arg(long, global = true, default_value = "sb-data")]
     data_dir: PathBuf,
+    /// PostgreSQL connection string for the indexer state (default: a JSON file in the data dir),
+    /// e.g. `host=/var/run/postgresql dbname=shielded_bitcoin` or `postgresql://user:pass@host/db`.
+    #[arg(long, global = true)]
+    db: Option<String>,
     /// File holding the wallet passphrase (else `SB_WALLET_PASSPHRASE`, else a prompt).
     #[arg(long, global = true)]
     passphrase_file: Option<PathBuf>,
@@ -174,6 +178,7 @@ enum Cmd {
 }
 
 struct Ctx {
+    db: Option<String>,
     passphrase_file: Option<PathBuf>,
     profile_path: PathBuf,
     deployment: Deployment,
@@ -251,14 +256,21 @@ impl Ctx {
         bail!("unknown chain spec {:?}", self.chain)
     }
 
-    fn indexer(&self) -> Result<Indexer> {
+    fn store(&self) -> Result<Box<dyn sb_indexer::StateStore>> {
+        Ok(match &self.db {
+            Some(conn) => Box::new(sb_indexer::PgStore::connect(conn, &self.deployment.name)?),
+            None => Box::new(sb_indexer::JsonStore::new(self.state_path())),
+        })
+    }
+
+    fn indexer(&self) -> Result<(Indexer, Box<dyn sb_indexer::StateStore>)> {
         let verifier = self.deployment.verifier(&self.base_dir())?;
-        let state = if self.state_path().exists() {
-            ReplayState::load(&self.state_path())?
-        } else {
-            ReplayState::new()
-        };
-        Ok(Indexer::new(self.deployment.clone(), verifier, state))
+        let mut store = self.store()?;
+        let state = store.load()?;
+        Ok((
+            Indexer::new(self.deployment.clone(), verifier, state),
+            store,
+        ))
     }
 
     /// Passphrase from --passphrase-file, then SB_WALLET_PASSPHRASE, then a prompt.
@@ -405,6 +417,7 @@ fn main() -> Result<()> {
         .with_context(|| format!("profile {}", cli.profile.display()))?;
     std::fs::create_dir_all(cli.data_dir.join("wallets"))?;
     let ctx = Ctx {
+        db: cli.db.clone(),
         passphrase_file: cli.passphrase_file.clone(),
         profile_path: cli.profile.clone(),
         deployment,
@@ -465,16 +478,15 @@ fn main() -> Result<()> {
             println!("funding address:  {}", ctx.funding(&w)?.address);
         }
         Cmd::Sync => {
-            let mut idx = ctx.indexer()?;
+            let (mut idx, mut store) = ctx.indexer()?;
             let chain = ctx.chain_source()?;
-            let r = idx.sync(chain.as_ref())?;
-            idx.state.save(&ctx.state_path())?;
+            let r = idx.sync_with(chain.as_ref(), Some(store.as_mut()))?;
             println!("{r:?}");
             print_status(&idx);
         }
-        Cmd::Status => print_status(&ctx.indexer()?),
+        Cmd::Status => print_status(&ctx.indexer()?.0),
         Cmd::Scan { name } => {
-            let idx = ctx.indexer()?;
+            let (idx, _store) = ctx.indexer()?;
             let mut w = ctx.wallet(&name)?;
             let n = w.scan(
                 &ctx.deployment.const_salt_fr(),
@@ -583,7 +595,7 @@ fn main() -> Result<()> {
                     ctx.deployment.network
                 );
             }
-            let idx = ctx.indexer()?;
+            let (idx, _store) = ctx.indexer()?;
             let tip = idx
                 .state
                 .last_height()
@@ -657,7 +669,7 @@ fn main() -> Result<()> {
                 .parse::<bitcoin::Address<bitcoin::address::NetworkUnchecked>>()?
                 .require_network(ctx.btc_network())?;
             let memo = sb_wallet::build_payout_memo(amount, dest.script_pubkey().as_bytes());
-            let idx = ctx.indexer()?;
+            let (idx, _store) = ctx.indexer()?;
             let tip = idx
                 .state
                 .last_height()
@@ -707,7 +719,7 @@ fn main() -> Result<()> {
             fee_rate,
             no_broadcast,
         } => {
-            let idx = ctx.indexer()?;
+            let (idx, _store) = ctx.indexer()?;
             let mut w = ctx.wallet(&name)?;
             w.scan(
                 &ctx.deployment.const_salt_fr(),
