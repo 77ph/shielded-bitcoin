@@ -30,8 +30,25 @@ Timings on the laptop (16 threads): `sb send` ≈ 3.5 s including the insecure
 setup regeneration (1.5 s) and proving (1.5 s); indexer verification per
 envelope ≈ 4 ms.
 
-## Public signet
+## Public signet, 28 October 2026 (profile `signet-dev-1`, activation 328289, envelope format v0.1)
 
-Profile `signet-dev-1` (activation 328289) is ready; the live run waits for
-signet coins on the funding address `tb1qxtws5pnknuvxqhp9w6uvvcq6uyc3frszw83xjz`
-(public faucets were unreachable on 28 October 2026).
+Block source and publisher: mempool.space Esplora. Funding: faucets
+(bitcoinsignetfaucet.com, signet.dcorral.com, faucet.coinbin.org) to alice's
+funding address; bob's fee coins sent from alice with `sb fund-send`.
+Every transaction is public on [mempool.space/signet](https://mempool.space/signet).
+
+| Step | Height | Carrier | Size |
+|---|---|---|---|
+| mint 5 000 to alice (89-byte envelope, vault paid) | 328292 | `ae97279ffdc91b8deba63c1f86585fc2a68afc9ec9f4867e2767236b89a9f855` | 241 vB, fee 242 |
+| bob funded with 2 000 for fees | 328292 | `2d82a5f63eafa897723a6daed70e8842810816d24a0b68710f5ac8dabe81fb5a` | 141 vB |
+| alice pays bob 2 000 shielded, change 3 000 (668-byte envelope, anchor 328292) | 328295 | `b494ea0e62abf716278ba39c3456246e8a8a9380c57c1edb8ddd994795f3542c` | 793 vB |
+| bob withdraws 1 000 to `tb1qxtws…`: transfer to the operator + payout memo, change 1 000 (anchor 328295) | 328298 | `cc6132cbc1c00773097051ddab98bb4d5f1ccaba3d34d1ec10f15f29ce889bfc` | 838 vB |
+| operator pays 1 000 from the vault (`sb payouts`) | 328300 | `57e792fe3371c6ff48a0e1ee5d5af2e6698f5f45fca79e89abd6fa46996206d2` | — |
+
+End state at 328300: tree 5 leaves, 3 accepted events (tx 144 of 328292,
+tx 38 of 328295, tx 126 of 328298), 0 rejections. Wallet views: alice 3 000,
+bob 1 000, operator 1 000 shielded; the destination received 1 000 sat on L1.
+Both 668-byte and 838-vB carriers were relayed by mempool.space's node with
+default policy. One operational lesson: Esplora's tip height can run ahead of
+its block-hash lookup for a few seconds, so the scripts replay until the
+indexer actually reaches the required height before building a transfer.
