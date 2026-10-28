@@ -342,3 +342,19 @@ fn json_store_direct() {
     assert_eq!(JsonStore::new(path).load().unwrap(), state);
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+#[test]
+fn state_file_bad_hex() {
+    let json = r#"{"version":1,"leaves":[],"nullifiers":["zz"],"roots":[],"blocks":[],"events":[],"rejections":[]}"#;
+    assert!(matches!(
+        ReplayState::from_json(json),
+        Err(StateError::Json(_))
+    ));
+    let json = r#"{"version":1,"leaves":[],"nullifiers":[],"roots":[[1,"zz"]],"blocks":[],"events":[],"rejections":[]}"#;
+    assert!(matches!(
+        ReplayState::from_json(json),
+        Err(StateError::Corrupt(_))
+    ));
+    let json = r#"{"version":1,"leaves":[],"nullifiers":[],"roots":[],"blocks":[],"events":[{"height":1,"tx_index":0,"txid":"00","raw":"00","h_body":"00","first_position":0,"leaves":[],"memo":null}],"rejections":[]}"#;
+    assert!(ReplayState::from_json(json).is_err());
+}

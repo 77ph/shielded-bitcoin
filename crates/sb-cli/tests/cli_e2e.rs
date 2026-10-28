@@ -548,6 +548,56 @@ fn full_cycle_on_fake_node() {
         chain: cli.chain.clone(),
     };
     old.fails(&["status"], "profile 0.0");
+    // a hand-written mainnet profile still derives mainnet funding addresses
+    let mainnet = std::fs::read_to_string(&cli.profile)
+        .unwrap()
+        .replace("\"network\": \"regtest\"", "\"network\": \"mainnet\"");
+    std::fs::write(dir.join("mainnet.json"), mainnet).unwrap();
+    let mn = Cli {
+        data: dir.clone(),
+        profile: dir.join("mainnet.json"),
+        chain: cli.chain.clone(),
+    };
+    assert!(
+        mn.ok(&["address", "--name", "alice"])
+            .contains("funding address:  bc1")
+    );
+    // no passphrase source and no terminal: the prompt fails cleanly
+    let out = Command::new(env!("CARGO_BIN_EXE_sb"))
+        .env_remove("SB_WALLET_PASSPHRASE")
+        .args(["--profile"])
+        .arg(&cli.profile)
+        .args(["--data-dir"])
+        .arg(&dir)
+        .args(["address", "--name", "alice"])
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    // read-only data directory: every command that writes reports the error
+    use std::os::unix::fs::PermissionsExt;
+    let ro = |p: &Path, mode: u32| {
+        std::fs::set_permissions(p, std::fs::Permissions::from_mode(mode)).unwrap()
+    };
+    ro(&dir.join("wallets"), 0o555);
+    ro(&dir, 0o555);
+    for args in [
+        vec!["scan", "--name", "alice"],
+        vec!["unlock", "--name", "alice"],
+        vec!["wallet-encrypt", "--name", "alice"],
+        vec!["address", "--name", "alice", "--new"],
+        vec!["wallet-new", "--name", "zzz"],
+        vec!["sync"],
+        vec!["payouts", "--name", "operator"],
+    ] {
+        let (ok, text) = cli.run(&args);
+        assert!(
+            !ok,
+            "{args:?} should fail on a read-only directory:\n{text}"
+        );
+    }
+    ro(&dir, 0o755);
+    ro(&dir.join("wallets"), 0o755);
     // PostgreSQL state when a database is available
     if let Ok(conn) = std::env::var("SB_TEST_PG") {
         let text = cli.ok(&["--db", &conn, "sync"]);

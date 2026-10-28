@@ -6,10 +6,7 @@ use crate::Fr;
 
 /// Build a tag from its ASCII label.
 pub fn tag(label: &[u8]) -> Fr {
-    debug_assert!(
-        label.len() <= 31,
-        "a tag must fit in one field element without reduction"
-    );
+    debug_assert!(label.len() <= 31, "tag must fit in one field element");
     Fr::from_le_bytes_mod_order(label)
 }
 

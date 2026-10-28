@@ -594,3 +594,58 @@ impl Wallet {
 pub fn anchor_for(replayed_tip: u32, k_wallet: u32) -> u32 {
     (replayed_tip + 1).saturating_sub(k_wallet)
 }
+
+#[cfg(test)]
+mod private_branches {
+    use super::*;
+    use rand::SeedableRng;
+    use rand_chacha::ChaCha20Rng;
+
+    #[test]
+    fn body_version_and_build_send_errors() {
+        let body = WalletFile {
+            version: 9,
+            seed: "00".repeat(32),
+            network: Network::Regtest,
+            deployment: "x".into(),
+            notes: vec![],
+            sent: vec![],
+            payouts: vec![],
+            scanned_events: 0,
+            last_scanned_txid: None,
+            next_address_index: 0,
+        };
+        assert!(matches!(
+            Wallet::from_body(body, None),
+            Err(WalletError::Corrupt(_))
+        ));
+        // a note record that is not in the tree makes build_send fail inside the builder
+        let mut w = Wallet::from_seed(Seed([4u8; 32]), Network::Regtest, "x");
+        let addr = w.default_address();
+        w.notes.push(NoteRecord {
+            value: 10,
+            d: hex::encode(addr.d),
+            rseed: hex_fr(&Fr::from(1u64)),
+            h_body_create: hex_fr(&Fr::from(2u64)),
+            output_index: 0,
+            pos: 0,
+            nullifier: hex_fr(&Fr::from(3u64)),
+            height: 1,
+            txid: "aa".repeat(32),
+            spent_at: None,
+            locked_by: None,
+        });
+        let params = TransferParams::insecure_setup(&[0u8; 32]).unwrap();
+        let mut rng = ChaCha20Rng::from_seed([1u8; 32]);
+        let tree = NoteTree::new();
+        let r = w.build_send(&params, &[0u8; 32], &tree, 5, 1, addr, 10, &mut rng);
+        assert!(matches!(
+            r,
+            Err(WalletError::Build(BuildError::LeafMismatch(0)))
+        ));
+        assert!(
+            w.notes[0].locked_by.is_none(),
+            "a failed build leaves no lock"
+        );
+    }
+}

@@ -36,11 +36,7 @@ pub struct Params {
 fn parse(h: &str) -> Fr {
     let bytes = hex::decode(h).expect("pinned constant is valid hex");
     let f = Fr::from_le_bytes_mod_order(&bytes);
-    debug_assert_eq!(
-        crate::encoding::fr_to_bytes(&f)[..],
-        bytes[..],
-        "pinned constant is canonical"
-    );
+    debug_assert_eq!(crate::encoding::fr_to_bytes(&f)[..], bytes[..]);
     f
 }
 

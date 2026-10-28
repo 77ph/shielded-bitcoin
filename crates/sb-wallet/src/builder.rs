@@ -140,9 +140,7 @@ pub fn build_transfer<R: RngCore + CryptoRng>(
         nullifiers.push(nullifier(&keys.sk_nf, &dummy.note.rho(), dummy.pos));
         input_witnesses.push(dummy);
     }
-    if nullifiers[0] == nullifiers[1] {
-        unreachable!("distinct rseed/pos give distinct nullifiers");
-    }
+    debug_assert_ne!(nullifiers[0], nullifiers[1], "distinct rseed/pos");
 
     // 2. output construction
     let mut output_witnesses = Vec::with_capacity(N_OUT);

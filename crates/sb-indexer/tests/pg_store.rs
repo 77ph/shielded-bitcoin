@@ -6,6 +6,7 @@
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 
+use bitcoin::hashes::Hash;
 use sb_circuit::{TransferParams, TransferVerifier, vk_sha256};
 use sb_core::address::Network;
 use sb_core::keys::{Seed, WalletKeys};
@@ -113,4 +114,143 @@ fn pg_store_round_trip_and_rollback() {
             .len(),
         0
     );
+}
+
+/// Rows damaged outside the indexer are reported as corruption, never
+/// silently replayed into state.
+#[test]
+#[ignore]
+fn pg_store_rejects_corrupt_rows() {
+    use postgres::{Client, NoTls};
+    use sb_indexer::StoreError;
+    let conn = std::env::var("SB_TEST_PG").expect("SB_TEST_PG connection string");
+    let name = format!("pgcorrupt-{}", std::process::id());
+    let mut raw = Client::connect(&conn, NoTls).unwrap();
+    // make sure the schema exists
+    let _ = PgStore::connect(&conn, &name).unwrap();
+    let cases: Vec<(&str, &str)> = vec![
+        (
+            "leaf",
+            "INSERT INTO sb_leaves (deployment, pos, leaf, height) VALUES ($1, 0, '\\x00ff', 1)",
+        ),
+        (
+            "nullifier",
+            "INSERT INTO sb_nullifiers (deployment, nf, height) VALUES ($1, '\\x00ff', 1)",
+        ),
+        (
+            "block hash",
+            "INSERT INTO sb_blocks (deployment, height, hash, leaf_count_before, events_before, rejections_before, nullifiers_added, root) VALUES ($1, 1, '\\x00', 0, 0, 0, '{}', '\\x00')",
+        ),
+        (
+            "block root",
+            "INSERT INTO sb_blocks (deployment, height, hash, leaf_count_before, events_before, rejections_before, nullifiers_added, root) VALUES ($1, 1, decode(repeat('00', 32), 'hex'), 0, 0, 0, '{}', '\\x00ff')",
+        ),
+        (
+            "block nullifier",
+            "INSERT INTO sb_blocks (deployment, height, hash, leaf_count_before, events_before, rejections_before, nullifiers_added, root) VALUES ($1, 1, decode(repeat('00', 32), 'hex'), 0, 0, 0, ARRAY['\\x00ff'::bytea], decode(repeat('00', 32), 'hex'))",
+        ),
+        (
+            "event raw",
+            "INSERT INTO sb_events (deployment, idx, kind, height, tx_index, txid, raw, h_body, first_position, leaves, memo) VALUES ($1, 0, 1, 1, 0, decode(repeat('00', 32), 'hex'), '\\x00', decode(repeat('00', 32), 'hex'), 0, '{}', NULL)",
+        ),
+        (
+            "event txid",
+            "INSERT INTO sb_events (deployment, idx, kind, height, tx_index, txid, raw, h_body, first_position, leaves, memo) VALUES ($1, 0, 1, 1, 0, '\\x00', '\\x00', decode(repeat('00', 32), 'hex'), 0, '{}', NULL)",
+        ),
+        (
+            "event h_body",
+            "INSERT INTO sb_events (deployment, idx, kind, height, tx_index, txid, raw, h_body, first_position, leaves, memo) VALUES ($1, 0, 1, 1, 0, decode(repeat('00', 32), 'hex'), '\\x00', '\\x00ff', 0, '{}', NULL)",
+        ),
+        (
+            "event leaf",
+            "INSERT INTO sb_events (deployment, idx, kind, height, tx_index, txid, raw, h_body, first_position, leaves, memo) VALUES ($1, 0, 1, 1, 0, decode(repeat('00', 32), 'hex'), '\\x00', decode(repeat('00', 32), 'hex'), 0, ARRAY['\\x00ff'::bytea], NULL)",
+        ),
+        (
+            "rejection txid",
+            "INSERT INTO sb_rejections (deployment, idx, height, tx_index, txid, reason) VALUES ($1, 0, 1, 0, '\\x00', 'x')",
+        ),
+    ];
+    for (what, sql) in cases {
+        raw.execute(sql, &[&name]).unwrap();
+        let err = PgStore::connect(&conn, &name).unwrap().load().unwrap_err();
+        assert!(
+            matches!(err, StoreError::Corrupt(_) | StoreError::Pg(_)),
+            "{what}: {err}"
+        );
+        for t in [
+            "sb_leaves",
+            "sb_nullifiers",
+            "sb_blocks",
+            "sb_events",
+            "sb_rejections",
+        ] {
+            raw.execute(&format!("DELETE FROM {t} WHERE deployment = $1"), &[&name])
+                .unwrap();
+        }
+    }
+    // a mint whose diversifier has no curve point, and one without a leaf
+    let alice = WalletKeys::from_seed(&Seed([1u8; 32]));
+    let mut i = 0u64;
+    let bad_d = loop {
+        let d = alice.ivk.diversifier(i);
+        if sb_primitives::diversify::diversify_hash(&d).is_none() {
+            break d;
+        }
+        i += 1;
+    };
+    let (_, addr) = alice.ivk.find_address(0);
+    let mint = sb_core::envelope::MintEnvelope {
+        note: sb_core::note::NotePlaintext {
+            value: 1,
+            d: bad_d,
+            rseed: sb_primitives::Fr::from(1u64),
+        },
+        pk_d: addr.pk_d,
+    };
+    raw.execute(
+        "INSERT INTO sb_events (deployment, idx, kind, height, tx_index, txid, raw, h_body, first_position, leaves, memo) VALUES ($1, 0, 2, 1, 0, decode(repeat('00', 32), 'hex'), $2, decode(repeat('00', 32), 'hex'), 0, ARRAY[decode(repeat('00', 32), 'hex')], NULL)",
+        &[&name, &mint.to_bytes()],
+    )
+    .unwrap();
+    assert!(matches!(
+        PgStore::connect(&conn, &name).unwrap().load().unwrap_err(),
+        StoreError::Corrupt(_)
+    ));
+    raw.execute("DELETE FROM sb_events WHERE deployment = $1", &[&name])
+        .unwrap();
+    let good = sb_core::envelope::MintEnvelope {
+        note: sb_core::note::NotePlaintext {
+            value: 1,
+            d: addr.d,
+            rseed: sb_primitives::Fr::from(1u64),
+        },
+        pk_d: addr.pk_d,
+    };
+    raw.execute(
+        "INSERT INTO sb_events (deployment, idx, kind, height, tx_index, txid, raw, h_body, first_position, leaves, memo) VALUES ($1, 0, 2, 1, 0, decode(repeat('00', 32), 'hex'), $2, decode(repeat('00', 32), 'hex'), 0, '{}', NULL)",
+        &[&name, &good.to_bytes()],
+    )
+    .unwrap();
+    assert!(matches!(
+        PgStore::connect(&conn, &name).unwrap().load().unwrap_err(),
+        StoreError::Corrupt(_)
+    ));
+    raw.execute("DELETE FROM sb_events WHERE deployment = $1", &[&name])
+        .unwrap();
+    // committing a block whose root was never recorded
+    let mut store = PgStore::connect(&conn, &name).unwrap();
+    let mut state = ReplayState::new();
+    state.blocks.push(sb_indexer::BlockCheckpoint {
+        height: 5,
+        hash: bitcoin::BlockHash::from_byte_array([0u8; 32]),
+        leaf_count_before: 0,
+        events_before: 0,
+        rejections_before: 0,
+        nullifiers_added: vec![],
+    });
+    assert!(matches!(
+        store.commit_block(&state, 0),
+        Err(StoreError::Corrupt(_))
+    ));
+    assert!(format!("{}", StoreError::Corrupt("x".into())).contains("corrupt"));
 }

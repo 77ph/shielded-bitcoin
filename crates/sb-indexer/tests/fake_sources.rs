@@ -200,3 +200,11 @@ fn electrum_tls12_pinned() {
     .unwrap();
     assert_eq!(good.tip().unwrap().height, 102);
 }
+
+#[test]
+fn esplora_empty_chain() {
+    let http = FakeHttp::start(Shared::new(MockChain::new(7)));
+    let e = Esplora::new(&http.esplora_url());
+    assert!(matches!(e.tip(), Err(ChainError::NotFound(_))));
+    assert_eq!(e.block_hash(7).unwrap(), None);
+}

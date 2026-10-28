@@ -58,9 +58,6 @@ pub fn extract_envelope(tx: &Transaction) -> Option<Result<Candidate, CarrierErr
     let mut found: Option<Vec<u8>> = None;
     let mut memo: Option<Vec<u8>> = None;
     for out in &tx.output {
-        if !out.script_pubkey.is_op_return() {
-            continue;
-        }
         match op_return_payload(&out.script_pubkey) {
             Ok(Some(payload)) if is_candidate(&payload) => {
                 if found.is_some() {

@@ -133,9 +133,7 @@ impl NoteTree {
             // Fully populated at `size`: final, equal to the stored node.
             return self.levels[level][index as usize];
         }
-        if level == 0 {
-            return self.levels[0][index as usize];
-        }
+        // level > 0 here: a leaf is either fully inside or fully outside `size`.
         let l = self.node_at(level - 1, index * 2, size);
         let r = self.node_at(level - 1, index * 2 + 1, size);
         node_hash(&l, &r)
