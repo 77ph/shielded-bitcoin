@@ -5,10 +5,13 @@
 //! ```
 
 mod funding;
+mod http;
 mod relay;
+mod serve;
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Parser, Subcommand};
@@ -21,6 +24,7 @@ use sb_core::address::{Network as SbNetwork, PaymentAddress};
 use sb_core::envelope::MintEnvelope;
 use sb_core::note::NotePlaintext;
 use sb_indexer::chain::esplora::Esplora;
+use sb_indexer::chain::light::LightSource;
 use sb_indexer::chain::rpc::BitcoinCoreRpc;
 use sb_indexer::deployment::DevBoundary;
 use sb_indexer::{ChainSource, Deployment, Indexer, Setup};
@@ -47,7 +51,8 @@ struct Cli {
     #[arg(long, global = true)]
     passphrase_file: Option<PathBuf>,
     /// Block source: `esplora:<url>`, `electrum:ssl://host:port` (or `ssl-pin://host:port/<sha256>`, `tcp://`),
-    /// `rpc:<url>:<user>:<pass>` or `rpc-cookie:<url>:<cookie-path>`.
+    /// `rpc:<url>:<user>:<pass>`, `rpc-cookie:<url>:<cookie-path>`, or verified sync from an
+    /// `sb serve` indexer: `light:<url>` (`light:<url>|<full source>` also checks block hashes there).
     #[arg(
         long,
         global = true,
@@ -170,6 +175,14 @@ enum Cmd {
         #[arg(long)]
         relay: Option<String>,
     },
+    /// Serve the indexer API for verified-sync clients (`--chain light:<url>`).
+    Serve {
+        #[arg(long, default_value = "127.0.0.1:8788")]
+        listen: String,
+        /// Exit after this many requests (tests).
+        #[arg(long)]
+        max_requests: Option<u32>,
+    },
     /// Run a sponsored relayer: publish other people's transfers from this wallet's fee coins.
     RelayServe {
         #[arg(long, default_value = "default")]
@@ -181,6 +194,12 @@ enum Cmd {
         /// Carriers paid per hour at most.
         #[arg(long, default_value = "20")]
         max_per_hour: u32,
+        /// Submissions checked per client address per minute at most.
+        #[arg(long, default_value = "6")]
+        max_checks_per_minute: u32,
+        /// Seconds between replays to the chain tip.
+        #[arg(long, default_value = "5")]
+        sync_interval: u64,
         /// Exit after this many requests (tests).
         #[arg(long)]
         max_requests: Option<u32>,
@@ -245,13 +264,33 @@ impl Ctx {
     }
 
     fn chain_source(&self) -> Result<Box<dyn ChainSource>> {
-        if let Some(url) = self.chain.strip_prefix("esplora:") {
+        match self.light_source()? {
+            Some(l) => Ok(Box::new(l)),
+            None => Self::full_source(&self.chain),
+        }
+    }
+
+    /// `light:<url>[|<full source>]`: verified sync from an `sb serve`
+    /// indexer, with block hashes cross-checked against the full source.
+    fn light_source(&self) -> Result<Option<Rc<LightSource>>> {
+        let Some(rest) = self.chain.strip_prefix("light:") else {
+            return Ok(None);
+        };
+        let (url, headers) = match rest.split_once('|') {
+            Some((u, h)) => (u, Some(Self::full_source(h)?)),
+            None => (rest, None),
+        };
+        Ok(Some(Rc::new(LightSource::new(url, headers))))
+    }
+
+    fn full_source(spec: &str) -> Result<Box<dyn ChainSource>> {
+        if let Some(url) = spec.strip_prefix("esplora:") {
             return Ok(Box::new(Esplora::new(url)));
         }
-        if let Some(url) = self.chain.strip_prefix("electrum:") {
+        if let Some(url) = spec.strip_prefix("electrum:") {
             return Ok(Box::new(sb_indexer::chain::electrum::Electrum::new(url)?));
         }
-        if let Some(rest) = self.chain.strip_prefix("rpc-cookie:") {
+        if let Some(rest) = spec.strip_prefix("rpc-cookie:") {
             let (url, cookie) = rest
                 .rsplit_once(':')
                 .ok_or_else(|| anyhow!("rpc-cookie:<url>:<cookie-path>"))?;
@@ -260,33 +299,43 @@ impl Ctx {
                 Path::new(cookie),
             )?));
         }
-        if let Some(rest) = self.chain.strip_prefix("rpc:") {
+        if let Some(rest) = spec.strip_prefix("rpc:") {
             let parts: Vec<&str> = rest.rsplitn(3, ':').collect();
             if parts.len() != 3 {
                 bail!("rpc:<url>:<user>:<pass>");
             }
             return Ok(Box::new(BitcoinCoreRpc::new(parts[2], parts[1], parts[0])));
         }
-        bail!("unknown chain spec {:?}", self.chain)
+        bail!("unknown chain spec {spec:?}")
     }
 
-    /// UTXO lookup and broadcast through the same backend as `--chain`.
+    /// UTXO lookup and broadcast through the same backend as `--chain` (for
+    /// `light:`, through its full source; a relayer needs none).
     fn publisher(&self) -> Result<Box<dyn funding::Publisher>> {
-        if let Some(url) = self.chain.strip_prefix("esplora:") {
+        let spec = match self.chain.strip_prefix("light:") {
+            Some(rest) => match rest.split_once('|') {
+                Some((_, full)) => full,
+                None => bail!(
+                    "light:<url> has no publisher: add |<full source> or publish through --relay"
+                ),
+            },
+            None => self.chain.as_str(),
+        };
+        if let Some(url) = spec.strip_prefix("esplora:") {
             return Ok(Box::new(funding::EsploraPublisher::new(url)));
         }
-        if let Some(url) = self.chain.strip_prefix("electrum:") {
+        if let Some(url) = spec.strip_prefix("electrum:") {
             let electrum = sb_indexer::chain::electrum::Electrum::new(url)?;
             return Ok(Box::new(funding::ElectrumPublisher { electrum }));
         }
-        if let Some(rest) = self.chain.strip_prefix("rpc-cookie:") {
+        if let Some(rest) = spec.strip_prefix("rpc-cookie:") {
             let (url, cookie) = rest
                 .rsplit_once(':')
                 .ok_or_else(|| anyhow!("rpc-cookie:<url>:<cookie-path>"))?;
             let rpc = BitcoinCoreRpc::with_cookie(url, Path::new(cookie))?;
             return Ok(Box::new(funding::RpcPublisher { rpc }));
         }
-        if let Some(rest) = self.chain.strip_prefix("rpc:") {
+        if let Some(rest) = spec.strip_prefix("rpc:") {
             let parts: Vec<&str> = rest.rsplitn(3, ':').collect();
             if parts.len() != 3 {
                 bail!("rpc:<url>:<user>:<pass>");
@@ -294,7 +343,7 @@ impl Ctx {
             let rpc = BitcoinCoreRpc::new(parts[2], parts[1], parts[0]);
             return Ok(Box::new(funding::RpcPublisher { rpc }));
         }
-        bail!("unknown chain spec {:?}", self.chain)
+        bail!("unknown chain spec {spec:?}")
     }
 
     fn store(&self) -> Result<Box<dyn sb_indexer::StateStore>> {
@@ -394,10 +443,12 @@ impl Ctx {
             outputs,
             fee_rate,
         )?;
-        publisher.broadcast(&tx)?;
+        // counters first: a crash after the broadcast must not reuse the
+        // change address (an unused index is the harmless outcome)
         wallet.funding_receive = next.receive;
         wallet.funding_change = next.change;
         wallet.save(&self.wallet_path(name))?;
+        publisher.broadcast(&tx)?;
         Ok(tx)
     }
 
@@ -679,9 +730,17 @@ fn main() -> Result<()> {
         }
         Cmd::Sync => {
             let (mut idx, mut store) = ctx.indexer()?;
-            let chain = ctx.chain_source()?;
+            let light = ctx.light_source()?;
+            let chain: Box<dyn ChainSource> = match &light {
+                Some(l) => Box::new(l.clone()),
+                None => ctx.chain_source()?,
+            };
             let r = idx.sync_with(chain.as_ref(), Some(store.as_mut()))?;
             println!("{r:?}");
+            if let Some(l) = light {
+                let n = l.verify_claims(&idx)?;
+                println!("the indexer's claimed roots agree with local replay for {n} block(s)");
+            }
             print_status(&idx);
         }
         Cmd::Status => print_status(&ctx.indexer()?.0),
@@ -948,11 +1007,34 @@ fn main() -> Result<()> {
                 PublishMode::pick(false, relay),
             )?;
         }
+        Cmd::Serve {
+            listen,
+            max_requests,
+        } => {
+            let (indexer, store) = ctx.indexer()?;
+            let chain = ctx.chain_source()?;
+            let listener = std::net::TcpListener::bind(&listen)
+                .with_context(|| format!("listen on {listen}"))?;
+            println!(
+                "indexer API on http://{} (deployment {}): GET /tip, /block/<height|hash>",
+                listener.local_addr()?,
+                ctx.deployment.name
+            );
+            std::io::stdout().flush()?;
+            serve::Server {
+                indexer,
+                store,
+                chain,
+            }
+            .serve(listener, max_requests)?;
+        }
         Cmd::RelayServe {
             name,
             listen,
             fee_rate,
             max_per_hour,
+            max_checks_per_minute,
+            sync_interval,
             max_requests,
         } => {
             let (idx, store) = ctx.indexer()?;
@@ -963,7 +1045,7 @@ fn main() -> Result<()> {
             let listener = std::net::TcpListener::bind(&listen)
                 .with_context(|| format!("listen on {listen}"))?;
             println!(
-                "relayer listening on http://{} (deployment {}, wallet {name}, {fee_rate} sat/vB, {max_per_hour} carriers/hour)",
+                "relayer listening on http://{} (deployment {}, wallet {name}, {fee_rate} sat/vB, {max_per_hour} carriers/hour, {max_checks_per_minute} checks/minute/address)",
                 listener.local_addr()?,
                 ctx.deployment.name
             );
@@ -979,6 +1061,8 @@ fn main() -> Result<()> {
                 fee_rate,
                 max_per_hour,
             );
+            r.max_checks_per_minute = max_checks_per_minute;
+            r.sync_interval = std::time::Duration::from_secs(sync_interval);
             r.serve(listener, max_requests)?;
         }
         Cmd::Payouts {

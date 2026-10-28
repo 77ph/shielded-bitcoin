@@ -5,6 +5,7 @@ pub mod esplora;
 /// In-process fake servers for tests (compiled unconditionally so the crate
 /// has a single build configuration; nothing here runs unless called).
 pub mod fake;
+pub mod light;
 pub mod mock;
 pub mod rpc;
 
@@ -50,4 +51,16 @@ pub trait ChainSource {
     fn block_hash(&self, height: u32) -> Result<Option<BlockHash>, ChainError>;
     /// The full block.
     fn block(&self, hash: &BlockHash) -> Result<Block, ChainError>;
+}
+
+impl<T: ChainSource + ?Sized> ChainSource for std::rc::Rc<T> {
+    fn tip(&self) -> Result<BlockId, ChainError> {
+        (**self).tip()
+    }
+    fn block_hash(&self, height: u32) -> Result<Option<BlockHash>, ChainError> {
+        (**self).block_hash(height)
+    }
+    fn block(&self, hash: &BlockHash) -> Result<Block, ChainError> {
+        (**self).block(hash)
+    }
 }

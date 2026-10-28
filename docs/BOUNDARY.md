@@ -140,6 +140,14 @@ not a payout memo, and more than `--max-per-hour` carriers. Clients use
 * Unavailable: the client gets an error and the carrier stays in the
   outbox; publish it with model 1 or 2 or another relayer. A relayer can
   censor but not forge, replay or redirect a transfer.
+* The operator's exposure: anyone can make the relayer run a check
+  (replay to the tip, one proof verification), so the service is a
+  single-threaded target for availability attacks. It limits submissions
+  per client address per minute (`--max-checks-per-minute`), replays at
+  most once per `--sync-interval`, answers `/info` from memory, and caps
+  request bodies; none of that is authentication, and a public relayer
+  needs a front proxy or an allow-list. Funds are never at risk beyond the
+  hourly budget: only valid, unspent, never-seen transfers are paid for.
 
 What none of the three does: hide the **fact** of publication, the carrier
 size (700-byte envelopes in ~830–890 vB transactions), the anchor age or

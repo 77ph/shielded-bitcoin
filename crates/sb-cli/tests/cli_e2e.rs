@@ -676,6 +676,107 @@ fn full_cycle_on_fake_node() {
             .contains("0 pending")
     );
 
+    // verified sync: `sb serve` over the fake node, a fresh data directory
+    // replays from its API with and without a header source and reaches the
+    // same state
+    let api = Command::new(env!("CARGO_BIN_EXE_sb"))
+        .arg("--profile")
+        .arg(&cli.profile)
+        .arg("--data-dir")
+        .arg(&cli.data)
+        .arg("--chain")
+        .arg(&cli.chain)
+        .args(["serve", "--listen", "127.0.0.1:0", "--max-requests", "60"])
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut api = KillOnDrop(api);
+    let api_url = {
+        use std::io::BufRead;
+        let mut line = String::new();
+        std::io::BufReader::new(api.0.stdout.take().unwrap())
+            .read_line(&mut line)
+            .unwrap();
+        let start = line.find("http://").unwrap();
+        line[start..].split_whitespace().next().unwrap().to_string()
+    };
+    cli.ok(&["sync"]);
+    let full_status = cli.ok(&["status"]);
+    let light_dir = dir.join("light");
+    std::fs::create_dir_all(&light_dir).unwrap();
+    std::fs::copy(dir.join("pass"), light_dir.join("pass")).unwrap();
+    for spec in [
+        format!("light:{api_url}|{}", cli.chain),
+        format!("light:{api_url}"),
+    ] {
+        let _ = std::fs::remove_file(light_dir.join("state-e2e.json"));
+        let light = Cli {
+            data: light_dir.clone(),
+            profile: dir.join("profile.json"),
+            chain: spec.clone(),
+        };
+        let synced = light.ok(&["sync"]);
+        assert!(synced.contains("claimed roots agree"), "{synced}");
+        let a = light.ok(&["status"]);
+        assert_eq!(
+            a.lines().skip(1).collect::<Vec<_>>(),
+            full_status.lines().skip(1).collect::<Vec<_>>(),
+            "light replay differs from full replay for {spec}"
+        );
+        let state_full = std::fs::read_to_string(dir.join("state-e2e.json")).unwrap();
+        let state_light = std::fs::read_to_string(light_dir.join("state-e2e.json")).unwrap();
+        assert_eq!(state_full, state_light);
+    }
+    // the API answers by hash and refuses junk; a bare light source cannot publish
+    let tip: serde_json::Value = ureq::get(&format!("{api_url}/tip"))
+        .call()
+        .unwrap()
+        .into_json()
+        .unwrap();
+    let by_hash: serde_json::Value = ureq::get(&format!(
+        "{api_url}/block/{}",
+        tip["hash"].as_str().unwrap()
+    ))
+    .call()
+    .unwrap()
+    .into_json()
+    .unwrap();
+    assert_eq!(by_hash["height"], tip["height"]);
+    assert!(matches!(
+        ureq::get(&format!("{api_url}/block/zzz"))
+            .call()
+            .unwrap_err(),
+        ureq::Error::Status(400, _)
+    ));
+    assert!(matches!(
+        ureq::get(&format!("{api_url}/block/1")).call().unwrap_err(),
+        ureq::Error::Status(404, _)
+    ));
+    assert!(matches!(
+        ureq::post(&format!("{api_url}/tip"))
+            .send_string("")
+            .unwrap_err(),
+        ureq::Error::Status(404, _)
+    ));
+    let bare = Cli {
+        data: dir.clone(),
+        profile: dir.join("profile.json"),
+        chain: format!("light:{api_url}"),
+    };
+    bare.fails(
+        &[
+            "fund-send",
+            "--name",
+            "alice",
+            "--to",
+            &bob_funding,
+            "--amount",
+            "1000",
+        ],
+        "no publisher",
+    );
+    drop(api);
+
     // other backends over the same fake node (top alice up first)
     shared.fund(&script_of(&alice_funding), 50_000);
     shared.mine(20);

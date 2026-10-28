@@ -30,6 +30,12 @@ pub struct Shared {
     pub drop_next_batch: Arc<AtomicBool>,
     /// Electrum: send an id-less notification line before the next answer.
     pub notify_first: Arc<AtomicBool>,
+    /// Light routes: leave the last carrier of every block out (censorship).
+    pub light_omit: Arc<AtomicBool>,
+    /// Light routes: claim an all-zero root after every block.
+    pub light_bogus_root: Arc<AtomicBool>,
+    /// Light routes: name the previous block's hash for every height.
+    pub light_wrong_hash: Arc<AtomicBool>,
 }
 
 impl Shared {
@@ -38,6 +44,9 @@ impl Shared {
             chain: Arc::new(Mutex::new(chain)),
             mempool: Arc::new(Mutex::new(Vec::new())),
             truncate: Arc::new(AtomicBool::new(false)),
+            light_omit: Arc::new(AtomicBool::new(false)),
+            light_bogus_root: Arc::new(AtomicBool::new(false)),
+            light_wrong_hash: Arc::new(AtomicBool::new(false)),
             drop_next: Arc::new(AtomicBool::new(false)),
             drop_next_batch: Arc::new(AtomicBool::new(false)),
             notify_first: Arc::new(AtomicBool::new(false)),
@@ -295,8 +304,81 @@ fn esplora(s: &Shared, path: &str) -> (u16, &'static str, Vec<u8>) {
                 .unwrap_or(json!({"confirmed": false}));
             (200, "application/json", serde_json::to_vec(&v).unwrap())
         }
+        // what `sb serve` answers, over the mock chain
+        ["light", "tip"] => match chain.tip() {
+            Ok(t) => (
+                200,
+                "application/json",
+                serde_json::to_vec(&json!({"height": t.height, "hash": t.hash.to_string()}))
+                    .unwrap(),
+            ),
+            Err(_) => (
+                404,
+                "application/json",
+                b"{\"error\":\"no blocks\"}".to_vec(),
+            ),
+        },
+        ["light", "block", which] => {
+            let id = if let Ok(h) = which.parse::<u32>() {
+                chain.block_hash(h).ok().flatten().map(|hash| (h, hash))
+            } else {
+                which.parse().ok().and_then(|hash| {
+                    chain
+                        .blocks()
+                        .iter()
+                        .position(|b| b.block_hash() == hash)
+                        .map(|i| (chain.start_height() + i as u32, hash))
+                })
+            };
+            let Some((height, hash)) = id else {
+                return (
+                    404,
+                    "application/json",
+                    b"{\"error\":\"not replayed\"}".to_vec(),
+                );
+            };
+            let block = chain.block(&hash).unwrap();
+            let mut view = super::light::BlockView::from_block(height, &block, None);
+            if s.light_omit.load(Ordering::SeqCst) {
+                view = omit_last_carrier(&block, view);
+            }
+            if s.light_bogus_root.load(Ordering::SeqCst) {
+                view.root_after = Some("00".repeat(32));
+            }
+            if s.light_wrong_hash.load(Ordering::SeqCst) {
+                view.hash = block.header.prev_blockhash.to_string();
+            }
+            (200, "application/json", serde_json::to_vec(&view).unwrap())
+        }
+        ["light", "bad-json", ..] => (200, "application/json", b"{not json".to_vec()),
         _ => (404, "text/plain", b"not found".to_vec()),
     }
+}
+
+/// The block's view with its last carrier left out, proof and all, as a
+/// censoring indexer would serve it.
+fn omit_last_carrier(
+    block: &bitcoin::Block,
+    mut view: super::light::BlockView,
+) -> super::light::BlockView {
+    let Some(last) = view.carriers.pop() else {
+        return view;
+    };
+    let txids: Vec<Txid> = block.txdata.iter().map(|t| t.compute_txid()).collect();
+    let matches: Vec<bool> = block
+        .txdata
+        .iter()
+        .enumerate()
+        .map(|(i, t)| i as u32 != last.index && super::light::is_carrier(t))
+        .collect();
+    view.merkle = if view.carriers.is_empty() {
+        String::new()
+    } else {
+        hex::encode(serialize(
+            &bitcoin::merkle_tree::PartialMerkleTree::from_txids(&txids, &matches),
+        ))
+    };
+    view
 }
 
 fn rpc(s: &Shared, req: &Value) -> (u16, Value) {

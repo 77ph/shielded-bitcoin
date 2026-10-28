@@ -26,7 +26,7 @@ soft fork or a hard fork.
 | Indexer | Bitcoin Core RPC / Esplora / Electrum / mock sources, carrier rule, normative acceptance order, per-block checkpoints with reorg rollback, JSON or PostgreSQL state |
 | Wallet | scanning and sender recovery, note selection, anchor policy, change, input locks, reorg-safe rescan |
 | Boundary | development **mint** into a custodial vault and **withdraw** via payout memos (`docs/BOUNDARY.md`) |
-| CLI | `sb`: profile, wallets, sync, scan, mint, send, withdraw, payouts; carriers self-funded (fresh addresses), externally funded (`--no-broadcast` + `publish`) or relayed (`relay-serve`, `--relay`) |
+| CLI | `sb`: profile, wallets, sync, scan, mint, send, withdraw, payouts; carriers self-funded (fresh addresses), externally funded (`--no-broadcast` + `publish`) or relayed (`relay-serve`, `--relay`); indexer API (`serve`) and verified sync from it (`--chain light:`) |
 
 Measured on this machine (release build): setup 1.5 s, prove 1.5 s,
 verify 4 ms, envelope 700 bytes, carrier ≈ 830 vB.
@@ -93,6 +93,22 @@ relayer (`sb relay-serve`, `sb send --relay`) that checks and pays
 transfers from its own coins. Who pays, what each party sees and what
 happens when a service is down are stated per model in "Fee funding" in
 `docs/BOUNDARY.md`.
+
+**Verified sync from an indexer.** `sb serve` exposes an indexer's replay
+as an API (`/tip`, `/block/<height|hash>`): per block, the header, every
+transaction the carrier rule looks at, a BIP 37 partial merkle tree for
+them and the indexer's own `R[h]`. A client with `--chain
+light:<url>` checks each tree against the header, replays the carriers
+itself and compares its roots with the indexer's claims, so the indexer
+cannot forge, alter or reorder a carrier; with `light:<url>|<full source>`
+the block hashes are also cross-checked against that source, so it cannot
+choose the chain either. What it can do is **omit** carriers, which the
+client sees only as a root mismatch (against the indexer's own claim, or
+against a second indexer or a full replay). This is the "verification of an
+indexer response against Bitcoin data" option of the paper's §22.2; the
+succinct proof of replay the paper asks for is open research and not
+implemented. A client in this mode publishes through the full source or
+a relayer.
 
 Indexer state lives in a JSON file by default; `--db "<libpq string>"`
 (e.g. `host=/var/run/postgresql dbname=shielded_bitcoin`) keeps it in
@@ -168,7 +184,8 @@ to grow into a real indexer and wallet, and test-vector-first interoperability.
    `docs/RUNS.md`).
 7. ~~Encrypted wallet files~~, ~~profile versioning rules~~, ~~Electrum
    source~~, ~~PostgreSQL-backed indexer state~~, ~~fee-funding models
-   (fresh addresses, external funding, sponsored relayer)~~; light-client
-   sync, ceremony tooling.
+   (fresh addresses, external funding, sponsored relayer)~~, ~~verified
+   sync from an indexer (`sb serve`, `--chain light:`)~~; ceremony
+   tooling, proving-key cache.
 
 Rust 1.85+ (edition 2024).

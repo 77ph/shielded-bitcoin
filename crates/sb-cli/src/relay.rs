@@ -15,9 +15,8 @@
 //! `{"txid": "..."}` or `{"error": "..."}` (HTTP 400); `GET /info` →
 //! deployment name, network, replayed tip and fee rate.
 
-use std::collections::HashSet;
-use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::collections::{HashMap, HashSet};
+use std::net::{IpAddr, TcpListener};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -31,6 +30,7 @@ use sb_primitives::Fr;
 use sb_wallet::Wallet;
 
 use crate::funding::{FundingState, FundingWallet, Publisher};
+use crate::http::{read_request, respond};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RelayRequest {
@@ -38,9 +38,6 @@ pub struct RelayRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memo: Option<String>,
 }
-
-/// Largest request body accepted (an envelope is 700 bytes = 1400 hex).
-const MAX_BODY: usize = 16 * 1024;
 
 /// A running relayer: indexer, chain, fee wallet and the policy knobs.
 pub struct Relayer {
@@ -57,6 +54,13 @@ pub struct Relayer {
     /// same envelope is not paid twice while it sits in the mempool.
     pending: HashSet<Fr>,
     paid_at: Vec<Instant>,
+    /// The check path (replay to tip, proof verification) is the expensive
+    /// one: at most this many submissions per client address per minute.
+    pub max_checks_per_minute: u32,
+    checks: HashMap<IpAddr, Vec<Instant>>,
+    /// Replay to the tip at most this often; between syncs the last tip serves.
+    pub sync_interval: Duration,
+    last_sync: Option<Instant>,
 }
 
 impl Relayer {
@@ -84,6 +88,10 @@ impl Relayer {
             max_per_hour,
             pending: HashSet::new(),
             paid_at: Vec::new(),
+            max_checks_per_minute: 6,
+            checks: HashMap::new(),
+            sync_interval: Duration::from_secs(5),
+            last_sync: None,
         }
     }
 
@@ -94,17 +102,37 @@ impl Relayer {
         }
     }
 
-    /// Replay to the tip; the check below is against the next block.
+    /// Replay to the tip (at most once per `sync_interval`); the check below
+    /// is against the next block.
     fn refresh(&mut self) -> Result<u32> {
-        self.indexer
-            .sync_with(self.chain.as_ref(), Some(self.store.as_mut()))?;
-        // paid-for transfers that have been replayed no longer need tracking
-        let replayed = &self.indexer.state.nullifiers;
-        self.pending.retain(|nf| !replayed.contains(nf));
+        if self
+            .last_sync
+            .is_none_or(|t| t.elapsed() >= self.sync_interval)
+        {
+            self.indexer
+                .sync_with(self.chain.as_ref(), Some(self.store.as_mut()))?;
+            self.last_sync = Some(Instant::now());
+            // paid-for transfers that have been replayed no longer need tracking
+            let replayed = &self.indexer.state.nullifiers;
+            self.pending.retain(|nf| !replayed.contains(nf));
+        }
         self.indexer
             .state
             .last_height()
             .ok_or_else(|| anyhow!("indexer has not replayed any block"))
+    }
+
+    /// One more submission from `ip` allowed within the last minute?
+    fn admit(&mut self, ip: IpAddr) -> bool {
+        let minute_ago = Instant::now() - Duration::from_secs(60);
+        let times = self.checks.entry(ip).or_default();
+        times.retain(|t| *t > minute_ago);
+        if times.len() as u32 >= self.max_checks_per_minute {
+            return false;
+        }
+        times.push(Instant::now());
+        self.checks.retain(|_, t| !t.is_empty());
+        true
     }
 
     /// Check, pay and broadcast one envelope.
@@ -138,10 +166,12 @@ impl Relayer {
             outputs,
             self.fee_rate,
         )?;
-        let txid = self.publisher.broadcast(&tx)?;
+        // counters first: a crash after the broadcast must not reuse the
+        // change address (an unused index is the harmless outcome)
         self.wallet.funding_receive = next.receive;
         self.wallet.funding_change = next.change;
         self.wallet.save(&self.wallet_path)?;
+        let txid = self.publisher.broadcast(&tx)?;
         self.pending.extend(check.nullifiers);
         self.paid_at.push(Instant::now());
         log::info!(
@@ -152,8 +182,9 @@ impl Relayer {
         Ok(txid)
     }
 
-    pub fn info(&mut self) -> Value {
-        let tip = self.refresh().ok();
+    /// Cheap: the last replayed tip, no sync.
+    pub fn info(&self) -> Value {
+        let tip = self.indexer.state.last_height();
         json!({
             "deployment": self.indexer.deployment.name,
             "network": format!("{:?}", self.indexer.deployment.network).to_lowercase(),
@@ -163,13 +194,15 @@ impl Relayer {
     }
 
     /// Serve until `max_requests` requests were answered (`None`: forever).
+    /// The first replay happens here, before the first request.
     pub fn serve(&mut self, listener: TcpListener, max_requests: Option<u32>) -> Result<()> {
+        self.refresh()?;
         let mut served = 0u32;
         while max_requests.is_none_or(|m| served < m) {
             let (conn, peer) = listener.accept()?;
             let _ = conn.set_read_timeout(Some(Duration::from_secs(10)));
             let (status, body) = match read_request(&conn) {
-                Ok((method, path, body)) => self.handle(&method, &path, &body),
+                Ok((method, path, body)) => self.handle(&method, &path, &body, peer.ip()),
                 Err(e) => (400, json!({"error": e.to_string()})),
             };
             log::info!("{peer}: {status}");
@@ -179,10 +212,16 @@ impl Relayer {
         Ok(())
     }
 
-    fn handle(&mut self, method: &str, path: &str, body: &[u8]) -> (u16, Value) {
+    fn handle(&mut self, method: &str, path: &str, body: &[u8], ip: IpAddr) -> (u16, Value) {
         match (method, path) {
             ("GET", "/info") => (200, self.info()),
             ("POST", "/relay") => {
+                if !self.admit(ip) {
+                    return (
+                        429,
+                        json!({"error": "busy: too many submissions from this address, try later"}),
+                    );
+                }
                 let req: RelayRequest = match serde_json::from_slice(body) {
                     Ok(r) => r,
                     Err(e) => return (400, json!({"error": format!("bad request: {e}")})),
@@ -203,56 +242,6 @@ impl Relayer {
             _ => (404, json!({"error": "not found"})),
         }
     }
-}
-
-/// Request line, path and body of one HTTP/1.1 request.
-fn read_request(conn: &TcpStream) -> Result<(String, String, Vec<u8>)> {
-    let mut reader = BufReader::new(conn.try_clone()?);
-    let mut line = String::new();
-    if reader.read_line(&mut line)? == 0 {
-        bail!("empty request");
-    }
-    let mut parts = line.split_whitespace();
-    let (Some(method), Some(path)) = (parts.next(), parts.next()) else {
-        bail!("malformed request line");
-    };
-    let (method, path) = (method.to_string(), path.to_string());
-    let mut content_length = 0usize;
-    loop {
-        let mut h = String::new();
-        if reader.read_line(&mut h)? == 0 {
-            bail!("truncated headers");
-        }
-        if h.trim().is_empty() {
-            break;
-        }
-        if let Some(v) = h.to_ascii_lowercase().strip_prefix("content-length:") {
-            content_length = v.trim().parse().context("content-length")?;
-        }
-    }
-    if content_length > MAX_BODY {
-        bail!("body too large");
-    }
-    let mut body = vec![0u8; content_length];
-    reader.read_exact(&mut body).context("body")?;
-    Ok((method, path, body))
-}
-
-fn respond(mut conn: TcpStream, status: u16, body: &Value) {
-    let out = serde_json::to_vec(body).unwrap_or_default();
-    let header = format!(
-        "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-        status,
-        match status {
-            200 => "OK",
-            404 => "Not Found",
-            _ => "Bad Request",
-        },
-        out.len()
-    );
-    let _ = conn.write_all(header.as_bytes());
-    let _ = conn.write_all(&out);
-    let _ = conn.flush();
 }
 
 /// Client side: hand an envelope to a relayer and return the carrier txid.
@@ -287,43 +276,27 @@ pub fn submit(url: &str, envelope: &[u8], memo: Option<&[u8]>) -> Result<Txid> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::TcpListener;
 
-    /// A request that never completes its headers is answered 400 and does
-    /// not stall the server; so is an oversized body.
     #[test]
-    fn malformed_requests() {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        let t = std::thread::spawn(move || {
-            let mut replies = Vec::new();
-            for _ in 0..4 {
-                let (conn, _) = listener.accept().unwrap();
-                let _ = conn.set_read_timeout(Some(Duration::from_secs(5)));
-                let (status, body) = match read_request(&conn) {
-                    Ok((m, p, b)) => (200, json!({"m": m, "p": p, "n": b.len()})),
-                    Err(e) => (400, json!({"error": e.to_string()})),
-                };
-                replies.push(status);
-                respond(conn, status, &body);
+    fn admission_is_per_address_per_minute() {
+        let mut checks: HashMap<IpAddr, Vec<Instant>> = HashMap::new();
+        let a: IpAddr = "10.0.0.1".parse().unwrap();
+        let b: IpAddr = "10.0.0.2".parse().unwrap();
+        let max = 3u32;
+        let mut admit = |ip: IpAddr| {
+            let minute_ago = Instant::now() - Duration::from_secs(60);
+            let times = checks.entry(ip).or_default();
+            times.retain(|t| *t > minute_ago);
+            if times.len() as u32 >= max {
+                return false;
             }
-            replies
-        });
-        let send = |raw: &str| -> String {
-            let mut c = TcpStream::connect(addr).unwrap();
-            c.write_all(raw.as_bytes()).unwrap();
-            let _ = c.shutdown(std::net::Shutdown::Write);
-            let mut s = String::new();
-            c.read_to_string(&mut s).unwrap();
-            s
+            times.push(Instant::now());
+            true
         };
-        assert!(send("").contains("400"));
-        assert!(send("GARBAGE\r\n").contains("400"));
-        assert!(
-            send("POST /relay HTTP/1.1\r\nContent-Length: 999999\r\n\r\n").contains("too large")
-        );
-        let ok = send("POST /x HTTP/1.1\r\nContent-Length: 3\r\n\r\nabc");
-        assert!(ok.contains("200") && ok.contains("\"n\":3"), "{ok}");
-        assert_eq!(t.join().unwrap(), vec![400, 400, 400, 200]);
+        assert!((0..3).all(|_| admit(a)));
+        assert!(!admit(a));
+        assert!(admit(b));
     }
 
     #[test]

@@ -106,3 +106,18 @@ framed the legacy way (version, empty input list, outputs, lock time); the
 segwit framing puts a marker and flag where Core expects the input count
 and `fundrawtransaction` answers `TX decode failed`. `sb` now writes the
 template as Core's `createrawtransaction` does.
+
+## Private signet, 28 October 2026: verified sync from an indexer
+
+`sb serve` was run over the node (RPC, cookie auth) on the data directory
+of the runs above, and an **empty** data directory replayed the deployment
+from its API with `--chain light:http://127.0.0.1:8788|rpc-cookie:…`: 50
+blocks (activation 100 to 149), 5 accepted events and 2 rejections, the
+block hashes cross-checked against the node, each block's carriers checked
+against its header through the partial merkle tree, and the indexer's
+claimed `R[h]` compared with local replay for all 50 blocks. The resulting
+state file is byte-identical to the full replay's. Block 149, for example,
+is served as 2 transactions with carrier index 1 and a 71-byte partial
+merkle tree instead of the full block. The 23 seconds it took were spent
+by the server fetching full blocks from the node through an SSH tunnel,
+not by the client.
