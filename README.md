@@ -11,9 +11,10 @@ nullifier set, per-block roots) by deterministic replay of accepted envelopes
 in block order. **No change to Bitcoin consensus is required** — this is not a
 soft fork or a hard fork.
 
-> **Status: pre-alpha.** Nothing here has been audited, the trusted setup is
-> a published seed (anyone can forge proofs), and the only peg is a custodial
-> development vault. Do not hold value with it.
+> **Status: pre-alpha.** Nothing here has been audited, the deployments
+> shipped here use a trusted setup from a published seed (anyone can forge
+> proofs), and the only peg is a custodial development vault. Do not hold
+> value with it.
 
 ## What works
 
@@ -23,6 +24,7 @@ soft fork or a hard fork.
 | Primitives | Poseidon (native + R1CS, pinned constants), Jubjub encodings, DiversifyHash |
 | Core | key hierarchy, bech32m addresses, note encryption, leaves, nullifiers, 700-byte canonical envelope, note tree with historical paths |
 | Circuit | 2-in/2-out transfer relation, 84 362 constraints, Groth16/BLS12-381; prove ≈ 1.5 s, verify ≈ 4 ms (16 threads) |
+| Ceremony | `sb ceremony`: BGM17 multi-party setup (powers of tau, key derivation checked against arkworks, delta contributions, beacon), verifiable from files; `profile-new --ceremony-vk` (`docs/CEREMONY.md`) |
 | Indexer | Bitcoin Core RPC / Esplora / Electrum / mock sources, carrier rule, normative acceptance order, per-block checkpoints with reorg rollback, JSON or PostgreSQL state |
 | Wallet | scanning and sender recovery, note selection, anchor policy, change, input locks, reorg-safe rescan |
 | Boundary | development **mint** into a custodial vault and **withdraw** via payout memos (`docs/BOUNDARY.md`) |
@@ -40,8 +42,9 @@ verify 4 ms, envelope 700 bytes, carrier ≈ 830 vB.
 | `crates/sb-circuit` | §14, §B | R1CS gadgets, the transfer circuit, Groth16 setup/prove/verify |
 | `crates/sb-indexer` | §8, §11, §15, §A.4, §A.6, §A.7 | chain sources, carrier extraction, replay, state, reorg handling, dev mint |
 | `crates/sb-wallet` | §10, §16, §C | scanning, recovery, note selection, anchor policy, transfer construction |
+| `crates/sb-ceremony` | §8.4 | BGM17 multi-party setup: powers of tau, key derivation, delta contributions, beacon |
 | `crates/sb-cli` | — | `sb` command-line tool |
-| `docs/` | — | `PROFILE.md` (normative profile), `BOUNDARY.md` (dev peg), `TEST_VECTORS.md`, `RUNS.md` |
+| `docs/` | — | `PROFILE.md` (normative profile), `BOUNDARY.md` (dev peg, fee funding), `CEREMONY.md` (parameter ceremony), `TEST_VECTORS.md`, `RUNS.md` |
 | `deployments/` | profile §9 | deployment profiles |
 
 ## Quick start (signet)
@@ -185,7 +188,9 @@ to grow into a real indexer and wallet, and test-vector-first interoperability.
 7. ~~Encrypted wallet files~~, ~~profile versioning rules~~, ~~Electrum
    source~~, ~~PostgreSQL-backed indexer state~~, ~~fee-funding models
    (fresh addresses, external funding, sponsored relayer)~~, ~~verified
-   sync from an indexer (`sb serve`, `--chain light:`)~~; ceremony
-   tooling, proving-key cache.
+   sync from an indexer (`sb serve`, `--chain light:`)~~, ~~ceremony
+   tooling~~, ~~proving-key cache~~.
+8. Outside review of the ceremony tooling; a format adapter for public
+   powers-of-tau transcripts; a ceremony with independent participants.
 
 Rust 1.85+ (edition 2024).

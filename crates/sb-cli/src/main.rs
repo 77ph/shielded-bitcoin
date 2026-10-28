@@ -4,6 +4,7 @@
 //! sb --profile deployments/signet-dev.json --data-dir ./sb-data --chain esplora:https://mempool.space/signet/api <command>
 //! ```
 
+mod ceremony;
 mod funding;
 mod http;
 mod relay;
@@ -80,10 +81,21 @@ enum Cmd {
         #[arg(long)]
         operator_address: Option<String>,
         /// Setup seed (hex, 32 bytes); defaults to all zeros.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "ceremony_vk")]
         setup_seed: Option<String>,
+        /// Verifying key from `sb ceremony export` (path relative to the profile); replaces the insecure setup.
+        #[arg(long)]
+        ceremony_vk: Option<String>,
+        /// Proving key from `sb ceremony export` (wallets need it; indexers do not).
+        #[arg(long, requires = "ceremony_vk")]
+        ceremony_pk: Option<String>,
         #[arg(long, default_value = "100")]
         window: u32,
+    },
+    /// Multi-party setup of the Groth16 parameters (docs/CEREMONY.md).
+    Ceremony {
+        #[command(subcommand)]
+        cmd: ceremony::CeremonyCmd,
     },
     /// Create a wallet (encrypted unless --no-encrypt).
     WalletNew {
@@ -406,6 +418,37 @@ impl Ctx {
         }
     }
 
+    /// Proving parameters; an insecure-seed setup is generated once and
+    /// kept under the data directory, keyed by the verifying-key hash.
+    fn params(&self) -> Result<sb_circuit::TransferParams> {
+        if !matches!(self.deployment.setup, Setup::InsecureSeed { .. }) {
+            return Ok(self.deployment.params(&self.base_dir())?);
+        }
+        let cache = self.data_dir.join("params").join(format!(
+            "{}.pk",
+            hex::encode(self.deployment.transfer_vk_sha256)
+        ));
+        if let Ok(bytes) = std::fs::read(&cache) {
+            if let Ok(params) = sb_circuit::TransferParams::from_pk_bytes(&bytes) {
+                if vk_sha256(params.vk()) == self.deployment.transfer_vk_sha256 {
+                    return Ok(params);
+                }
+            }
+            eprintln!(
+                "warning: ignoring a corrupt proving-key cache {}",
+                cache.display()
+            );
+        }
+        let params = self.deployment.params(&self.base_dir())?;
+        if let Some(dir) = cache.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if let Err(e) = std::fs::write(&cache, params.pk_to_bytes()?) {
+            eprintln!("warning: could not cache the proving key: {e}");
+        }
+        Ok(params)
+    }
+
     fn funding(&self, wallet: &Wallet) -> Result<funding::FundingWallet> {
         let seed = hex::decode(wallet.seed_hex())?;
         Ok(funding::FundingWallet::new(
@@ -614,6 +657,9 @@ fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let cli = Cli::parse();
 
+    if let Cmd::Ceremony { cmd } = cli.cmd {
+        return ceremony::run(cmd);
+    }
     if let Cmd::ProfileNew {
         name,
         network,
@@ -621,32 +667,68 @@ fn main() -> Result<()> {
         vault_script,
         operator_address,
         setup_seed,
+        ceremony_vk,
+        ceremony_pk,
         window,
     } = &cli.cmd
     {
-        let seed: [u8; 32] = match setup_seed {
-            Some(h) => hex::decode(h)?
-                .try_into()
-                .map_err(|_| anyhow!("seed must be 32 bytes"))?,
-            None => [0u8; 32],
+        let base = cli
+            .profile
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."));
+        let network = match (network.as_str(), ceremony_vk.is_some()) {
+            ("mainnet", false) => {
+                bail!("refusing to create a mainnet profile with an insecure setup")
+            }
+            ("mainnet", true) => SbNetwork::Mainnet,
+            ("signet", _) => SbNetwork::Signet,
+            ("testnet", _) => SbNetwork::Testnet,
+            ("regtest", _) => SbNetwork::Regtest,
+            (other, _) => bail!("unknown network {other}"),
         };
-        let network = match network.as_str() {
-            "mainnet" => bail!("refusing to create a mainnet profile with an insecure setup"),
-            "signet" => SbNetwork::Signet,
-            "testnet" => SbNetwork::Testnet,
-            "regtest" => SbNetwork::Regtest,
-            other => bail!("unknown network {other}"),
+        let (setup, vk_hash) = match ceremony_vk {
+            Some(vk_path) => {
+                let bytes = std::fs::read(base.join(vk_path))
+                    .with_context(|| format!("verifying key {vk_path}"))?;
+                let verifier = sb_circuit::TransferVerifier::from_vk_bytes(&bytes)?;
+                if let Some(pk_path) = ceremony_pk {
+                    let pk = std::fs::read(base.join(pk_path))
+                        .with_context(|| format!("proving key {pk_path}"))?;
+                    let params = sb_circuit::TransferParams::from_pk_bytes(&pk)?;
+                    if vk_sha256(params.vk()) != vk_sha256(&verifier.vk) {
+                        bail!("the proving key's verifying key differs from {vk_path}");
+                    }
+                }
+                eprintln!("pinning the ceremony's verifying key");
+                (
+                    Setup::Ceremony {
+                        vk_path: vk_path.clone(),
+                        pk_path: ceremony_pk.clone(),
+                    },
+                    vk_sha256(&verifier.vk),
+                )
+            }
+            None => {
+                let seed: [u8; 32] = match setup_seed {
+                    Some(h) => hex::decode(h)?
+                        .try_into()
+                        .map_err(|_| anyhow!("seed must be 32 bytes"))?,
+                    None => [0u8; 32],
+                };
+                eprintln!("running the insecure setup to pin the verifying key…");
+                let params = sb_circuit::TransferParams::insecure_setup(&seed)?;
+                (Setup::InsecureSeed { seed }, vk_sha256(params.vk()))
+            }
         };
-        eprintln!("running the insecure setup to pin the verifying key…");
-        let params = sb_circuit::TransferParams::insecure_setup(&seed)?;
         let d = Deployment {
             profile: sb_core::PROFILE_VERSION.into(),
             name: name.clone(),
             network,
             activation_height: *activation,
             const_salt: Deployment::derive_const_salt(name),
-            transfer_vk_sha256: vk_sha256(params.vk()),
-            setup: Setup::InsecureSeed { seed },
+            transfer_vk_sha256: vk_hash,
+            setup,
             window_w: *window,
             k_min: 1,
             boundary: vault_script.as_ref().map(|v| DevBoundary {
@@ -676,7 +758,7 @@ fn main() -> Result<()> {
     };
 
     match cli.cmd {
-        Cmd::ProfileNew { .. } => unreachable!(),
+        Cmd::ProfileNew { .. } | Cmd::Ceremony { .. } => unreachable!(),
         Cmd::WalletEncrypt { name } => {
             let mut w = ctx.wallet(&name)?;
             let pass = ctx.passphrase("New passphrase: ", true)?;
@@ -870,7 +952,7 @@ fn main() -> Result<()> {
                 &idx.state.nullifiers,
             )?;
             eprintln!("loading proving parameters…");
-            let params = ctx.deployment.params(&ctx.base_dir())?;
+            let params = ctx.params()?;
             eprintln!("proving (anchor {h_anchor}, tree size {size})…");
             let built = w.build_send(
                 &params,
@@ -944,7 +1026,7 @@ fn main() -> Result<()> {
                 &idx.state.nullifiers,
             )?;
             eprintln!("loading proving parameters…");
-            let params = ctx.deployment.params(&ctx.base_dir())?;
+            let params = ctx.params()?;
             eprintln!("proving withdraw of {amount} sat to {dest}…");
             let built = w.build_send(
                 &params,

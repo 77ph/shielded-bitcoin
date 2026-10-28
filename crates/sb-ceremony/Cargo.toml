@@ -1,0 +1,30 @@
+[package]
+name = "sb-ceremony"
+description = "Shielded Bitcoin: multi-party Groth16 parameter generation (powers of tau and circuit-specific phase)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+sb-circuit.workspace = true
+ark-ff.workspace = true
+ark-ec.workspace = true
+ark-std.workspace = true
+ark-serialize.workspace = true
+ark-bls12-381.workspace = true
+ark-relations.workspace = true
+ark-groth16.workspace = true
+ark-poly.workspace = true
+rand.workspace = true
+rand_chacha.workspace = true
+rayon.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+hex.workspace = true
+
+[dev-dependencies]
+ark-r1cs-std.workspace = true
+ark-snark.workspace = true
+sb-primitives.workspace = true
+sb-core.workspace = true

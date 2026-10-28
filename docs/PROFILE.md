@@ -330,7 +330,8 @@ real zero-value note to one of the sender's own addresses.
    constraint so that no public input is left unconstrained in the R1CS.
    Replay recomputes `h_body` and `r_anchor` from the published envelope.
 
-Expected size: ≈ 100 k R1CS constraints (to be measured).
+Measured size: 84 362 R1CS constraints, 18 instance variables, evaluation
+domain `2^17`.
 
 ### 8.4 Proving/verifying key
 
@@ -338,7 +339,8 @@ Expected size: ≈ 100 k R1CS constraints (to be measured).
 (§9) pins `SHA-256(vk)`. Development deployments use a deterministic
 **insecure** setup from a published seed (anyone can forge proofs); this is
 printed loudly by every tool. A production deployment requires an MPC
-ceremony, which is out of scope of this draft.
+ceremony; the protocol and tooling are described in `docs/CEREMONY.md`
+and are not part of this profile.
 
 ## 9. Deployment profile
 

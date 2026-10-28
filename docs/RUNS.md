@@ -121,3 +121,34 @@ is served as 2 transactions with carrier index 1 and a 71-byte partial
 merkle tree instead of the full block. The 23 seconds it took were spent
 by the server fetching full blocks from the node through an SSH tunnel,
 not by the client.
+
+## Private signet, 28 October 2026: parameters from a ceremony
+
+`sb ceremony` end to end on the transfer circuit (domain `2^17`), two
+participants per phase plus a beacon, on one laptop (16 threads), file to
+file with full validation on every read:
+
+| Step | Time | File |
+|---|---|---|
+| `phase1-new` | seconds | 37.7 MB |
+| `phase1-contribute` (×2) | ≈ 50 s each, incl. reading and validating the input | 37.7 MB |
+| `phase1-verify` (×2) | ≈ 50 s each (two files to validate, checks ≈ 4 s) | — |
+| `phase2-new` (key derivation) | ≈ 8 min (four inverse FFTs over curve points) | 26.3 MB |
+| `phase2-contribute` (×2), `phase2-beacon` | ≈ 30 s each, mostly validation | 26.3 MB |
+| `phase2-verify` | ≈ 9 min (recomputes the initial key) | — |
+| `export` | seconds | `transfer.pk` 52.6 MB, `transfer.vk` 1.2 KB |
+
+A deployment `localsignet-ceremony` (activation 150) was then pinned to
+the exported verifying key (`profile-new --ceremony-vk --ceremony-pk`):
+
+| Step | Height | Carrier | Size |
+|---|---|---|---|
+| mint 5 000 to alice | 151 | `71a0d327b73fffd4248769d60d9f5cefeb25d87c8637cd044cc1259c64e57285` | 242 vB |
+| alice pays herself 1 000, change 4 000, proven with the ceremony key (2.6 s wall, key loaded from the file) | 154 | `48f64826a8c6eea4eff2aa2a91f79f8b2579657dcd43a3ebcb181fdafa70c626` | 825 vB |
+
+The older `localsignet-dev` deployment, replaying the same blocks with its
+insecure-seed verifying key and its own vault, rejects both: `proof does
+not verify` at 154 and `mint: vault output missing` at 151, as it must.
+The keys of this run are **not** secure parameters: both participants were
+the same machine and the beacon was a constant. The point was the
+tooling, see `docs/CEREMONY.md`.
