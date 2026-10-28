@@ -83,6 +83,13 @@ are not validated. For anything that holds value, run your own node and use
 the RPC source; that is also the assumption the paper makes about the
 publication layer.
 
+**Funding key.** Each wallet pays its carriers from one transparent P2WPKH
+address derived from its seed, with change returning to it. That address
+links every mint, transfer and withdraw the wallet publishes into one
+visible cluster. The shielded layer stays hidden, but this is the maximal
+form of the fee-funding exposure the paper leaves outside its privacy claims
+(§20.5); see "Funding key" in `docs/BOUNDARY.md`.
+
 Indexer state lives in a JSON file by default; `--db "<libpq string>"`
 (e.g. `host=/var/run/postgresql dbname=shielded_bitcoin`) keeps it in
 PostgreSQL instead, one transaction per replayed block, rolled back by
@@ -153,10 +160,11 @@ to grow into a real indexer and wallet, and test-vector-first interoperability.
 ## Roadmap
 
 1. ~~Primitives~~ 2. ~~Core~~ 3. ~~Circuit~~ 4. ~~Indexer~~ 5. ~~Wallet + CLI~~
-6. ~~End-to-end run on a real node~~ (private signet, see `docs/RUNS.md`);
-   public signet run waits for coins on the funding address.
+6. ~~End-to-end runs on real nodes~~ (private and public signet, see
+   `docs/RUNS.md`).
 7. ~~Encrypted wallet files~~, ~~profile versioning rules~~, ~~Electrum
-   source~~, ~~PostgreSQL-backed indexer state~~; light-client sync,
-   ceremony tooling.
+   source~~, ~~PostgreSQL-backed indexer state~~; fee-funding privacy
+   (relayer, external PSBT or fresh address per carrier), light-client
+   sync, ceremony tooling.
 
 Rust 1.85+ (edition 2024).

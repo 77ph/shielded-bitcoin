@@ -52,3 +52,31 @@ each creating transfer's memo, pays `amount` (at most the note value) to the
 destination from the vault key, and records the payout so it is never made
 twice. Nothing binds the memo to the proof: a relayer that rewrote it could
 redirect a payout, which is acceptable only for a development deployment.
+
+## Funding key (fee payment)
+
+Every carrier transaction a wallet publishes — the mint payment, a transfer,
+a withdraw, `fund-send` — is paid from one transparent key:
+`HKDF-SHA256(seed, "sb/v1/funding")` → secp256k1 → P2WPKH, one address per
+wallet, never rotated. The builder selects confirmed coins from that address
+and sends the change back to the same address.
+
+**What this reveals on-chain.** Anyone who looks at the funding address sees
+every carrier the wallet ever paid for, chained through its change outputs:
+how many mints, transfers and withdraws the wallet made, when, and that they
+belong together (mint ↔ transfer ↔ withdraw). What stays hidden is what the
+paper's privacy argument covers: note values, recipients, which note a
+transfer spends, and the link between a sender's carrier and the recipient.
+A recipient who never publishes is invisible; once it spends what it
+received, its own carriers cluster the same way under its own funding
+address.
+
+The paper (§20.5) excludes fee funding from its privacy claims and names
+funding inputs, change outputs and wallet clustering as visible. This
+boundary is the **maximal form** of that exposure, chosen for development
+deployments because it needs nothing beyond the wallet's own seed; the fee
+model is outside the profile (`PROFILE.md` §14). Mitigations, each a
+deployment-layer change and none implemented: pay carriers through a
+relayer; fund each carrier from an external wallet (PSBT) unconnected to the
+shielded wallet; use a fresh address per carrier with no change back.
+Choosing one is a roadmap item.
