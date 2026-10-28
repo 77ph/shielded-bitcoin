@@ -51,6 +51,14 @@ fn rpc_source_and_errors() {
     assert_eq!(rpc.block(&hash).unwrap().block_hash(), hash);
     assert_eq!(rpc.block_hash(999).unwrap(), None);
     assert!(matches!(
+        rpc.block_hash(4_000_000_000),
+        Err(ChainError::Rpc(_))
+    ));
+    assert!(matches!(
+        rpc.block_hash(4_000_000_001),
+        Err(ChainError::Decode(_))
+    ));
+    assert!(matches!(
         rpc.call("nosuchmethod", serde_json::json!([])),
         Err(ChainError::Rpc(_))
     ));
@@ -155,4 +163,27 @@ fn electrum_source_batching_merkle_and_reconnect() {
     // an empty chain has no tip
     let empty = FakeElectrum::start(Shared::new(MockChain::new(1)));
     assert!(Electrum::new(&empty.url()).unwrap().tip().is_err());
+}
+
+#[test]
+fn electrum_tls_pinning_offline() {
+    let shared = chain();
+    let (srv, fp) = FakeElectrum::start_tls(shared.clone());
+    let (host, port) = ("127.0.0.1", srv.addr.port());
+    // public roots reject the self-signed certificate
+    let strict = Electrum::new(&format!("ssl://{host}:{port}")).unwrap();
+    assert!(matches!(strict.tip(), Err(ChainError::Http(_))));
+    // the capture sees exactly the certificate the server presents
+    assert_eq!(Electrum::fingerprint(host, port).unwrap(), fp);
+    assert!(Electrum::fingerprint("127.0.0.1", 1).is_err());
+    // a wrong pin fails the handshake, the right pin serves blocks
+    let mut wrong = fp;
+    wrong[0] ^= 1;
+    let bad = Electrum::new(&format!("ssl-pin://{host}:{port}/{}", hex::encode(wrong))).unwrap();
+    assert!(matches!(bad.tip(), Err(ChainError::Http(_))));
+    let good = Electrum::new(&format!("ssl-pin://{host}:{port}/{}", hex::encode(fp))).unwrap();
+    let tip = good.tip().unwrap();
+    assert_eq!(tip.height, 102);
+    let hash = good.block_hash(102).unwrap().unwrap();
+    assert_eq!(good.block(&hash).unwrap().txdata.len(), 2);
 }

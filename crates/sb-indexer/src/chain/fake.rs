@@ -6,6 +6,7 @@
 use std::collections::HashSet;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::sync::Arc as StdArc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -314,6 +315,12 @@ fn rpc(s: &Shared, req: &Value) -> (u16, Value) {
         },
         Some("getblockhash") => {
             let h = params.first().and_then(|v| v.as_u64()).unwrap_or(u64::MAX) as u32;
+            if h == 4_000_000_000 {
+                return err(-1, "simulated failure");
+            }
+            if h == 4_000_000_001 {
+                return ok(json!("not-a-hash"));
+            }
             match chain.block_hash(h).ok().flatten() {
                 Some(hash) => ok(json!(hash.to_string())),
                 None => err(-8, "Block height out of range"),
@@ -394,10 +401,47 @@ impl FakeElectrum {
     pub fn url(&self) -> String {
         format!("tcp://{}", self.addr)
     }
+
+    /// TLS variant with a fresh self-signed certificate; returns the server
+    /// and the certificate's SHA-256 fingerprint (what a client would pin).
+    pub fn start_tls(shared: Shared) -> (Self, [u8; 32]) {
+        let certified = rcgen::generate_simple_self_signed(vec![
+            "localhost".to_string(),
+            "127.0.0.1".to_string(),
+        ])
+        .unwrap();
+        let cert_der = rustls::pki_types::CertificateDer::from(certified.cert.der().to_vec());
+        let fingerprint = sha256::Hash::hash(cert_der.as_ref()).to_byte_array();
+        let key =
+            rustls::pki_types::PrivateKeyDer::Pkcs8(certified.key_pair.serialize_der().into());
+        let config = rustls::ServerConfig::builder_with_provider(StdArc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_no_client_auth()
+        .with_single_cert(vec![cert_der], key)
+        .unwrap();
+        let config = StdArc::new(config);
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let s = shared.clone();
+        std::thread::spawn(move || {
+            for conn in listener.incoming().flatten() {
+                let s = s.clone();
+                let config = config.clone();
+                std::thread::spawn(move || {
+                    let tls = rustls::ServerConnection::new(config).unwrap();
+                    handle_electrum(rustls::StreamOwned::new(tls, conn), &s);
+                });
+            }
+        });
+        (FakeElectrum { addr, shared }, fingerprint)
+    }
 }
 
-fn handle_electrum(mut conn: TcpStream, s: &Shared) {
-    let mut reader = BufReader::new(conn.try_clone().unwrap());
+fn handle_electrum<S: Read + Write>(conn: S, s: &Shared) {
+    let mut reader = BufReader::new(conn);
     loop {
         let mut line = String::new();
         if reader.read_line(&mut line).unwrap_or(0) == 0 {
@@ -416,7 +460,7 @@ fn handle_electrum(mut conn: TcpStream, s: &Shared) {
         };
         let mut out = serde_json::to_string(&resp).unwrap();
         out.push('\n');
-        if conn.write_all(out.as_bytes()).is_err() {
+        if reader.get_mut().write_all(out.as_bytes()).is_err() {
             return;
         }
     }

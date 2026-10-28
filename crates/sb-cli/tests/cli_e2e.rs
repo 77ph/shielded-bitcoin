@@ -139,10 +139,46 @@ fn full_cycle_on_fake_node() {
         "--activation",
         "12",
     ]);
+    cli.fails(
+        &[
+            "profile-new",
+            "--name",
+            "e2e",
+            "--network",
+            "regtest",
+            "--activation",
+            "12",
+            "--setup-seed",
+            "abcd",
+        ],
+        "32 bytes",
+    );
+    // a profile in a directory that does not exist yet, on testnet, with an explicit setup seed
+    let nested = Cli {
+        data: dir.clone(),
+        profile: dir.join("sub/dir/p.json"),
+        chain: cli.chain.clone(),
+    };
+    nested.ok(&[
+        "profile-new",
+        "--name",
+        "nested",
+        "--network",
+        "testnet",
+        "--activation",
+        "12",
+        "--setup-seed",
+        &"11".repeat(32),
+    ]);
     cli.fails(&["address", "--name", "nobody"], "wallet nobody");
     let op = cli.ok(&["wallet-new", "--name", "operator"]);
     assert!(op.contains("encrypted"));
     cli.fails(&["wallet-new", "--name", "operator"], "exists");
+    assert!(
+        nested
+            .ok(&["address", "--name", "operator"])
+            .contains("funding address:  tb1")
+    );
     let op_shielded = field(&op, "shielded address:").to_string();
     let op_funding = field(&op, "funding address:").to_string();
     let vault_hex = hex::encode(script_of(&op_funding).as_bytes());
@@ -185,6 +221,30 @@ fn full_cycle_on_fake_node() {
         .output()
         .unwrap();
     assert!(!out.status.success());
+
+    // an operator address from another network is refused at withdraw time
+    let foreign = Cli {
+        data: dir.clone(),
+        profile: dir.join("foreign.json"),
+        chain: cli.chain.clone(),
+    };
+    let signet_op = sb_core::address::PaymentAddress::decode(&op_shielded)
+        .unwrap()
+        .1
+        .encode(sb_core::address::Network::Signet);
+    foreign.ok(&[
+        "profile-new",
+        "--name",
+        "foreign",
+        "--network",
+        "regtest",
+        "--activation",
+        "12",
+        "--vault-script",
+        &vault_hex,
+        "--operator-address",
+        &signet_op,
+    ]);
 
     // nothing yet
     assert!(cli.ok(&["status"]).contains("replayed to None"));
@@ -255,6 +315,22 @@ fn full_cycle_on_fake_node() {
     shared.mine(4);
     cli.ok(&["sync"]);
     cli.fails(&["send", "--name", "alice", "--to", "tsb1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq2k0ahk", "--amount", "1"], "bech32m");
+    let bob_signet = sb_core::address::PaymentAddress::decode(&bob_shielded)
+        .unwrap()
+        .1
+        .encode(sb_core::address::Network::Signet);
+    cli.fails(
+        &[
+            "send",
+            "--name",
+            "alice",
+            "--to",
+            &bob_signet,
+            "--amount",
+            "1",
+        ],
+        "address is for",
+    );
     let s = cli.ok(&[
         "send",
         "--name",
@@ -397,7 +473,7 @@ fn full_cycle_on_fake_node() {
             dir.join("cookie").display()
         ),
     };
-    cookie.ok(&["status"]);
+    cookie.ok(&["sync"]);
     cookie.ok(&[
         "fund-send",
         "--name",

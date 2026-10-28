@@ -201,4 +201,14 @@ mod tests {
             Some(Err(CarrierError::MalformedScript))
         );
     }
+
+    #[test]
+    fn bare_op_return_is_not_a_candidate() {
+        let bare = Builder::new().push_opcode(OP_RETURN).into_script();
+        let tx = tx_with(vec![TxOut {
+            value: Amount::ZERO,
+            script_pubkey: bare,
+        }]);
+        assert_eq!(extract_envelope(&tx), None);
+    }
 }
