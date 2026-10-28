@@ -152,3 +152,11 @@ not verify` at 154 and `mint: vault output missing` at 151, as it must.
 The keys of this run are **not** secure parameters: both participants were
 the same machine and the beacon was a constant. The point was the
 tooling, see `docs/CEREMONY.md`.
+
+## Server, 28 October 2026: the static binary
+
+`sb` built with the musl target on the laptop (12 MB, static-pie) runs on
+the server (glibc 2.35, where the glibc build did not) and replayed the
+private signet from the node there directly: 55 blocks, 5 accepted events,
+4 rejections (the two v0.1 envelopes and the two carriers of the ceremony
+deployment, which this deployment's key and vault refuse).

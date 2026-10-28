@@ -42,3 +42,17 @@ jobs:
           -- --include-ignored
         env:
           SB_TEST_PG: postgresql://postgres:postgres@localhost:5432/shielded_bitcoin
+  # The static binary (README "Static build") must keep building.
+  static:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get install -y musl-tools
+      - run: cargo build --release -p sb-cli --target x86_64-unknown-linux-musl
+        env:
+          CC_x86_64_unknown_linux_musl: musl-gcc
+      - run: file target/x86_64-unknown-linux-musl/release/sb && target/x86_64-unknown-linux-musl/release/sb --version

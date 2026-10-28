@@ -133,6 +133,19 @@ Core binaries and a Core source checkout for `contrib/signet/miner`.
 `deployments/localsignet-dev.json` is the matching profile (activation 100,
 dev vault held by the `operator` wallet).
 
+## Static build
+
+A binary built on one distribution often fails on another over the glibc
+version. With `musl-tools` installed (`apt install musl-tools`) the `sb`
+binary builds fully static and runs on any x86-64 Linux:
+
+```sh
+rustup target add x86_64-unknown-linux-musl
+CC_x86_64_unknown_linux_musl=musl-gcc \
+  cargo build --release -p sb-cli --target x86_64-unknown-linux-musl
+# target/x86_64-unknown-linux-musl/release/sb, about 12 MB, static-pie
+```
+
 ## Tests
 
 ```sh
