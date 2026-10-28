@@ -30,6 +30,22 @@ Timings on the laptop (16 threads): `sb send` ≈ 3.5 s including the insecure
 setup regeneration (1.5 s) and proving (1.5 s); indexer verification per
 envelope ≈ 4 ms.
 
+## Private signet, 28 October 2026, profile v0.2 (700-byte envelopes)
+
+Same chain and wallets as the first private run, replayed from scratch under
+v0.2: the mint (89 bytes, unchanged format) is accepted, the two v0.1
+transfers are rejected (`parse: bad length 668, expected 700`), so alice's
+mint note is unspent again and bob's view is empty. Then:
+
+| Step | Height | Carrier | Size |
+|---|---|---|---|
+| alice pays bob 20 000 shielded, change 30 000 (700-byte envelope, key-committing `ct_out`) | 143 | `ba3671e2b9dc51b7f64ac66cb86e6de8c2e1d1e50fb1ecf0b9cabae6ecf4a178` | 825 vB |
+| bob withdraws 5 000 to `tb1q57j…`, change 15 000 | 146 | `73ea981a9a4f1a1692b95e234564808f16b485410ccca58947a08546dd60855c` | 870 vB |
+| operator pays 5 000 from the vault | 147 | `ff4e2933e422bf4445139c10b4b5b8ad6508d12a89dde58aa71a1dc4786c6d93` | — |
+
+End state: 3 accepted events, 2 rejections (the v0.1 envelopes), alice 30 000,
+bob 15 000, operator 5 000; the destination received 5 000 sat.
+
 ## Public signet, 28 October 2026 (profile `signet-dev-1`, activation 328289, envelope format v0.1)
 
 Block source and publisher: mempool.space Esplora. Funding: faucets
