@@ -159,8 +159,9 @@ impl FakeHttp {
 }
 
 fn handle_http(mut conn: TcpStream, s: &Shared) {
+    // One request per connection; the response says `Connection: close`.
     let mut reader = BufReader::new(conn.try_clone().unwrap());
-    loop {
+    {
         let mut line = String::new();
         if reader.read_line(&mut line).unwrap_or(0) == 0 {
             return;
@@ -231,7 +232,6 @@ fn handle_http(mut conn: TcpStream, s: &Shared) {
         let _ = conn.write_all(header.as_bytes());
         let _ = conn.write_all(&out);
         let _ = conn.flush();
-        return;
     }
 }
 
