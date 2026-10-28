@@ -173,6 +173,26 @@ mod tests {
         let mut other = digest;
         other[0] ^= 1;
         assert_eq!(decrypt_recovery(&alice.ovk, &other, &ct_out), None);
+        // a batch that opens under the right key but whose commitment prefix
+        // is not zero is rejected (the key-commitment check itself)
+        let (key, nonce) = key_nonce(&alice.ovk, &digest);
+        let mut pt = vec![0u8; COMMIT_PAD_LEN];
+        pt[0] = 1;
+        for e in &entries {
+            pt.extend_from_slice(&point_to_bytes(&e.pk_d));
+            pt.extend_from_slice(&scalar_to_bytes(&e.sk_eph));
+        }
+        let bad = ChaCha20Poly1305::new(&key)
+            .encrypt(
+                &nonce,
+                Payload {
+                    msg: &pt,
+                    aad: &digest,
+                },
+            )
+            .unwrap();
+        let bad: [u8; CT_OUT_LEN] = bad.try_into().unwrap();
+        assert_eq!(decrypt_recovery(&alice.ovk, &digest, &bad), None);
         // sender recovery decrypts the recipient ciphertexts
         for j in 0..2 {
             let pt = crate::note::decrypt_as_sender(
