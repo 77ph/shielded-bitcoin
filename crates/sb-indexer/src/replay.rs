@@ -326,7 +326,7 @@ impl Indexer {
                 } else {
                     self.state.rollback_to(rollback_to);
                 }
-                if let Some(s) = store.as_deref_mut() {
+                if let Some(s) = store.as_mut() {
                     s.rollback_to(&self.state, rollback_to)?;
                 }
                 report.rolled_back_to = Some(rollback_to);
@@ -366,7 +366,7 @@ impl Indexer {
                 }
             }
             let r = self.replay_block(BlockId { height: h, hash }, &block);
-            if let Some(s) = store.as_deref_mut() {
+            if let Some(s) = store.as_mut() {
                 s.commit_block(&self.state, self.state.blocks.len() - 1)?;
             }
             report.blocks += 1;
@@ -374,7 +374,7 @@ impl Indexer {
             report.rejected += r.rejected;
             h += 1;
         }
-        if let Some(s) = store.as_deref_mut() {
+        if let Some(s) = store {
             s.flush(&self.state)?;
         }
         Ok(report)

@@ -279,7 +279,7 @@ impl Electrum {
                     .with_no_client_auth(),
                 None => {
                     let roots = rustls::RootCertStore {
-                        roots: webpki_roots::TLS_SERVER_ROOTS.iter().cloned().collect(),
+                        roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
                     };
                     builder.with_root_certificates(roots).with_no_client_auth()
                 }
