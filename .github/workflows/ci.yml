@@ -6,10 +6,29 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: shielded_bitcoin
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets --release -- -D warnings
       - run: cargo build --release --workspace
       - run: cargo test --release --workspace
+      # The PostgreSQL store against a real database (ephemeral service above).
+      - run: cargo test -p sb-indexer --release --test pg_store -- --ignored
+        env:
+          SB_TEST_PG: postgresql://postgres:postgres@localhost:5432/shielded_bitcoin
+      # Poseidon constants re-derived independently of arkworks.
+      - run: python3 scripts/poseidon_params_check.py
