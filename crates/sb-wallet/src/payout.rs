@@ -91,3 +91,26 @@ impl Wallet {
         });
     }
 }
+
+#[cfg(test)]
+mod coverage_tests {
+    use super::*;
+
+    #[test]
+    fn memo_parsing_edge_cases() {
+        assert_eq!(parse_payout_memo(b"sbx"), None);
+        let mut m = build_payout_memo(5, &[0x51]);
+        m[3] = 2;
+        assert_eq!(parse_payout_memo(&m), None);
+        assert_eq!(parse_payout_memo(&build_payout_memo(5, &[])), None);
+        assert_eq!(parse_payout_memo(&build_payout_memo(5, &[0u8; 84])), None);
+        let ok = parse_payout_memo(&build_payout_memo(5, &[0x51])).unwrap();
+        assert_eq!(
+            ok,
+            PayoutRequest {
+                amount: 5,
+                script_pubkey: vec![0x51]
+            }
+        );
+    }
+}

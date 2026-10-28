@@ -146,3 +146,43 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod coverage_tests {
+    use super::*;
+    use crate::keys::{Seed, WalletKeys};
+    use bech32::{Bech32m, Hrp};
+
+    #[test]
+    fn every_network_hrp_round_trips_and_unknown_hrp_is_rejected() {
+        let k = WalletKeys::from_seed(&Seed([7u8; 32]));
+        let (_, a) = k.ivk.find_address(0);
+        for net in [
+            Network::Mainnet,
+            Network::Testnet,
+            Network::Signet,
+            Network::Regtest,
+        ] {
+            let s = a.encode(net);
+            let (back_net, back) = PaymentAddress::decode(&s).unwrap();
+            assert_eq!(back, a);
+            // testnet shares the signet HRP
+            let expected = if net == Network::Testnet {
+                Network::Signet
+            } else {
+                net
+            };
+            assert_eq!(back_net, expected);
+        }
+        let other = bech32::encode::<Bech32m>(Hrp::parse("xx").unwrap(), &a.to_bytes()).unwrap();
+        assert!(matches!(
+            PaymentAddress::decode(&other),
+            Err(AddressError::UnknownHrp(_))
+        ));
+        assert_eq!(
+            PaymentAddress::from_bytes(&[0u8; 5]),
+            Err(AddressError::Length(5))
+        );
+        assert_eq!(Network::Regtest.hrp(), "rsb");
+    }
+}

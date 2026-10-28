@@ -306,3 +306,18 @@ fn groth16_prove_verify_and_public_input_binding() {
     assert_eq!(f.body.h_body(&f.const_salt), f.statement.h_body);
     assert_eq!(f.tree.root(), f.statement.r_anchor);
 }
+
+#[test]
+fn proving_key_round_trips_through_bytes() {
+    let f = fixture();
+    let params = TransferParams::insecure_setup(&[1u8; 32]).unwrap();
+    let bytes = params.pk_to_bytes().unwrap();
+    let reloaded = TransferParams::from_pk_bytes(&bytes).unwrap();
+    assert_eq!(vk_sha256(reloaded.vk()), vk_sha256(params.vk()));
+    let mut rng = ChaCha20Rng::from_seed([2u8; 32]);
+    let proof = reloaded.prove(&f.statement, &f.witness, &mut rng).unwrap();
+    let verifier = TransferVerifier::new(params.vk().clone());
+    assert!(verifier.verify(&f.statement, &proof));
+    assert!(TransferParams::from_pk_bytes(&bytes[..100]).is_err());
+    assert!(TransferVerifier::from_vk_bytes(&[0u8; 10]).is_err());
+}

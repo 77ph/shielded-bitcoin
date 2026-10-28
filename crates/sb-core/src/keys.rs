@@ -187,3 +187,21 @@ mod tests {
         assert_eq!(ivk2.address_at(i0), Some(a0));
     }
 }
+
+#[cfg(test)]
+mod coverage_tests {
+    use super::*;
+    use ark_std::rand::{SeedableRng, rngs::StdRng};
+
+    #[test]
+    fn random_seeds_differ() {
+        let mut rng = StdRng::seed_from_u64(1);
+        let a = Seed::random(&mut rng);
+        let b = Seed::random(&mut rng);
+        assert_ne!(a.0, b.0);
+        assert_ne!(
+            WalletKeys::from_seed(&a).sk_spend,
+            WalletKeys::from_seed(&b).sk_spend
+        );
+    }
+}

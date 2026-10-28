@@ -273,3 +273,19 @@ mod tests {
         assert_ne!(nf, nullifier(&Fr::from(1u64), &pt.rho(), 5));
     }
 }
+
+#[cfg(test)]
+mod coverage_tests {
+    use super::*;
+
+    #[test]
+    fn ciphertext_from_bytes_rejects_wrong_length() {
+        assert_eq!(
+            NoteCiphertext::from_bytes(&[0u8; 10]),
+            Err(DecodeError::Length {
+                expected: CT_NOTE_LEN,
+                got: 10
+            })
+        );
+    }
+}

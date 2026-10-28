@@ -176,3 +176,23 @@ mod tests {
         assert!(rejected > 0);
     }
 }
+
+#[cfg(test)]
+mod coverage_tests {
+    use super::*;
+
+    #[test]
+    fn point_from_bytes_rejects_wrong_length() {
+        assert_eq!(
+            point_from_bytes(&[0u8; 31]),
+            Err(DecodeError::Length {
+                expected: 32,
+                got: 31
+            })
+        );
+        assert_eq!(
+            format!("{}", DecodeError::Identity),
+            "point is the identity"
+        );
+    }
+}

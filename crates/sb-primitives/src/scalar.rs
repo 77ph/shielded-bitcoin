@@ -92,3 +92,19 @@ mod tests {
         assert_eq!(scalar_from_bytes(&r), Err(DecodeError::NonCanonicalField));
     }
 }
+
+#[cfg(test)]
+mod coverage_tests {
+    use super::*;
+
+    #[test]
+    fn scalar_from_bytes_rejects_wrong_length() {
+        assert_eq!(
+            scalar_from_bytes(&[0u8; 3]),
+            Err(DecodeError::Length {
+                expected: 32,
+                got: 3
+            })
+        );
+    }
+}

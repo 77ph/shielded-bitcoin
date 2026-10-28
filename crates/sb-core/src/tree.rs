@@ -226,3 +226,20 @@ mod tests {
         assert_eq!(t.root(), NoteTree::from_leaves(&leaves[..7]).root());
     }
 }
+
+#[cfg(test)]
+mod coverage_tests {
+    use super::*;
+
+    #[test]
+    fn empty_tree_paths_and_truncate_noop() {
+        let mut t = NoteTree::new();
+        assert!(t.path(0).is_none());
+        assert!(t.path_at(0, 0).is_none());
+        t.truncate(5);
+        assert_eq!(t.size(), 0);
+        assert_eq!(t.root_at(0), EMPTY_ROOTS[DEPTH]);
+        let d = NoteTree::default();
+        assert_eq!(d.root(), EMPTY_ROOTS[DEPTH]);
+    }
+}

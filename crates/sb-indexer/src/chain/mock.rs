@@ -94,6 +94,15 @@ impl MockChain {
         }
     }
 
+    /// Every block, lowest height first.
+    pub fn blocks(&self) -> &[Block] {
+        &self.blocks
+    }
+
+    pub fn start_height(&self) -> u32 {
+        self.start_height
+    }
+
     pub fn height(&self) -> Option<u32> {
         if self.blocks.is_empty() {
             None

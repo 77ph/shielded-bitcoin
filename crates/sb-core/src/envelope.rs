@@ -539,3 +539,143 @@ mod mint_tests {
         assert_eq!(parse_envelope(&bad), Err(ParseError::Kind(7)));
     }
 }
+
+#[cfg(test)]
+mod coverage_tests {
+    use super::*;
+    use crate::keys::{Seed, WalletKeys};
+    use ark_ff::UniformRand;
+    use ark_std::rand::{SeedableRng, rngs::StdRng};
+
+    fn round_trip_compact(v: u64) -> u64 {
+        let mut out = Vec::new();
+        push_compact_size(&mut out, v);
+        let mut r = Reader { b: &out, pos: 0 };
+        let back = r.compact_size().unwrap();
+        assert_eq!(r.pos, out.len());
+        back
+    }
+
+    #[test]
+    fn compact_size_all_widths_round_trip() {
+        for v in [
+            0u64,
+            0xfc,
+            0xfd,
+            0xffff,
+            0x1_0000,
+            0xffff_ffff,
+            0x1_0000_0000,
+            u64::MAX,
+        ] {
+            assert_eq!(round_trip_compact(v), v);
+        }
+        // non-minimal encodings of every width are rejected
+        for bad in [
+            vec![0xfdu8, 0x02, 0x00],
+            vec![0xfeu8, 0x02, 0x00, 0x00, 0x00],
+            vec![0xffu8, 0x02, 0, 0, 0, 0, 0, 0, 0],
+        ] {
+            let mut r = Reader { b: &bad, pos: 0 };
+            assert_eq!(r.compact_size(), Err(ParseError::CompactSize));
+        }
+        // truncated
+        let mut r = Reader {
+            b: &[0xfdu8, 0x01],
+            pos: 0,
+        };
+        assert!(matches!(r.compact_size(), Err(ParseError::Length { .. })));
+    }
+
+    #[test]
+    fn body_parse_rejects_trailing_bytes_and_header_errors_on_short_input() {
+        let mut rng = StdRng::seed_from_u64(5);
+        let body = tests::random_body(&mut rng);
+        let mut b = body.to_bytes();
+        b.push(0);
+        assert!(matches!(
+            TransferBody::parse(&b),
+            Err(ParseError::Length { .. })
+        ));
+        // a short envelope with a bad magic reports the magic, not the length
+        let mut short = body.to_bytes();
+        short[0] = b'x';
+        assert_eq!(
+            TransferEnvelope::parse(&short[..100]),
+            Err(ParseError::Magic)
+        );
+        // a short envelope with a good header reports the envelope length
+        assert_eq!(
+            TransferEnvelope::parse(&body.to_bytes()[..100]),
+            Err(ParseError::Length {
+                got: 100,
+                expected: ENVELOPE_LEN
+            })
+        );
+        assert!(matches!(
+            TransferEnvelope::parse(&[1, 2, 3]),
+            Err(ParseError::Length { .. })
+        ));
+    }
+
+    #[test]
+    fn mint_parse_rejections_and_envelope_dispatch() {
+        let mut rng = StdRng::seed_from_u64(6);
+        let k = WalletKeys::from_seed(&Seed([1u8; 32]));
+        let (_, a) = k.ivk.find_address(0);
+        let m = MintEnvelope {
+            note: crate::note::NotePlaintext {
+                value: 7,
+                d: a.d,
+                rseed: Fr::rand(&mut rng),
+            },
+            pk_d: a.pk_d,
+        };
+        let good = m.to_bytes();
+        assert!(matches!(
+            MintEnvelope::parse(&good[..10]),
+            Err(ParseError::Length { .. })
+        ));
+        let mut b = good.clone();
+        b[0] = b'x';
+        assert_eq!(MintEnvelope::parse(&b), Err(ParseError::Magic));
+        let mut b = good.clone();
+        b[3] = 9;
+        assert_eq!(MintEnvelope::parse(&b), Err(ParseError::Version(9)));
+        let mut b = good.clone();
+        b[4] = KIND_TRANSFER;
+        assert_eq!(
+            MintEnvelope::parse(&b),
+            Err(ParseError::Kind(KIND_TRANSFER))
+        );
+        let mut b = good.clone();
+        b[5] = 1;
+        assert_eq!(MintEnvelope::parse(&b), Err(ParseError::Reserved));
+        let mut b = good.clone();
+        b[HEADER_LEN + 8 + 11..HEADER_LEN + 8 + 11 + 32].copy_from_slice(&[0xffu8; 32]);
+        assert!(matches!(
+            MintEnvelope::parse(&b),
+            Err(ParseError::Field("rseed", _))
+        ));
+        let mut b = good.clone();
+        b[MINT_LEN - 32..].copy_from_slice(&[0xffu8; 32]);
+        assert!(matches!(
+            MintEnvelope::parse(&b),
+            Err(ParseError::Field("pk_d", _))
+        ));
+        assert_eq!(m.h_body(&[0u8; 32]), h_body(&[0u8; 32], &good));
+
+        // parse_envelope: short, magic, version
+        assert!(matches!(
+            parse_envelope(&[1u8; 3]),
+            Err(ParseError::Length { .. })
+        ));
+        let mut b = good.clone();
+        b[1] = b'x';
+        assert_eq!(parse_envelope(&b), Err(ParseError::Magic));
+        let mut b = good.clone();
+        b[3] = 2;
+        assert_eq!(parse_envelope(&b), Err(ParseError::Version(2)));
+        assert!(!is_candidate(b"bt"));
+    }
+}

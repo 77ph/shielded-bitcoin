@@ -320,7 +320,7 @@ impl Electrum {
         loop {
             let mut line = String::new();
             if reader.read_line(&mut line)? == 0 {
-                return Err(ChainError::Rpc("electrum connection closed".into()));
+                return Err(ChainError::Http("electrum connection closed".into()));
             }
             let v: Value =
                 serde_json::from_str(line.trim()).map_err(|e| ChainError::Decode(e.to_string()))?;

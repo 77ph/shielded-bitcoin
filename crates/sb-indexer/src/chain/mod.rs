@@ -2,6 +2,8 @@
 
 pub mod electrum;
 pub mod esplora;
+#[cfg(feature = "test-util")]
+pub mod fake;
 pub mod mock;
 pub mod rpc;
 

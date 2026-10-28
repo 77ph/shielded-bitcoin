@@ -222,3 +222,136 @@ pub fn build_transfer<R: RngCore + CryptoRng>(
         output_addresses: addresses.try_into().unwrap(),
     })
 }
+
+#[cfg(test)]
+mod coverage_tests {
+    use super::*;
+    use rand::SeedableRng;
+    use rand_chacha::ChaCha20Rng as StdRng;
+    use sb_core::keys::Seed;
+
+    fn setup() -> (WalletKeys, PaymentAddress, NoteTree, [u8; 32]) {
+        let k = WalletKeys::from_seed(&Seed([3u8; 32]));
+        let (_, a) = k.ivk.find_address(0);
+        (k, a, NoteTree::new(), [1u8; 32])
+    }
+
+    fn note(a: &PaymentAddress, value: u64, pos: u64) -> SpendableNote {
+        SpendableNote {
+            note: NotePlaintext {
+                value,
+                d: a.d,
+                rseed: Fr::from(pos + 1),
+            },
+            h_body_create: Fr::from(0u64),
+            output_index: 0,
+            pos,
+        }
+    }
+
+    #[test]
+    fn builder_argument_errors() {
+        let (k, a, tree, salt) = setup();
+        let mut rng = StdRng::seed_from_u64(1);
+        let params = sb_circuit::TransferParams::insecure_setup(&[0u8; 32]).unwrap();
+        let r = |v| Recipient {
+            address: a,
+            value: v,
+        };
+        let three_in = [note(&a, 1, 0), note(&a, 1, 1), note(&a, 1, 2)];
+        assert!(matches!(
+            build_transfer(
+                &params,
+                &k,
+                &salt,
+                &tree,
+                0,
+                0,
+                &three_in,
+                &[r(3)],
+                &mut rng
+            ),
+            Err(BuildError::InputCount)
+        ));
+        assert!(matches!(
+            build_transfer(&params, &k, &salt, &tree, 0, 0, &[], &[], &mut rng),
+            Err(BuildError::OutputCount)
+        ));
+        assert!(matches!(
+            build_transfer(
+                &params,
+                &k,
+                &salt,
+                &tree,
+                0,
+                0,
+                &[],
+                &[r(1), r(1), r(1)],
+                &mut rng
+            ),
+            Err(BuildError::OutputCount)
+        ));
+        assert!(matches!(
+            build_transfer(
+                &params,
+                &k,
+                &salt,
+                &tree,
+                0,
+                0,
+                &[note(&a, 5, 0)],
+                &[r(4)],
+                &mut rng
+            ),
+            Err(BuildError::Imbalance {
+                inputs: 5,
+                outputs: 4
+            })
+        ));
+        let big = [note(&a, u64::MAX, 0), note(&a, 1, 1)];
+        assert!(matches!(
+            build_transfer(&params, &k, &salt, &tree, 0, 0, &big, &[r(1)], &mut rng),
+            Err(BuildError::Overflow)
+        ));
+        // a note whose leaf is not in the tree
+        assert!(matches!(
+            build_transfer(
+                &params,
+                &k,
+                &salt,
+                &tree,
+                0,
+                0,
+                &[note(&a, 5, 0)],
+                &[r(5)],
+                &mut rng
+            ),
+            Err(BuildError::LeafMismatch(0))
+        ));
+        // a note under a diversifier with no curve point cannot be owned
+        let mut bad = a;
+        let mut i = 0u64;
+        bad.d = loop {
+            let d = k.ivk.diversifier(i);
+            if sb_primitives::diversify::diversify_hash(&d).is_none() {
+                break d;
+            }
+            i += 1;
+        };
+        assert!(matches!(
+            build_transfer(
+                &params,
+                &k,
+                &salt,
+                &tree,
+                0,
+                0,
+                &[note(&bad, 5, 0)],
+                &[r(5)],
+                &mut rng
+            ),
+            Err(BuildError::NotOwned(0))
+        ));
+        assert!(format!("{}", BuildError::InputCount).contains("inputs"));
+    }
+}
