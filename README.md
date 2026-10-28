@@ -128,8 +128,7 @@ cargo llvm-cov --workspace --release --ignore-run-fail \
 Measured on 29 October 2026 with the live network tests and the PostgreSQL
 test included: **92 % of lines, 95 % of regions**; CI fails below 90 % of
 lines. The in-process fake Esplora / RPC / Electrum servers
-(`sb-indexer/src/chain/fake.rs`, feature `test-util`) are test support and
-are excluded. What stays uncovered is of four kinds: error arms of `?` on
+(`sb-indexer/src/chain/fake.rs`) are test support and are excluded. What stays uncovered is of four kinds: error arms of `?` on
 multi-line calls, interactive passphrase prompts, defensive branches that
 cannot be reached through the public API (for example a non-canonical
 re-serialisation that the strict parser already rejects), and corruption of

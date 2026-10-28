@@ -2026,7 +2026,6 @@ dependencies = [
  "rustls",
  "sb-circuit",
  "sb-core",
- "sb-indexer",
  "sb-primitives",
  "sb-wallet",
  "serde",

@@ -32,4 +32,4 @@ ureq.workspace = true
 rpassword.workspace = true
 
 [dev-dependencies]
-sb-indexer = { path = "../sb-indexer", features = ["test-util"] }
+sb-indexer.workspace = true

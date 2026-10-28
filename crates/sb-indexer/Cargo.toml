@@ -23,15 +23,9 @@ base64.workspace = true
 rustls.workspace = true
 webpki-roots.workspace = true
 postgres.workspace = true
-rcgen = { workspace = true, optional = true }
-
-[features]
-# In-process fake Esplora/RPC/Electrum servers over MockChain, for tests of
-# this crate and of the CLI.
-test-util = ["dep:rcgen"]
+rcgen.workspace = true
 
 [dev-dependencies]
-sb-indexer = { path = ".", features = ["test-util"] }
 hex.workspace = true
 sb-wallet.workspace = true
 rand.workspace = true

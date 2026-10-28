@@ -2,7 +2,8 @@
 
 pub mod electrum;
 pub mod esplora;
-#[cfg(feature = "test-util")]
+/// In-process fake servers for tests (compiled unconditionally so the crate
+/// has a single build configuration; nothing here runs unless called).
 pub mod fake;
 pub mod mock;
 pub mod rpc;
