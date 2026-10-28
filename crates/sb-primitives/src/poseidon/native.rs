@@ -145,7 +145,9 @@ mod tests {
         let out = hash(Fr::from(0u64), &[Fr::from(0u64), Fr::from(0u64)]);
         let hex = hex::encode(fr_to_bytes(&out));
         // If this changes, the profile changes. Update docs/TEST_VECTORS.md.
-        println!("PH(0, 0, 0) = {hex}");
-        assert_eq!(hex.len(), 64);
+        assert_eq!(
+            hex,
+            "31ed53daa052afbd43b579abf13437315b400726ef191d551d55d95cc6ffc005"
+        );
     }
 }
