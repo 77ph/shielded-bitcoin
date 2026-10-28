@@ -23,7 +23,7 @@ soft fork or a hard fork.
 | Primitives | Poseidon (native + R1CS, pinned constants), Jubjub encodings, DiversifyHash |
 | Core | key hierarchy, bech32m addresses, note encryption, leaves, nullifiers, 700-byte canonical envelope, note tree with historical paths |
 | Circuit | 2-in/2-out transfer relation, 84 362 constraints, Groth16/BLS12-381; prove ≈ 1.5 s, verify ≈ 4 ms (16 threads) |
-| Indexer | Bitcoin Core RPC / Esplora / mock sources, carrier rule, normative acceptance order, per-block checkpoints with reorg rollback, JSON state |
+| Indexer | Bitcoin Core RPC / Esplora / Electrum / mock sources, carrier rule, normative acceptance order, per-block checkpoints with reorg rollback, JSON state |
 | Wallet | scanning and sender recovery, note selection, anchor policy, change, input locks, reorg-safe rescan |
 | Boundary | development **mint** into a custodial vault and **withdraw** via payout memos (`docs/BOUNDARY.md`) |
 | CLI | `sb`: profile, wallets, sync, scan, mint, send; publishes carriers through Esplora with a transparent funding key |
@@ -61,11 +61,13 @@ $SB withdraw --name alice --amount 3000 --to tb1q...   # dev boundary: pays the 
 $SB payouts --name operator            # operator: pays pending withdraw requests from the vault
 ```
 
-`--chain` selects the block source and the publisher (`esplora:<url>`,
-default mempool.space signet; `rpc:<url>:<user>:<pass>`;
-`rpc-cookie:<url>:<path>`). With an RPC source, UTXOs come from
-`scantxoutset` and transactions go out through `sendrawtransaction`, so no
-node wallet is needed. Everything under `sb-data*/` is local and git-ignored.
+`--chain` selects the block source and the publisher: `esplora:<url>`
+(default mempool.space signet), `electrum:ssl://host:port` (also `tcp://`;
+blocks are rebuilt from `id_from_pos` + `transaction.get` in batches and
+checked against the header's merkle root; the server certificate must be
+publicly valid), `rpc:<url>:<user>:<pass>` or `rpc-cookie:<url>:<path>`
+(UTXOs via `scantxoutset`, broadcast via `sendrawtransaction`, no node
+wallet needed). Everything under `sb-data*/` is local and git-ignored.
 
 Wallet files are encrypted with a passphrase (Argon2id, 64 MiB / 3 passes,
 then ChaCha20-Poly1305). The passphrase comes from `--passphrase-file`, the
@@ -92,8 +94,8 @@ rejections, gadget/native equivalence, every circuit block rejecting its
 violation, every public input bound by the proof, replay acceptance and all
 rejection classes, reorg rollback, fresh-replay determinism, state and wallet
 persistence, and a two-wallet mint → pay → change → reorg → repay flow.
-`cargo test -p sb-indexer --release --test esplora_live -- --ignored` hits
-public signet.
+`cargo test -p sb-indexer --release --test esplora_live -- --ignored` and
+`--test electrum_live` hit public signet.
 
 ## Prior art
 
@@ -115,7 +117,7 @@ to grow into a real indexer and wallet, and test-vector-first interoperability.
 1. ~~Primitives~~ 2. ~~Core~~ 3. ~~Circuit~~ 4. ~~Indexer~~ 5. ~~Wallet + CLI~~
 6. ~~End-to-end run on a real node~~ (private signet, see `docs/RUNS.md`);
    public signet run waits for coins on the funding address.
-7. ~~Encrypted wallet files~~, ~~profile versioning rules~~; Electrum source,
-   light-client sync, ceremony tooling.
+7. ~~Encrypted wallet files~~, ~~profile versioning rules~~, ~~Electrum
+   source~~; light-client sync, ceremony tooling.
 
 Rust 1.85+ (edition 2024).

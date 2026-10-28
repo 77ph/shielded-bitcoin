@@ -37,7 +37,8 @@ struct Cli {
     /// File holding the wallet passphrase (else `SB_WALLET_PASSPHRASE`, else a prompt).
     #[arg(long, global = true)]
     passphrase_file: Option<PathBuf>,
-    /// Block source: `esplora:<url>` or `rpc:<url>:<user>:<pass>` or `rpc-cookie:<url>:<cookie-path>`.
+    /// Block source: `esplora:<url>`, `electrum:ssl://host:port` (or `tcp://`),
+    /// `rpc:<url>:<user>:<pass>` or `rpc-cookie:<url>:<cookie-path>`.
     #[arg(
         long,
         global = true,
@@ -196,6 +197,9 @@ impl Ctx {
         if let Some(url) = self.chain.strip_prefix("esplora:") {
             return Ok(Box::new(Esplora::new(url)));
         }
+        if let Some(url) = self.chain.strip_prefix("electrum:") {
+            return Ok(Box::new(sb_indexer::chain::electrum::Electrum::new(url)?));
+        }
         if let Some(rest) = self.chain.strip_prefix("rpc-cookie:") {
             let (url, cookie) = rest
                 .rsplit_once(':')
@@ -219,6 +223,10 @@ impl Ctx {
     fn publisher(&self) -> Result<Box<dyn funding::Publisher>> {
         if let Some(url) = self.chain.strip_prefix("esplora:") {
             return Ok(Box::new(funding::EsploraPublisher::new(url)));
+        }
+        if let Some(url) = self.chain.strip_prefix("electrum:") {
+            let electrum = sb_indexer::chain::electrum::Electrum::new(url)?;
+            return Ok(Box::new(funding::ElectrumPublisher { electrum }));
         }
         if let Some(rest) = self.chain.strip_prefix("rpc-cookie:") {
             let (url, cookie) = rest

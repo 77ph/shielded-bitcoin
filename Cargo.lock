@@ -1632,6 +1632,7 @@ dependencies = [
  "log",
  "rand 0.8.8",
  "rand_chacha 0.3.1",
+ "rustls",
  "sb-circuit",
  "sb-core",
  "sb-primitives",
@@ -1641,6 +1642,7 @@ dependencies = [
  "sha2",
  "thiserror",
  "ureq",
+ "webpki-roots 0.26.11",
 ]
 
 [[package]]

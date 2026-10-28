@@ -1,5 +1,6 @@
 //! Chain sources: where replay reads blocks from.
 
+pub mod electrum;
 pub mod esplora;
 pub mod mock;
 pub mod rpc;

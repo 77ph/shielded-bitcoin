@@ -207,6 +207,34 @@ impl Publisher for EsploraPublisher {
     }
 }
 
+/// Electrum server: `listunspent` by scripthash and `transaction.broadcast`.
+pub struct ElectrumPublisher {
+    pub electrum: sb_indexer::chain::electrum::Electrum,
+}
+
+impl Publisher for ElectrumPublisher {
+    fn utxos(&self, address: &Address) -> Result<Vec<Utxo>> {
+        let list = self
+            .electrum
+            .listunspent(&address.script_pubkey())
+            .map_err(|e| anyhow!("electrum listunspent: {e}"))?;
+        Ok(list
+            .into_iter()
+            .map(|(txid, vout, value, confirmed)| Utxo {
+                outpoint: OutPoint { txid, vout },
+                value,
+                confirmed,
+            })
+            .collect())
+    }
+
+    fn broadcast(&self, tx: &Transaction) -> Result<Txid> {
+        self.electrum
+            .broadcast(tx)
+            .map_err(|e| anyhow!("electrum broadcast: {e}"))
+    }
+}
+
 /// Bitcoin Core RPC without a node wallet: `scantxoutset` for UTXOs (confirmed
 /// only) and `sendrawtransaction`.
 pub struct RpcPublisher {
