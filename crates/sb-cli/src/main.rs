@@ -563,6 +563,12 @@ fn main() -> Result<()> {
             if net != ctx.deployment.network {
                 bail!("operator address network mismatch");
             }
+            if amount < funding::DUST_LIMIT {
+                bail!(
+                    "withdraw amount {amount} is below the dust limit ({} sat); the operator could not pay it",
+                    funding::DUST_LIMIT
+                );
+            }
             let dest: bitcoin::Address = to
                 .parse::<bitcoin::Address<bitcoin::address::NetworkUnchecked>>()?
                 .require_network(ctx.btc_network())?;
@@ -635,6 +641,15 @@ fn main() -> Result<()> {
                     "  {} sat to {} (request in {})",
                     p.request.amount, dest, p.note.txid
                 );
+                if p.request.amount < funding::DUST_LIMIT {
+                    println!(
+                        "  refused: below the dust limit ({} sat); recorded as unpaid",
+                        funding::DUST_LIMIT
+                    );
+                    w.record_payout(&p.note.txid, &p.request, None);
+                    w.save(&ctx.wallet_path(&name))?;
+                    continue;
+                }
                 if no_broadcast {
                     continue;
                 }

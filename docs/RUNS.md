@@ -68,3 +68,22 @@ Both 668-byte and 838-vB carriers were relayed by mempool.space's node with
 default policy. One operational lesson: Esplora's tip height can run ahead of
 its block-hash lookup for a few seconds, so the scripts replay until the
 indexer actually reaches the required height before building a transfer.
+
+## Public signet, 28 October 2026, profile v0.2 (deployment `signet-dev-2`, activation 328300)
+
+Fresh deployment (new `const_salt`), same wallets. First 700-byte envelopes
+on the public network.
+
+| Step | Height | Carrier | Size |
+|---|---|---|---|
+| mint 1 000 to alice | 328301 | `56897dd859abf93f0807cac786c3689e8988a603e1e1480c7e2efecd99907aeb` | 242 vB |
+| alice pays bob 400 shielded, change 600 (700-byte envelope, anchor 328301) | 328304 | `73eefe2b82cc744214ab3bdc8abbac237c1d627145c935b6328888e98c742d31` | 892 vB |
+| bob withdraws 200 to `tb1qxtws…`, change 200 (anchor 328304) | 328308 | `131f8973769192e2ecd02a3e7d32e6cee9ee8a3c985f68866ae876af415e837a` | 839 vB |
+| operator payout of 200 | — | refused: 200 sat is below the P2WPKH dust limit, mempool.space rejected the transaction (HTTP 400) | — |
+
+All three envelopes were relayed and accepted (3 events, 0 rejections);
+alice 600, bob 200, operator 200 shielded. The payout failed on a test-design
+mistake, not on the protocol: the requested amount was dust. `sb withdraw`
+now refuses amounts below 546 sat and `sb payouts` records such requests as
+refused instead of retrying them; Esplora rejection texts are surfaced.
+
