@@ -1,4 +1,4 @@
-# Shielded Bitcoin implementation profile (draft v0.1)
+# Shielded Bitcoin implementation profile (draft v0.2)
 
 Status: **draft, not frozen**. Every choice here is subject to change until the
 first trusted setup is run. After that, the profile is versioned and changes
@@ -241,10 +241,10 @@ transfers are padded with dummy notes (§8.2 below). Any other arity is invalid.
 | 7 | `nf[0..2]` | 2 × 32 | `Fr` LE canonical |
 | 8 | `pk_eph[0..2]` | 2 × 32 | compressed Jubjub |
 | 9 | `ct_note[0..2]` | 2 × 96 | `c_0 ‖ c_1 ‖ tag`, each `Fr` LE canonical |
-| 10 | `ct_out` | 144 | §7.3 |
-| — | **body total** | **476** | |
+| 10 | `ct_out` | 176 | §7.3 |
+| — | **body total** | **508** | |
 | 11 | `proof` | 192 | Groth16 compressed |
-| — | **envelope total** | **668** | |
+| — | **envelope total** | **700** | |
 
 A parser rejects: wrong magic/version/kind, non-zero reserved byte, counts
 ≠ 2, non-canonical CompactSize, any non-canonical field element or point,
@@ -263,9 +263,13 @@ the `const_salt` element in the leaf hash.
 digest = SHA-256(0x02 ‖ pk_eph_0 ‖ pk_eph_1 ‖ ct_note_0 ‖ ct_note_1)   # §2.2
 key    = HKDF-SHA256(ikm = vk_out, salt = digest, info = "sb/v1/ctout/key",   L = 32)
 nonce  = HKDF-SHA256(ikm = vk_out, salt = digest, info = "sb/v1/ctout/nonce", L = 12)
-pt     = pk_d_0 (32, compressed) ‖ sk_eph_0 (32, LE) ‖ pk_d_1 ‖ sk_eph_1       # 128 bytes
-ct_out = ChaCha20-Poly1305(key, nonce, aad = digest, pt)                     # 144 bytes
+pt     = 0^32 ‖ pk_d_0 (32, compressed) ‖ sk_eph_0 (32, LE) ‖ pk_d_1 ‖ sk_eph_1   # 160 bytes
+ct_out = ChaCha20-Poly1305(key, nonce, aad = digest, pt)                         # 176 bytes
 ```
+
+The 32 zero bytes are the padding fix that makes the AEAD key-committing
+(§A.1): a decryptor rejects any plaintext whose first 32 bytes are not zero,
+so one `ct_out` cannot open under two keys to two valid batches.
 
 Sender-side recovery (§16.2) decrypts `ct_out`, then for each output derives
 `ss = [sk_eph_j] pk_d_j`, decrypts `ct_note_j`, and applies the same checks as
@@ -364,7 +368,7 @@ Anchor window (§A.6): `W = 100`, `K_min = 1`; replay in block `H` accepts
 ## 10. Publication carrier (§A.4)
 
 One OP_RETURN output whose script is exactly `OP_RETURN <single minimal push of the envelope>`
-(`OP_PUSHDATA2` for 668 bytes). A transaction is a **candidate** if exactly one
+(`OP_PUSHDATA2` for 700 bytes). A transaction is a **candidate** if exactly one
 of its outputs is an OP_RETURN whose single push starts with `"btc" 0x01`.
 A candidate with two such outputs, extra pushes, or a non-minimal push is
 **rejected and logged** (it never mutates state). Witness data is ignored.
@@ -396,13 +400,20 @@ events) and rolls back to the fork point, then replays forward.
 | Paper | This profile | Why |
 |---|---|---|
 | `sk_nf`, `vk_in`, `sk_view` via HKDF-SHA256 (Table 1, eq. 1) | Poseidon (§3) | These three are derived **in circuit** (§9, §B block 3–4). HKDF-SHA256 in R1CS costs ≈ 700 k constraints; Poseidon ≈ 1 k. The paper's §A.1 explicitly leaves in-circuit gadgets to the profile. |
-| `ct_note` 67 bytes (§A.4 estimate) | 96 bytes (3 × `Fr`) | Ciphertext/plaintext consistency must be proved in circuit (§12.1). A byte AEAD in R1CS is 30–160 k constraints per note; the Poseidon construction is ≈ 2 k. Envelope grows 610 → 668 bytes. |
+| `ct_note` 67 bytes (§A.4 estimate) | 96 bytes (3 × `Fr`) | Ciphertext/plaintext consistency must be proved in circuit (§12.1). A byte AEAD in R1CS is 30–160 k constraints per note; the Poseidon construction is ≈ 2 k. Envelope grows 610 → 700 bytes (with the 32-byte `ct_out` commitment pad). |
 | Magic `"btc"` | same | — |
 | DiversifyHash unspecified | §4.2 | — |
-| `ct_out` AEAD "committing" (§A.1) | ChaCha20-Poly1305, not key-committing | A6 requires only confidentiality, integrity and key privacy for this channel; the §16.2 consistency checks reject any wrong-key decryption. Keeps the 144-byte figure of §A.4. |
 | Public statement listed as a tuple | identical, 16 `Fr` public inputs, no projection | — |
 
-## 13. Out of scope of this profile (deployment layer)
+## 13. Changelog
+
+* **v0.2** — `ct_out` made key-committing with a 32-byte zero prefix
+  (padding fix), closing the last departure of §12 that weakened a property
+  the paper requires in §A.1; envelope 668 → 700 bytes. Envelopes built under
+  v0.1 are not valid under v0.2.
+* **v0.1** — initial draft.
+
+## 14. Out of scope of this profile (deployment layer)
 
 * Peg-in / peg-out (PIPEs v2, §20.4, §22.3). Development deployments use a
   non-normative **mint** envelope kind (`0x02`) and a vault key; see

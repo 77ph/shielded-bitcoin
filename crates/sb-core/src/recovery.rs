@@ -1,4 +1,8 @@
 //! Sender-recovery channel `ct_out` (paper §12.2, §16.2; profile §7.3).
+//!
+//! ChaCha20-Poly1305 is not key-committing on its own; the profile makes it
+//! so with the padding fix: the plaintext starts with 32 zero bytes that the
+//! decryptor verifies, so one ciphertext cannot open under two keys (§A.1).
 
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce};
@@ -16,8 +20,10 @@ use crate::note::NoteCiphertext;
 pub const N_OUT: usize = 2;
 /// `(pk_d, sk_eph)` per output.
 pub const ENTRY_LEN: usize = 64;
-/// `N_OUT * ENTRY_LEN + 16` (Poly1305 tag).
-pub const CT_OUT_LEN: usize = N_OUT * ENTRY_LEN + 16;
+/// Zero prefix that makes the AEAD key-committing (padding fix).
+pub const COMMIT_PAD_LEN: usize = 32;
+/// `COMMIT_PAD_LEN + N_OUT * ENTRY_LEN + 16` (Poly1305 tag).
+pub const CT_OUT_LEN: usize = COMMIT_PAD_LEN + N_OUT * ENTRY_LEN + 16;
 
 /// One recovery record.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -54,7 +60,7 @@ pub fn encrypt_recovery(
     digest: &[u8; 32],
     entries: &[RecoveryEntry; N_OUT],
 ) -> [u8; CT_OUT_LEN] {
-    let mut pt = Vec::with_capacity(N_OUT * ENTRY_LEN);
+    let mut pt = vec![0u8; COMMIT_PAD_LEN];
     for e in entries {
         pt.extend_from_slice(&point_to_bytes(&e.pk_d));
         pt.extend_from_slice(&scalar_to_bytes(&e.sk_eph));
@@ -74,7 +80,8 @@ pub fn encrypt_recovery(
     out
 }
 
-/// Decrypt `ct_out`; `None` if the tag fails or an entry does not decode.
+/// Decrypt `ct_out`; `None` if the tag fails, the key-commitment prefix is
+/// not all zero, or an entry does not decode.
 pub fn decrypt_recovery(
     ovk: &OutgoingViewingKey,
     digest: &[u8; 32],
@@ -94,7 +101,12 @@ pub fn decrypt_recovery(
         pk_d: JubjubAffine::default(),
         sk_eph: JubjubScalar::default(),
     }; N_OUT];
-    for (i, chunk) in pt.chunks(ENTRY_LEN).enumerate() {
+    if pt.len() != COMMIT_PAD_LEN + N_OUT * ENTRY_LEN
+        || pt[..COMMIT_PAD_LEN].iter().any(|b| *b != 0)
+    {
+        return None;
+    }
+    for (i, chunk) in pt[COMMIT_PAD_LEN..].chunks(ENTRY_LEN).enumerate() {
         out[i] = RecoveryEntry {
             pk_d: point_from_bytes(&chunk[..32]).ok()?,
             sk_eph: scalar_from_bytes(&chunk[32..]).ok()?,

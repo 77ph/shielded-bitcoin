@@ -316,8 +316,8 @@ mod tests {
 
     #[test]
     fn sizes_match_the_profile() {
-        assert_eq!(BODY_LEN, 476);
-        assert_eq!(ENVELOPE_LEN, 668);
+        assert_eq!(BODY_LEN, 508);
+        assert_eq!(ENVELOPE_LEN, 700);
     }
 
     #[test]

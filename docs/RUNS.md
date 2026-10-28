@@ -1,7 +1,9 @@
 # Runs
 
 Every end-to-end run of `sb` against a real `bitcoind`, with the transactions
-it produced. Amounts in satoshi.
+it produced. Amounts in satoshi. Runs dated before the profile v0.2 change
+used 668-byte envelopes (144-byte `ct_out`); those envelopes are not valid
+under v0.2 (see PROFILE.md §13).
 
 ## Private signet, 28 October 2026 (profile `localsignet-dev`, activation 100)
 

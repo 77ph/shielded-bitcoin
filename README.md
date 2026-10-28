@@ -21,7 +21,7 @@ soft fork or a hard fork.
 |---|---|
 | Profile (`docs/PROFILE.md`) | every open parameter of the paper fixed; departures listed in its §12 |
 | Primitives | Poseidon (native + R1CS, pinned constants), Jubjub encodings, DiversifyHash |
-| Core | key hierarchy, bech32m addresses, note encryption, leaves, nullifiers, 668-byte canonical envelope, note tree with historical paths |
+| Core | key hierarchy, bech32m addresses, note encryption, leaves, nullifiers, 700-byte canonical envelope, note tree with historical paths |
 | Circuit | 2-in/2-out transfer relation, 84 362 constraints, Groth16/BLS12-381; prove ≈ 1.5 s, verify ≈ 4 ms (16 threads) |
 | Indexer | Bitcoin Core RPC / Esplora / mock sources, carrier rule, normative acceptance order, per-block checkpoints with reorg rollback, JSON state |
 | Wallet | scanning and sender recovery, note selection, anchor policy, change, input locks, reorg-safe rescan |
@@ -29,7 +29,7 @@ soft fork or a hard fork.
 | CLI | `sb`: profile, wallets, sync, scan, mint, send; publishes carriers through Esplora with a transparent funding key |
 
 Measured on this machine (release build): setup 1.5 s, prove 1.5 s,
-verify 4 ms, envelope 668 bytes, carrier ≈ 800 vB.
+verify 4 ms, envelope 700 bytes, carrier ≈ 830 vB.
 
 ## Layout
 
