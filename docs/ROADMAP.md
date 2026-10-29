@@ -40,7 +40,7 @@ in `RUNS.md`.
 | Atomic swap between a shielded note and transparent Bitcoin through `h_aux` and a P2WSH HTLC | §22.5 | `SWAP.md`, extension circuit (SHA-256 in circuit), kind `0x03`, `sb swap` / `sb htlc`, both endings run on the private signet under Bitcoin Core, reviewed (`REVIEW-SWAP.md`) |
 | Witness-carried envelopes, a separate deployment profile | §22.1, §A.4 | `WITNESS-CARRIER.md`, commit-and-reveal publisher through all three fee models, indexer rule, measured on the private signet, reviewed (`REVIEW-WITNESS-CARRIER.md`) |
 | Fee-unlock vault as a development scaffold | §20.5, §22.3 | `FEE-VAULT.md`, `sb fee-vault`, deterministic release rule and ledger, backing guard, reclaim, run on the private signet with both endings and every refusal, reviewed (`REVIEW-FEE-VAULT-IMPL.md`) |
-| Publication privacy and wallet policy | §22.3, §20.6 | `PUBLICATION.md`: a SOCKS5 proxy for every outbound connection, a separate publication route, delayed broadcast within the window, a shared anchor depth per deployment, random change placement, the residual surfaces named; tested against an in-process proxy, run on signet through an SSH forward; design reviewed on paper |
+| Publication privacy and wallet policy | §22.3, §20.6 | `PUBLICATION.md`: a SOCKS5 proxy for every outbound connection, a separate publication route, delayed broadcast within the window, a shared anchor depth per deployment, random change placement, the residual surfaces named; tested against an in-process proxy, run on signet through an SSH forward, reviewed (`REVIEW-PUBLICATION-IMPL.md`) |
 
 ## Next
 
