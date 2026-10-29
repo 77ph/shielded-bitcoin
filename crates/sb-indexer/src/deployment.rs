@@ -5,7 +5,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use sb_circuit::{TransferParams, TransferVerifier, vk_sha256};
+use sb_circuit::{SwapParams, SwapVerifier, TransferParams, TransferVerifier, vk_sha256};
 use sb_core::address::Network;
 use sb_core::envelope::bytes_to_fr_253;
 use sb_primitives::Fr;
@@ -38,6 +38,15 @@ pub struct DevBoundary {
     pub operator_address: Option<String>,
 }
 
+/// The swap extension of a deployment (`docs/SWAP.md` §12): its own
+/// verifying-key hash and setup. Absent → kind `0x03` envelopes are rejected.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SwapDeployment {
+    #[serde(with = "hexbytes")]
+    pub vk_sha256: [u8; 32],
+    pub setup: Setup,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Deployment {
     /// `docs/PROFILE.md` version this deployment follows (must equal
@@ -58,6 +67,8 @@ pub struct Deployment {
     pub k_min: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub boundary: Option<DevBoundary>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub swap: Option<SwapDeployment>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -142,13 +153,56 @@ impl Deployment {
     }
 
     fn check_vk(&self, got: &[u8; 32]) -> Result<(), DeploymentError> {
-        if *got != self.transfer_vk_sha256 {
+        Self::check_pin(&self.transfer_vk_sha256, got)
+    }
+
+    fn check_pin(expected: &[u8; 32], got: &[u8; 32]) -> Result<(), DeploymentError> {
+        if got != expected {
             return Err(DeploymentError::VkMismatch {
-                expected: hex::encode(self.transfer_vk_sha256),
+                expected: hex::encode(expected),
                 got: hex::encode(got),
             });
         }
         Ok(())
+    }
+
+    /// The swap extension's proving parameters, if the deployment has it.
+    pub fn swap_params(&self, base_dir: &Path) -> Result<Option<SwapParams>, DeploymentError> {
+        let Some(sw) = &self.swap else {
+            return Ok(None);
+        };
+        let params = match &sw.setup {
+            Setup::InsecureSeed { seed } => SwapParams::insecure_setup(seed)?,
+            Setup::Ceremony { pk_path, .. } => {
+                let pk_path = pk_path.as_ref().ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        "swap section has no proving key path",
+                    )
+                })?;
+                SwapParams::from_pk_bytes(&std::fs::read(base_dir.join(pk_path))?)?
+            }
+        };
+        Self::check_pin(&sw.vk_sha256, &vk_sha256(params.vk()))?;
+        Ok(Some(params))
+    }
+
+    /// The swap extension's verifier, if the deployment has it.
+    pub fn swap_verifier(&self, base_dir: &Path) -> Result<Option<SwapVerifier>, DeploymentError> {
+        let Some(sw) = &self.swap else {
+            return Ok(None);
+        };
+        let verifier = match &sw.setup {
+            Setup::InsecureSeed { seed } => {
+                let params = SwapParams::insecure_setup(seed)?;
+                SwapVerifier::new(params.vk().clone())
+            }
+            Setup::Ceremony { vk_path, .. } => {
+                SwapVerifier::from_vk_bytes(&std::fs::read(base_dir.join(vk_path))?)?
+            }
+        };
+        Self::check_pin(&sw.vk_sha256, &vk_sha256(&verifier.vk))?;
+        Ok(Some(verifier))
     }
 }
 
@@ -169,6 +223,7 @@ mod tests {
             window_w: 100,
             k_min: 1,
             boundary: None,
+            swap: None,
         };
         let json = d.to_json();
         assert!(json.contains("\"insecure-seed\""));

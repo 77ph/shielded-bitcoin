@@ -207,6 +207,15 @@ impl ReplayState {
                     e.first_position,
                     e.leaves,
                 ),
+                Envelope::Swap(sw) => AcceptedEvent::from_swap(
+                    e.height,
+                    e.tx_index,
+                    e.txid,
+                    &sw,
+                    e.h_body,
+                    e.first_position,
+                    e.leaves,
+                ),
                 Envelope::Mint(m) => {
                     let derived = m
                         .derive()
@@ -228,7 +237,10 @@ impl ReplayState {
                 }
             };
             ev.memo = e.memo;
-            debug_assert!(matches!(ev.kind, EventKind::Transfer | EventKind::Mint));
+            debug_assert!(matches!(
+                ev.kind,
+                EventKind::Transfer | EventKind::Mint | EventKind::Swap
+            ));
             events.push(ev);
         }
         Ok(ReplayState {

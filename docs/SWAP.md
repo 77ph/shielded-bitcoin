@@ -36,6 +36,17 @@ the same construction as a Lightning HTLC: 32-byte preimage, SHA-256
 payment hash). In the circuit `s` is witnessed as 32 bytes and hashed
 with a SHA-256 gadget; the result is compared with `(H_lo, H_hi)`.
 
+**One identity for `H` on both chains.** The gadget's 32 digest bytes are
+packed bit by bit into the two halves, `Σ bit_k · 2^k` over the 128 bits
+of each half, so the packed values are below `2^128` by construction and
+the map from the 32 bytes of `H` to `(H_lo, H_hi)` is a bijection on that
+range. When a claim is proven (E5) the witnessed `H_lo`, `H_hi` are
+enforced equal to the packed digest, so the `(H_lo, H_hi)` that `h_aux`
+commits to (E4) are exactly the two halves of the 32 bytes the HTLC
+compares with `OP_SHA256`, and exactly what the counterparty recomputes
+from `H` before locking (§9). There is no field-versus-bytes ambiguity:
+a field element outside `[0, 2^128)` cannot equal a packed half.
+
 ## 2. Lock commitment
 
 ```
@@ -149,7 +160,10 @@ outputs, value conservation and the public-input bindings. For each input
   `SHA-256(s_i) = (H_lo_i, H_hi_i)`.
 * **E6 Refund (`locked_i ∧ refund_i`).** `pk_refund_i = [sk_view]
   DiversifyHash(d_refund_i)` and `h_anchor ≥ t_refund_i` (both as 32-bit
-  values).
+  values). `h_anchor` is a Bitcoin block height: the note tree's anchors
+  *are* heights of the Bitcoin chain the envelopes are published on (base
+  profile §8, replay keeps one root per Bitcoin block), so this comparison
+  is between two values on the same scale as the HTLC's `OP_CLTV` height.
 * **E7 Nullifier.** `nf_pub_i = locked_i ? PH(T_NFLOCK, rho_i, pos_i) :
   PH(T_NF, sk_nf, rho_i, pos_i)`.
 
@@ -257,7 +271,20 @@ keeps out of reach while Y can still claim.
 
 ## 10. Timeouts and the ordering that makes it atomic
 
-Both timelocks are Bitcoin heights, so they are on one clock. Y's claim
+Both timelocks are Bitcoin heights, so they are on one clock: the shielded
+side has no clock of its own. The anchor `h_anchor` a transfer names is
+the height of a Bitcoin block (replay derives `R[h]` per Bitcoin block
+and accepts an anchor only inside the window below the inclusion
+height), and `t_refund` is compared with it in E6; `T_htlc` is the height
+in the HTLC's `OP_CHECKLOCKTIMEVERIFY`. Everything below rests on that.
+
+Constants: `K_min` is the deployment's minimum anchor depth (base profile
+§9, `1` in the development deployments); `K_wallet` is the wallet's own
+anchor depth (base profile §A.6, `3` in this implementation: a wallet
+anchors `K_wallet` blocks below the tip so a shallow reorganisation does
+not invalidate its proof); `R` is the reaction margin defined here.
+
+Y's claim
 of the note needs: `s` published (by X's HTLC spend at some height `h_s`),
 a replayed anchor, proving, inclusion. X's refund becomes acceptable at
 height `t_refund + K_min` at the earliest (§7). X can only reveal `s`
@@ -273,9 +300,22 @@ refunds the HTLC at `T_htlc` if `s` has not appeared, after which X cannot
 reveal it) before X's refund can be accepted, where `R` is a reaction
 margin (profile default `R = 6`, so `Δ = 1 + 3 + 6 = 10` blocks). Y must
 refuse any agreement that violates the rule; X loses nothing by a larger
-`Δ` except a longer worst-case lock of `v_sh`. The symmetric danger, the
-"free option" where X waits to see prices move before claiming, is bounded
-by `T_htlc`: X's option expires when Y refunds.
+`Δ` except a longer worst-case lock of `v_sh`.
+
+**Liveness assumption.** The rule protects Y only if Y is online: from
+the moment it funds the HTLC until its claim of the note is accepted, Y
+must watch the Bitcoin chain for the HTLC spend that reveals `s` and react
+within `R` blocks (sync, prove, publish). A Y that is offline longer than
+the margin after `s` appears can lose `v_sh` while X keeps `v_btc`. This
+is inherent to HTLC swaps, not to this construction; the implementation's
+provider role is a process that polls the chain, and the drill keeps it
+running. The margins also assume no reorganisation deeper than `K_min`
+once a transfer is accepted, as the base profile does.
+
+The symmetric danger, the "free option" where X waits to see prices move
+before claiming, is bounded by `T_htlc`: X's option expires when Y
+refunds. Its economic value is a matter for a provider's pricing
+(a premium, or collateral), outside this profile.
 
 ## 11. Privacy
 

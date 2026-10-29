@@ -139,6 +139,15 @@ impl StateStore for PgStore {
                         first_position,
                         leaves,
                     ),
+                    Envelope::Swap(sw) => AcceptedEvent::from_swap(
+                        height,
+                        tx_index,
+                        txid,
+                        &sw,
+                        h_body,
+                        first_position,
+                        leaves,
+                    ),
                     Envelope::Mint(m) => {
                         let derived = m
                             .derive()
@@ -159,7 +168,10 @@ impl StateStore for PgStore {
                     }
                 };
             ev.memo = memo;
-            debug_assert!(matches!(ev.kind, EventKind::Transfer | EventKind::Mint));
+            debug_assert!(matches!(
+                ev.kind,
+                EventKind::Transfer | EventKind::Mint | EventKind::Swap
+            ));
             events.push(ev);
         }
         let mut rejections = Vec::new();
@@ -245,7 +257,11 @@ impl StateStore for PgStore {
                 &[
                     &d,
                     &(idx as i32),
-                    &(match ev.kind { EventKind::Transfer => 1i16, EventKind::Mint => 2i16 }),
+                    &(match ev.kind {
+                        EventKind::Transfer => 1i16,
+                        EventKind::Mint => 2i16,
+                        EventKind::Swap => 3i16,
+                    }),
                     &(ev.height as i32),
                     &(ev.tx_index as i32),
                     &ev.txid.as_slice(),

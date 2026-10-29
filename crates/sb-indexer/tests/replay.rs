@@ -37,6 +37,7 @@ impl World {
             window_w: 5,
             k_min: 1,
             boundary: None,
+            swap: None,
         };
         World {
             deployment,

@@ -5,7 +5,7 @@ use sb_core::address::PaymentAddress;
 use sb_core::event::AcceptedEvent;
 use sb_core::keys::{IncomingViewingKey, OutgoingViewingKey};
 use sb_core::note::{
-    NotePlaintext, check_note_consistency, decrypt_as_recipient, decrypt_as_sender, note_leaf,
+    NotePlaintext, check_note_consistency, decrypt_as_recipient, decrypt_as_sender, note_leaf_aux,
 };
 use sb_core::recovery::{binding_digest, decrypt_recovery};
 use sb_primitives::Fr;
@@ -19,6 +19,9 @@ pub struct ReceivedNote {
     pub output_index: u64,
     pub pos: u64,
     pub leaf: Fr,
+    /// The leaf's `h_aux` slot: `0` for a plain note, a lock commitment
+    /// for a locked one (`docs/SWAP.md`).
+    pub h_aux: Fr,
     pub height: u32,
     pub txid: [u8; 32],
 }
@@ -30,6 +33,8 @@ pub struct SentNote {
     pub pk_d: sb_primitives::JubjubAffine,
     pub output_index: u64,
     pub pos: u64,
+    /// The output's `h_aux` slot (see [`ReceivedNote::h_aux`]).
+    pub h_aux: Fr,
     pub height: u32,
     pub txid: [u8; 32],
 }
@@ -38,7 +43,14 @@ pub struct SentNote {
 fn passes_checks(const_salt: &Fr, event: &AcceptedEvent, j: usize, pt: &NotePlaintext) -> bool {
     let (pk_eph, ct) = &event.outputs[j];
     check_note_consistency(pt, pk_eph)
-        && note_leaf(const_salt, &event.h_body, j as u64, pk_eph, ct) == event.leaves[j]
+        && note_leaf_aux(
+            const_salt,
+            &event.h_body,
+            j as u64,
+            pk_eph,
+            ct,
+            event.h_aux.get(j).unwrap_or(&Fr::from(0u64)),
+        ) == event.leaves[j]
 }
 
 /// Try every output of an accepted transfer with the incoming viewing key.
@@ -67,6 +79,7 @@ pub fn scan_incoming(
             output_index: j as u64,
             pos: event.first_position + j as u64,
             leaf: event.leaves[j],
+            h_aux: event.h_aux.get(j).copied().unwrap_or(Fr::from(0u64)),
             height: event.height,
             txid: event.txid,
         });
@@ -101,6 +114,7 @@ pub fn scan_outgoing(
             pk_d: entry.pk_d,
             output_index: j as u64,
             pos: event.first_position + j as u64,
+            h_aux: event.h_aux.get(j).copied().unwrap_or(Fr::from(0u64)),
             height: event.height,
             txid: event.txid,
         });

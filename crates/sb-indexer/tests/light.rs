@@ -30,6 +30,7 @@ fn deployment(vault: &bitcoin::ScriptBuf) -> (Deployment, TransferParams) {
             vault_script_hex: hex::encode(vault.as_bytes()),
             operator_address: None,
         }),
+        swap: None,
     };
     (d, params)
 }

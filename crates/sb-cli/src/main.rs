@@ -735,6 +735,7 @@ fn main() -> Result<()> {
                 vault_script_hex: v.clone(),
                 operator_address: operator_address.clone(),
             }),
+            swap: None,
         };
         if let Some(p) = cli.profile.parent() {
             std::fs::create_dir_all(p)?;

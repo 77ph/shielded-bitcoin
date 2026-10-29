@@ -31,6 +31,7 @@ fn deployment(params: &TransferParams, name: &str) -> Deployment {
         window_w: 10,
         k_min: 1,
         boundary: None,
+        swap: None,
     }
 }
 

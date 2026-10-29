@@ -14,6 +14,8 @@ use crate::recovery::{CT_OUT_LEN, N_OUT};
 pub const MAGIC: [u8; 3] = *b"btc";
 pub const VERSION: u8 = 1;
 pub const KIND_TRANSFER: u8 = 0x01;
+/// Swap extension envelope (`docs/SWAP.md` §4).
+pub const KIND_SWAP: u8 = 0x03;
 pub const HEADER_LEN: usize = 6;
 /// Inputs per transfer (profile §7).
 pub const N_IN: usize = 2;
@@ -21,6 +23,9 @@ pub const PROOF_LEN: usize = 192;
 pub const BODY_LEN: usize =
     HEADER_LEN + 4 + 2 + N_IN * 32 + N_OUT * 32 + N_OUT * CT_NOTE_LEN + CT_OUT_LEN;
 pub const ENVELOPE_LEN: usize = BODY_LEN + PROOF_LEN;
+/// Swap body: the base body plus one `h_aux` per output.
+pub const SWAP_BODY_LEN: usize = BODY_LEN + N_OUT * 32;
+pub const SWAP_ENVELOPE_LEN: usize = SWAP_BODY_LEN + PROOF_LEN;
 
 /// Prefix every candidate payload must start with.
 pub const CANDIDATE_PREFIX: [u8; 4] = [b'b', b't', b'c', VERSION];
@@ -137,10 +142,15 @@ impl<'a> Reader<'a> {
 impl TransferBody {
     /// `body_bytes(e)` (profile §7.1).
     pub fn to_bytes(&self) -> Vec<u8> {
+        self.to_bytes_with_kind(KIND_TRANSFER)
+    }
+
+    /// The header with `kind` followed by the base fields.
+    fn to_bytes_with_kind(&self, kind: u8) -> Vec<u8> {
         let mut out = Vec::with_capacity(BODY_LEN);
         out.extend_from_slice(&MAGIC);
         out.push(VERSION);
-        out.push(KIND_TRANSFER);
+        out.push(kind);
         out.push(0);
         out.extend_from_slice(&self.h_anchor.to_le_bytes());
         push_compact_size(&mut out, N_IN as u64);
@@ -173,6 +183,10 @@ impl TransferBody {
     }
 
     fn parse_prefix(r: &mut Reader<'_>) -> Result<Self, ParseError> {
+        Self::parse_prefix_kind(r, KIND_TRANSFER)
+    }
+
+    fn parse_prefix_kind(r: &mut Reader<'_>, expected_kind: u8) -> Result<Self, ParseError> {
         if r.take(3)? != MAGIC {
             return Err(ParseError::Magic);
         }
@@ -181,7 +195,7 @@ impl TransferBody {
             return Err(ParseError::Version(version));
         }
         let kind = r.u8()?;
-        if kind != KIND_TRANSFER {
+        if kind != expected_kind {
             return Err(ParseError::Kind(kind));
         }
         if r.u8()? != 0 {
@@ -276,6 +290,97 @@ impl TransferEnvelope {
         let mut proof = [0u8; PROOF_LEN];
         proof.copy_from_slice(&bytes[BODY_LEN..]);
         let env = TransferEnvelope { body, proof };
+        if env.to_bytes() != bytes {
+            return Err(ParseError::NonCanonical);
+        }
+        Ok(env)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Swap extension (docs/SWAP.md §4): the base body plus the per-output
+// h_aux slots, under kind 0x03.
+// ---------------------------------------------------------------------------
+
+/// The body of a swap envelope.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct SwapBody {
+    pub base: TransferBody,
+    /// The `h_aux` slot of each output; `0` for a plain output.
+    pub h_aux: [Fr; N_OUT],
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct SwapEnvelope {
+    pub body: SwapBody,
+    pub proof: [u8; PROOF_LEN],
+}
+
+impl SwapBody {
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut out = self.base.to_bytes_with_kind(KIND_SWAP);
+        for h in &self.h_aux {
+            out.extend_from_slice(&fr_to_bytes(h));
+        }
+        debug_assert_eq!(out.len(), SWAP_BODY_LEN);
+        out
+    }
+
+    pub fn parse(bytes: &[u8]) -> Result<Self, ParseError> {
+        let mut r = Reader { b: bytes, pos: 0 };
+        let base = TransferBody::parse_prefix_kind(&mut r, KIND_SWAP)?;
+        let mut h_aux = [Fr::from(0u64); N_OUT];
+        for h in h_aux.iter_mut() {
+            *h = fr_from_bytes(r.take(32)?).map_err(|e| ParseError::Field("h_aux", e))?;
+        }
+        if r.pos != bytes.len() {
+            return Err(ParseError::Length {
+                got: bytes.len(),
+                expected: r.pos,
+            });
+        }
+        Ok(SwapBody { base, h_aux })
+    }
+
+    /// `h_body` over the whole swap body (`docs/SWAP.md` §4).
+    pub fn h_body(&self, const_salt: &[u8; 32]) -> Fr {
+        h_body(const_salt, &self.to_bytes())
+    }
+}
+
+impl SwapEnvelope {
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut out = self.body.to_bytes();
+        out.extend_from_slice(&self.proof);
+        out
+    }
+
+    /// Strict parse: exact length and byte-for-byte re-serialisation.
+    pub fn parse(bytes: &[u8]) -> Result<Self, ParseError> {
+        if bytes.len() != SWAP_ENVELOPE_LEN {
+            if bytes.len() >= HEADER_LEN {
+                let mut r = Reader {
+                    b: &bytes[..HEADER_LEN],
+                    pos: 0,
+                };
+                let _ =
+                    TransferBody::parse_prefix_kind(&mut r, KIND_SWAP).map_err(|e| match e {
+                        ParseError::Length { .. } => ParseError::Length {
+                            got: bytes.len(),
+                            expected: SWAP_ENVELOPE_LEN,
+                        },
+                        other => other,
+                    })?;
+            }
+            return Err(ParseError::Length {
+                got: bytes.len(),
+                expected: SWAP_ENVELOPE_LEN,
+            });
+        }
+        let body = SwapBody::parse(&bytes[..SWAP_BODY_LEN])?;
+        let mut proof = [0u8; PROOF_LEN];
+        proof.copy_from_slice(&bytes[SWAP_BODY_LEN..]);
+        let env = SwapEnvelope { body, proof };
         if env.to_bytes() != bytes {
             return Err(ParseError::NonCanonical);
         }
@@ -486,6 +591,7 @@ impl MintEnvelope {
 pub enum Envelope {
     Transfer(TransferEnvelope),
     Mint(MintEnvelope),
+    Swap(SwapEnvelope),
 }
 
 /// Dispatch on the kind byte (index 4) after the magic and version.
@@ -505,6 +611,7 @@ pub fn parse_envelope(bytes: &[u8]) -> Result<Envelope, ParseError> {
     match bytes[4] {
         KIND_TRANSFER => Ok(Envelope::Transfer(TransferEnvelope::parse(bytes)?)),
         KIND_MINT => Ok(Envelope::Mint(MintEnvelope::parse(bytes)?)),
+        KIND_SWAP => Ok(Envelope::Swap(SwapEnvelope::parse(bytes)?)),
         k => Err(ParseError::Kind(k)),
     }
 }
@@ -677,5 +784,81 @@ mod coverage_tests {
         b[3] = 2;
         assert_eq!(parse_envelope(&b), Err(ParseError::Version(2)));
         assert!(!is_candidate(b"bt"));
+    }
+}
+
+#[cfg(test)]
+mod swap_tests {
+    use super::*;
+    use ark_std::rand::{SeedableRng, rngs::StdRng};
+
+    #[test]
+    fn swap_round_trip_dispatch_and_rejections() {
+        let mut rng = StdRng::seed_from_u64(3);
+        let base = tests::random_body(&mut rng);
+        let body = SwapBody {
+            base: base.clone(),
+            h_aux: [Fr::from(0u64), Fr::from(12345u64)],
+        };
+        let env = SwapEnvelope {
+            body: body.clone(),
+            proof: [7u8; PROOF_LEN],
+        };
+        let bytes = env.to_bytes();
+        assert_eq!(bytes.len(), SWAP_ENVELOPE_LEN);
+        assert_eq!(bytes[4], KIND_SWAP);
+        assert_eq!(SwapEnvelope::parse(&bytes).unwrap(), env);
+        assert_eq!(SwapBody::parse(&body.to_bytes()).unwrap(), body);
+        assert!(matches!(parse_envelope(&bytes).unwrap(), Envelope::Swap(e) if e == env));
+        // h_body covers the aux section
+        let mut other = body.clone();
+        other.h_aux[0] = Fr::from(1u64);
+        assert_ne!(other.h_body(&[1u8; 32]), body.h_body(&[1u8; 32]));
+        assert_ne!(body.h_body(&[1u8; 32]), base.h_body(&[1u8; 32]));
+        // the base parser refuses the kind, the swap parser refuses the base kind
+        assert_eq!(
+            TransferEnvelope::parse(&bytes).unwrap_err(),
+            ParseError::Kind(KIND_SWAP)
+        );
+        let base_env = TransferEnvelope {
+            body: base,
+            proof: [7u8; PROOF_LEN],
+        };
+        assert_eq!(
+            SwapEnvelope::parse(&base_env.to_bytes()).unwrap_err(),
+            ParseError::Kind(KIND_TRANSFER)
+        );
+        // lengths and canonicality
+        assert!(matches!(
+            SwapEnvelope::parse(&bytes[..bytes.len() - 1]).unwrap_err(),
+            ParseError::Length { .. }
+        ));
+        assert!(matches!(
+            SwapBody::parse(&body.to_bytes()[..SWAP_BODY_LEN - 1]).unwrap_err(),
+            ParseError::Length { .. }
+        ));
+        let mut long = body.to_bytes();
+        long.push(0);
+        assert!(matches!(
+            SwapBody::parse(&long).unwrap_err(),
+            ParseError::Length { .. }
+        ));
+        let mut non_canonical = bytes.clone();
+        // h_aux_0 with a value ≥ q is not a field element
+        non_canonical[BODY_LEN..BODY_LEN + 32].copy_from_slice(&[0xff; 32]);
+        assert!(matches!(
+            SwapEnvelope::parse(&non_canonical).unwrap_err(),
+            ParseError::Field("h_aux", _)
+        ));
+        assert!(matches!(
+            SwapEnvelope::parse(&bytes[..5]).unwrap_err(),
+            ParseError::Length { .. }
+        ));
+        let mut bad_magic = bytes.clone();
+        bad_magic[0] = b'x';
+        assert_eq!(
+            SwapEnvelope::parse(&bad_magic).unwrap_err(),
+            ParseError::Magic
+        );
     }
 }

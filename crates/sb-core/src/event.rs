@@ -5,7 +5,7 @@
 
 use crate::Fr;
 use crate::JubjubAffine;
-use crate::envelope::{MintEnvelope, TransferEnvelope};
+use crate::envelope::{MintEnvelope, SwapEnvelope, TransferEnvelope};
 use crate::note::NoteCiphertext;
 use crate::recovery::CT_OUT_LEN;
 
@@ -20,6 +20,8 @@ pub fn txid_hex(txid: &[u8; 32]) -> String {
 pub enum EventKind {
     Transfer,
     Mint,
+    /// Swap extension envelope (`docs/SWAP.md`).
+    Swap,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -42,6 +44,8 @@ pub struct AcceptedEvent {
     pub first_position: u64,
     /// Replay-derived leaves, one per output.
     pub leaves: Vec<Fr>,
+    /// The `h_aux` slot of each output (`0` outside the swap extension).
+    pub h_aux: Vec<Fr>,
     /// Opaque memo published next to the envelope (not covered by the proof;
     /// deployment extensions only, see docs/BOUNDARY.md).
     pub memo: Option<Vec<u8>>,
@@ -71,6 +75,37 @@ impl AcceptedEvent {
                 .collect(),
             ct_out: Some(b.ct_out),
             first_position,
+            h_aux: vec![Fr::from(0u64); leaves.len()],
+            leaves,
+            memo: None,
+        }
+    }
+
+    /// A swap envelope: like a transfer, with the published slots.
+    pub fn from_swap(
+        height: u32,
+        tx_index: u32,
+        txid: [u8; 32],
+        env: &SwapEnvelope,
+        h_body: Fr,
+        first_position: u64,
+        leaves: Vec<Fr>,
+    ) -> Self {
+        let b = &env.body.base;
+        AcceptedEvent {
+            kind: EventKind::Swap,
+            height,
+            tx_index,
+            txid,
+            raw: env.to_bytes(),
+            h_body,
+            nullifiers: b.nullifiers.to_vec(),
+            outputs: (0..b.pk_eph.len())
+                .map(|j| (b.pk_eph[j], b.ct_note[j]))
+                .collect(),
+            ct_out: Some(b.ct_out),
+            first_position,
+            h_aux: env.body.h_aux.to_vec(),
             leaves,
             memo: None,
         }
@@ -99,6 +134,7 @@ impl AcceptedEvent {
             outputs: vec![derived],
             ct_out: None,
             first_position,
+            h_aux: vec![Fr::from(0u64)],
             leaves: vec![leaf],
             memo: None,
         }

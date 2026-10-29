@@ -38,6 +38,7 @@ fn mint_pay_change_persist_reorg() {
             vault_script_hex: "51".into(),
             operator_address: None,
         }),
+        swap: None,
     };
     let salt = deployment.const_salt_fr();
     let mut idx = Indexer::new(

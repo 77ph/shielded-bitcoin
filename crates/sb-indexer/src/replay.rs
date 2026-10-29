@@ -5,10 +5,13 @@ use bitcoin::hashes::Hash;
 use bitcoin::{Block, ScriptBuf, Transaction};
 use log::{debug, info, warn};
 
-use sb_circuit::{TransferStatement, TransferVerifier};
-use sb_core::envelope::{Envelope, MintEnvelope, ParseError, TransferEnvelope, parse_envelope};
+use sb_circuit::{SwapStatement, SwapVerifier, TransferStatement, TransferVerifier};
+use sb_core::envelope::{
+    Envelope, MintEnvelope, ParseError, SwapEnvelope, TransferBody, TransferEnvelope,
+    parse_envelope,
+};
 use sb_core::event::AcceptedEvent;
-use sb_core::note::note_leaf;
+use sb_core::note::{note_leaf, note_leaf_aux};
 use sb_core::recovery::N_OUT;
 use sb_primitives::Fr;
 
@@ -41,6 +44,8 @@ pub enum RejectReason {
     MintVault,
     #[error("mint: invalid diversifier")]
     MintDiversifier,
+    #[error("swap: this deployment has no swap extension")]
+    SwapDisabled,
 }
 
 /// What [`Indexer::check_transfer`] learned about a valid transfer.
@@ -77,6 +82,8 @@ pub struct SyncReport {
 pub struct Indexer {
     pub deployment: Deployment,
     verifier: TransferVerifier,
+    /// The swap extension's verifier when the deployment enables it.
+    swap_verifier: Option<SwapVerifier>,
     pub state: ReplayState,
     vault_script: Option<ScriptBuf>,
 }
@@ -89,9 +96,16 @@ impl Indexer {
         Indexer {
             deployment,
             verifier,
+            swap_verifier: None,
             state,
             vault_script,
         }
+    }
+
+    /// Enable the swap extension (`docs/SWAP.md` §8) with its verifier.
+    pub fn with_swap_verifier(mut self, verifier: SwapVerifier) -> Self {
+        self.swap_verifier = Some(verifier);
+        self
     }
 
     /// Height the next replayed block must have.
@@ -176,6 +190,7 @@ impl Indexer {
         match parse_envelope(bytes)? {
             Envelope::Transfer(env) => self.accept_transfer(height, tx_index, txid, env),
             Envelope::Mint(env) => self.accept_mint(height, tx_index, txid, tx, env),
+            Envelope::Swap(env) => self.accept_swap(height, tx_index, txid, env),
         }
     }
 
@@ -198,6 +213,14 @@ impl Indexer {
                     h_body,
                     h_anchor: env.body.h_anchor,
                     nullifiers: env.body.nullifiers,
+                }))
+            }
+            Envelope::Swap(env) => {
+                let h_body = self.validate_swap(height, &env)?;
+                Ok(Some(TransferCheck {
+                    h_body,
+                    h_anchor: env.body.base.h_anchor,
+                    nullifiers: env.body.base.nullifiers,
                 }))
             }
         }
@@ -224,6 +247,52 @@ impl Indexer {
         let body = &envelope.body;
         // 2. h_body
         let h_body = body.h_body(&self.deployment.const_salt);
+        let r_anchor = self.check_anchor_and_nullifiers(height, body)?;
+        let statement = self.statement(body, r_anchor, h_body);
+        // 6. proof
+        if !self.verifier.verify(&statement, &envelope.proof) {
+            return Err(RejectReason::ProofInvalid);
+        }
+        Ok(h_body)
+    }
+
+    /// `docs/SWAP.md` §8: the base steps with the extension's verifier and
+    /// statement; returns `h_body` over the swap body.
+    fn validate_swap(&self, height: u32, envelope: &SwapEnvelope) -> Result<Fr, RejectReason> {
+        let verifier = self
+            .swap_verifier
+            .as_ref()
+            .ok_or(RejectReason::SwapDisabled)?;
+        let body = &envelope.body.base;
+        let h_body = envelope.body.h_body(&self.deployment.const_salt);
+        let r_anchor = self.check_anchor_and_nullifiers(height, body)?;
+        let statement = SwapStatement {
+            base: self.statement(body, r_anchor, h_body),
+            h_anchor: body.h_anchor,
+        };
+        if !verifier.verify(&statement, &envelope.proof) {
+            return Err(RejectReason::ProofInvalid);
+        }
+        Ok(h_body)
+    }
+
+    fn statement(&self, body: &TransferBody, r_anchor: Fr, h_body: Fr) -> TransferStatement {
+        TransferStatement {
+            const_salt: self.deployment.const_salt_fr(),
+            r_anchor,
+            nullifiers: body.nullifiers,
+            pk_eph: body.pk_eph,
+            ct_note: body.ct_note,
+            h_body,
+        }
+    }
+
+    /// Profile §11 steps 3–5; returns `r_anchor`.
+    fn check_anchor_and_nullifiers(
+        &self,
+        height: u32,
+        body: &TransferBody,
+    ) -> Result<Fr, RejectReason> {
         // 3. anchor window: H - W <= h_anchor <= H - K_min
         let d = &self.deployment;
         let in_window = body.h_anchor as u64 + d.window_w as u64 >= height as u64
@@ -249,19 +318,46 @@ impl Indexer {
         {
             return Err(RejectReason::SpentNullifier);
         }
-        // 6. proof
-        let statement = TransferStatement {
-            const_salt: d.const_salt_fr(),
-            r_anchor,
-            nullifiers: body.nullifiers,
-            pk_eph: body.pk_eph,
-            ct_note: body.ct_note,
-            h_body,
-        };
-        if !self.verifier.verify(&statement, &envelope.proof) {
-            return Err(RejectReason::ProofInvalid);
+        Ok(r_anchor)
+    }
+
+    /// Validate and apply one swap envelope (`docs/SWAP.md` §8).
+    fn accept_swap(
+        &mut self,
+        height: u32,
+        tx_index: u32,
+        txid: [u8; 32],
+        envelope: SwapEnvelope,
+    ) -> Result<AcceptedEvent, RejectReason> {
+        let h_body = self.validate_swap(height, &envelope)?;
+        let body = &envelope.body.base;
+        let salt_fe = self.deployment.const_salt_fr();
+        let first_position = self.state.tree.size();
+        let mut leaves = Vec::with_capacity(N_OUT);
+        for j in 0..N_OUT {
+            let leaf = note_leaf_aux(
+                &salt_fe,
+                &h_body,
+                j as u64,
+                &body.pk_eph[j],
+                &body.ct_note[j],
+                &envelope.body.h_aux[j],
+            );
+            self.state.tree.append(leaf);
+            leaves.push(leaf);
         }
-        Ok(h_body)
+        for nf in &body.nullifiers {
+            self.state.nullifiers.insert(*nf);
+        }
+        Ok(AcceptedEvent::from_swap(
+            height,
+            tx_index,
+            txid,
+            &envelope,
+            h_body,
+            first_position,
+            leaves,
+        ))
     }
 
     /// Profile §11 step 7.
