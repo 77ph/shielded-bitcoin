@@ -205,3 +205,40 @@ one block ahead of the tip, finished 19:18 UTC:
 
 Same caveat as the first drill: one person held every secret, so the keys
 prove the procedure, not anything else.
+
+## Private signet, 29 October 2026: two atomic swaps with real HTLCs
+
+`scripts/swap-drill.sh` on a fresh deployment `localsignet-swap`
+(activation 155, swap extension with the insecure setup), both roles on
+one laptop in separate data directories, Bitcoin Core 30.2 validating the
+HTLC scripts, 9 minutes end to end. Swap envelopes are 764 bytes in
+889 vB carriers.
+
+**Swap one, completed** (7 000 sat shielded for 50 000 sat, `t_htlc` 171,
+`t_refund` 183):
+
+| Step | Height | Transaction |
+|---|---|---|
+| alice (X) locks 7 000 to lp under the hash-lock, change 13 000 | 160 | swap envelope `684f1b1a…` |
+| lp (Y) checks the locked note (value and recomputed `h_aux`) and funds the P2WSH HTLC with 50 000 | 161 | `63c092b2…:0`, 153 vB |
+| alice claims the HTLC with the preimage (witness `sig, s, 1, script`), 49 840 to her | 162 | `73865834…`, 139 vB |
+| lp reads `s` from that spend and claims the note | 163 | swap envelope `45f88caf…` |
+| alice's `swap refund` | — | refused: "the counterparty already claimed this note with the preimage" |
+
+**Swap two, nobody claims** (5 000 for 40 000, `t_htlc` 169, `t_refund` 181):
+
+| Step | Height | Transaction |
+|---|---|---|
+| alice locks 5 000 | 164 | swap envelope `a5b60827…` |
+| lp funds the HTLC with 40 000 | 165 | `1b3820e3…:0` |
+| alice's `swap refund` before the height | — | refused: "wait for height 183" |
+| lp refunds the HTLC after `t_htlc` (`OP_CLTV`, lock time 169, non-final sequence), 39 840 back | 170 | `129ce506…`, 130 vB |
+| alice refunds the note at anchor 182 ≥ `t_refund` | 185 | swap envelope `ffea1cfb…` |
+
+End state: 5 accepted events, no rejections; alice 13 000 shielded (change
+and the refunded 5 000), lp 7 000 shielded; on Bitcoin, alice received
+49 840 sat for the first swap and lp got its 39 840 back from the second.
+Every value-moving step of `docs/SWAP.md` §9 happened on chain and the
+two mixed endings were refused by the tools and would be rejected by
+replay (the refund of a claimed note) or by the node (an HTLC claim
+without the preimage).

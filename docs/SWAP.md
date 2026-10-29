@@ -8,7 +8,9 @@ transfer. It does not change the base profile v0.2: a deployment opts
 into the extension, base envelopes replay exactly as before, and the
 extension is a separate circuit with its own verifying key.
 
-Status: draft, implemented alongside; §13 carries measured numbers.
+Status: draft v0.1, implemented (`sb swap …`, `sb htlc …`) and run on the
+private signet with real HTLCs in both endings (`RUNS.md`); §13 carries
+measured numbers.
 
 ## 0. Summary
 
