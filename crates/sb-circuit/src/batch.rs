@@ -15,7 +15,7 @@ use ark_r1cs_std::fields::FieldVar;
 use ark_r1cs_std::select::CondSelectGadget;
 use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
 
-use sb_core::batch::{BatchStatement, BatchWitness, N_IN, N_OUT, SLOT_ELEMENTS, StateOpening};
+use sb_core::batch::{BatchStatement, BatchWitness, SLOT_ELEMENTS, StateOpening};
 use sb_core::tree::DEPTH;
 use sb_primitives::Fr;
 use sb_primitives::poseidon::gadget::hash_var;
@@ -216,7 +216,7 @@ impl ConstraintSynthesizer<Fr> for BatchCircuit {
             }
 
             // ---- output leaves, appended in order ----
-            for j in 0..N_OUT {
+            for (j, h_aux_j) in h_aux.iter().enumerate() {
                 let base = 4 + j * 5;
                 let pk = PointVar::new(elems[base].clone(), elems[base + 1].clone());
                 let ct = [
@@ -230,7 +230,7 @@ impl ConstraintSynthesizer<Fr> for BatchCircuit {
                     &Var::Constant(Fr::from(j as u64)),
                     &pk,
                     &ct,
-                    h_aux[j],
+                    h_aux_j,
                 )?;
                 let lp = sw.map(|s| &s.leaves[j]);
                 let (pos, bits) = alloc_bounded(
@@ -278,7 +278,6 @@ impl ConstraintSynthesizer<Fr> for BatchCircuit {
         };
         next.digest()?.enforce_equal(&s_next)?;
         hash_var(t_batch(), &all_elems)?.enforce_equal(&d)?;
-        let _ = N_IN;
         Ok(())
     }
 }
