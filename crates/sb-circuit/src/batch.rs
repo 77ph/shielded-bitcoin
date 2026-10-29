@@ -153,6 +153,13 @@ impl ConstraintSynthesizer<Fr> for BatchCircuit {
             let nfs = [&elems[2], &elems[3]];
             let h_body = &elems[14];
             let h_aux = [&elems[15], &elems[16]];
+            // the kind: 0 a transfer or swap, 1 a mint (one leaf, no anchor,
+            // no nullifiers); anything else is refused
+            let kind = &elems[17];
+            (kind * (kind - Var::one())).enforce_equal(&Var::zero())?;
+            let is_mint = kind.is_eq(&Var::one())?;
+            let active_tx = &active & &!is_mint;
+            let active_tx_fr: Var = Var::from(active_tx.clone());
 
             // ---- anchor: in the window, and its root in the root tree ----
             // absent witnesses (an empty slot, no root append) allocate zeros:
@@ -166,18 +173,22 @@ impl ConstraintSynthesizer<Fr> for BatchCircuit {
             let (anchor_pos, anchor_bits) = alloc_bounded(
                 cs.clone(),
                 Some(sw.map_or(Fr::zero(), |s| {
-                    Fr::from(s.statement.h_anchor.wrapping_sub(self.activation))
+                    if s.statement.mint {
+                        Fr::zero()
+                    } else {
+                        Fr::from(s.statement.h_anchor.wrapping_sub(self.activation))
+                    }
                 })),
                 DEPTH,
             )?;
-            anchor_pos.conditional_enforce_equal(&(&h_anchor - &activation), &active)?;
+            anchor_pos.conditional_enforce_equal(&(&h_anchor - &activation), &active_tx)?;
             let anchor_sibs = alloc_siblings(cs.clone(), sw.map(|s| &s.anchor_siblings))?;
             merkle_root_var(r_anchor, &anchor_bits, &anchor_sibs)?
-                .conditional_enforce_equal(&prev.h_root, &active)?;
+                .conditional_enforce_equal(&prev.h_root, &active_tx)?;
             let w_fr = Var::Constant(Fr::from(self.window_w));
             let k_fr = Var::Constant(Fr::from(self.k_min));
-            enforce_geq_u32_if(&(&h_anchor + &w_fr), &prev.height, &active)?;
-            enforce_geq_u32_if(&prev.height, &(&h_anchor + &k_fr), &active)?;
+            enforce_geq_u32_if(&(&h_anchor + &w_fr), &prev.height, &active_tx)?;
+            enforce_geq_u32_if(&prev.height, &(&h_anchor + &k_fr), &active_tx)?;
 
             // ---- nullifiers: not present, then inserted, in order ----
             for (k, nf) in nfs.iter().enumerate() {
@@ -200,19 +211,19 @@ impl ConstraintSynthesizer<Fr> for BatchCircuit {
                 let new_sibs = alloc_siblings(cs.clone(), ins.map(|i| &i.new_path.siblings))?;
                 // low < nf < next (or next = 0: no greater value)
                 let ordered = &lt_var(&lv, nf)? & &(&ln.is_zero()? | &lt_var(nf, &ln)?);
-                ordered.conditional_enforce_equal(&Bit::TRUE, &active)?;
+                ordered.conditional_enforce_equal(&Bit::TRUE, &active_tx)?;
                 let low_leaf = hash_var(t_imt(), &[lv.clone(), ln.clone()])?;
                 merkle_root_var(&low_leaf, &low_bits, &low_sibs)?
-                    .conditional_enforce_equal(&cur_nf_root, &active)?;
+                    .conditional_enforce_equal(&cur_nf_root, &active_tx)?;
                 let low_after = hash_var(t_imt(), &[lv.clone(), (*nf).clone()])?;
                 let mid = merkle_root_var(&low_after, &low_bits, &low_sibs)?;
-                new_pos.conditional_enforce_equal(&cur_nf_size, &active)?;
+                new_pos.conditional_enforce_equal(&cur_nf_size, &active_tx)?;
                 merkle_root_var(&Var::zero(), &new_bits, &new_sibs)?
-                    .conditional_enforce_equal(&mid, &active)?;
+                    .conditional_enforce_equal(&mid, &active_tx)?;
                 let new_leaf = hash_var(t_imt(), &[(*nf).clone(), ln.clone()])?;
                 let next = merkle_root_var(&new_leaf, &new_bits, &new_sibs)?;
-                cur_nf_root = Var::conditionally_select(&active, &next, &cur_nf_root)?;
-                cur_nf_size = &cur_nf_size + &active_fr;
+                cur_nf_root = Var::conditionally_select(&active_tx, &next, &cur_nf_root)?;
+                cur_nf_size = &cur_nf_size + &active_tx_fr;
             }
 
             // ---- output leaves, appended in order ----
@@ -239,12 +250,18 @@ impl ConstraintSynthesizer<Fr> for BatchCircuit {
                     DEPTH,
                 )?;
                 let sibs = alloc_siblings(cs.clone(), lp.map(|p| &p.siblings))?;
-                pos.conditional_enforce_equal(&cur_size, &active)?;
+                // a mint appends its one leaf (index 0) only
+                let (on, on_fr) = if j == 0 {
+                    (&active, &active_fr)
+                } else {
+                    (&active_tx, &active_tx_fr)
+                };
+                pos.conditional_enforce_equal(&cur_size, on)?;
                 merkle_root_var(&Var::zero(), &bits, &sibs)?
-                    .conditional_enforce_equal(&cur_root, &active)?;
+                    .conditional_enforce_equal(&cur_root, on)?;
                 let next = merkle_root_var(&leaf, &bits, &sibs)?;
-                cur_root = Var::conditionally_select(&active, &next, &cur_root)?;
-                cur_size = &cur_size + &active_fr;
+                cur_root = Var::conditionally_select(on, &next, &cur_root)?;
+                cur_size = &cur_size + on_fr;
             }
             cur_applied = &cur_applied + &active_fr;
         }

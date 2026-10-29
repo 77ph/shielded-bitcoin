@@ -98,6 +98,7 @@ impl Sim {
             ],
             h_body: f(9),
             h_aux: [Fr::from(0u64); N_OUT],
+            mint: false,
         };
         let anchor_siblings = self.roots.path_at(pos, self.roots.size()).unwrap().siblings;
         let nullifiers = [
@@ -123,6 +124,61 @@ impl Sim {
             anchor_siblings,
             nullifiers,
             leaves: leaves.try_into().unwrap(),
+        }
+    }
+
+    /// Apply a mint: one leaf, no anchor, no nullifiers.
+    fn mint_slot(&mut self, seed: u64) -> SlotWitness {
+        let f = |k: u64| hash(t_batch(), &[Fr::from(seed), Fr::from(k)]);
+        let statement = SlotStatement {
+            h_anchor: 0,
+            r_anchor: Fr::from(0u64),
+            nullifiers: [Fr::from(0u64); 2],
+            pk_eph: [JubjubAffine::default(); N_OUT],
+            ct: [
+                NoteCiphertext {
+                    c0: f(3),
+                    c1: f(4),
+                    tag: f(5),
+                },
+                NoteCiphertext {
+                    c0: Fr::from(0u64),
+                    c1: Fr::from(0u64),
+                    tag: Fr::from(0u64),
+                },
+            ],
+            h_body: f(9),
+            h_aux: [Fr::from(0u64); N_OUT],
+            mint: true,
+        };
+        let leaf = note_leaf_aux(
+            &salt(),
+            &statement.h_body,
+            0,
+            &statement.pk_eph[0],
+            &statement.ct[0],
+            &statement.h_aux[0],
+        );
+        let path = self.tree.append_path();
+        self.tree.append(leaf);
+        self.applied += 1;
+        let unused = MerklePath {
+            position: 0,
+            siblings: [Fr::from(0u64); sb_core::tree::DEPTH],
+        };
+        let unused_nf = NullifierInsert {
+            low: sb_core::imt::Leaf {
+                value: Fr::from(0u64),
+                next: Fr::from(0u64),
+            },
+            low_path: unused.clone(),
+            new_path: unused.clone(),
+        };
+        SlotWitness {
+            statement,
+            anchor_siblings: [Fr::from(0u64); sb_core::tree::DEPTH],
+            nullifiers: [unused_nf.clone(), unused_nf],
+            leaves: [path, unused],
         }
     }
 
@@ -242,6 +298,43 @@ fn a_block_of_two_proves_fragments_chain_and_tampering_fails() {
         d: batch_digest(&[None, None]),
     };
     assert!(satisfied(circuit(2, &st3, &w3)).0);
+
+    // a block with a mint and a transfer: the mint appends one leaf and
+    // touches neither the anchor nor the nullifier tree
+    let mut sim4 = Sim::new();
+    let m0 = sim4.opening();
+    let mint = sim4.mint_slot(5);
+    let tx = sim4.slot(ACT + 1, 6);
+    let ra4 = sim4.finish_block();
+    let m1 = sim4.opening();
+    assert_eq!(m1.size, m0.size + 3);
+    assert_eq!(m1.nf_size, m0.nf_size + 2);
+    let w4 = BatchWitness {
+        prev: m0,
+        slots: vec![Some(mint.clone()), Some(tx.clone())],
+        final_block: true,
+        root_append: Some(ra4),
+    };
+    let st4 = BatchStatement {
+        s_prev: m0.digest(),
+        s_next: m1.digest(),
+        d: batch_digest(&[Some(mint.statement), Some(tx.statement)]),
+    };
+    assert!(satisfied(circuit(2, &st4, &w4)).0);
+    // a mint that claims a second leaf or a nullifier is not a mint
+    let mut w = w4.clone();
+    w.slots[0].as_mut().unwrap().statement.mint = false;
+    let st = BatchStatement {
+        d: batch_digest(&[
+            Some(w.slots[0].as_ref().unwrap().statement),
+            Some(tx.statement),
+        ]),
+        ..st4
+    };
+    assert!(
+        !satisfied(circuit(2, &st, &w)).0,
+        "a mint presented as a transfer"
+    );
 
     // ---- tampering: each leaves the constraints unsatisfied ----
     // a double spend inside the batch: slot 2 reusing slot 1's nullifier

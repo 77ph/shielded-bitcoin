@@ -50,9 +50,13 @@ impl StateOpening {
     }
 }
 
-/// One accepted transfer as the batch sees it: the public inputs of its
+/// One accepted envelope as the batch sees it: the public inputs of its
 /// proof without the constants (`const_salt`, arity), plus the anchor
-/// height and the `h_aux` slots. 17 field elements.
+/// height, the `h_aux` slots and its kind. 18 field elements. A **mint**
+/// (the development boundary, `BOUNDARY.md`) has no anchor, no
+/// nullifiers and one output: its validity is the carrier's vault
+/// payment, which is enumeration-class trust (`REPLAY-PROOF.md` §3), and
+/// the circuit only appends its leaf.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct SlotStatement {
     pub h_anchor: u32,
@@ -62,9 +66,10 @@ pub struct SlotStatement {
     pub ct: [NoteCiphertext; N_OUT],
     pub h_body: Fr,
     pub h_aux: [Fr; N_OUT],
+    pub mint: bool,
 }
 
-pub const SLOT_ELEMENTS: usize = 1 + 1 + N_IN + N_OUT * 5 + 1 + N_OUT;
+pub const SLOT_ELEMENTS: usize = 1 + 1 + N_IN + N_OUT * 5 + 1 + N_OUT + 1;
 
 impl SlotStatement {
     pub fn to_elements(&self) -> [Fr; SLOT_ELEMENTS] {
@@ -79,6 +84,7 @@ impl SlotStatement {
         }
         v.push(self.h_body);
         v.extend_from_slice(&self.h_aux);
+        v.push(Fr::from(self.mint as u64));
         v.try_into().expect("SLOT_ELEMENTS")
     }
 }
@@ -192,9 +198,17 @@ mod tests {
             }; N_OUT],
             h_body: Fr::from(14u64),
             h_aux: [Fr::from(0u64); N_OUT],
+            mint: false,
         };
         assert_eq!(st.to_elements().len(), SLOT_ELEMENTS);
-        assert_eq!(SLOT_ELEMENTS, 17);
+        assert_eq!(SLOT_ELEMENTS, 18);
+        let mut m = st;
+        m.mint = true;
+        assert_ne!(
+            batch_digest(&[Some(m)]),
+            batch_digest(&[Some(st)]),
+            "the kind is committed"
+        );
         let a = batch_digest(&[Some(st), None]);
         let b = batch_digest(&[None, Some(st)]);
         assert_ne!(a, b, "the order is committed");
