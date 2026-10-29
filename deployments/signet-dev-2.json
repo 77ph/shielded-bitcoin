@@ -11,8 +11,18 @@
   },
   "window_w": 100,
   "k_min": 1,
+  "anchor_depth": 3,
   "boundary": {
     "vault_script_hex": "00141b895d83727b58c9f728d89122b122c1a4acdd63",
     "operator_address": "tsb147jfp85k5qvz5wejx4atqhxvkmwdcrha0qht92eua92zcjyaala4sdyp27cu23cvnymkgw3lhrf"
-  }
+  },
+  "batch": {
+    "n": 4,
+    "vk_sha256": "0db7bb6a5b817a41637d5a2d1d7378a11580dd0e5e34bee7071211ea0ad37d3b",
+    "setup": {
+      "kind": "insecure-seed",
+      "seed": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  },
+  "carrier": "op-return"
 }

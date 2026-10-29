@@ -21,6 +21,8 @@ pub struct Server {
     pub indexer: Indexer,
     pub store: Box<dyn StateStore>,
     pub chain: Box<dyn ChainSource>,
+    /// Proven blocks (`sb prove-batches`), served at `/batches/<height>`.
+    pub batches: Option<std::path::PathBuf>,
 }
 
 impl Server {
@@ -45,10 +47,30 @@ impl Server {
         if method != "GET" {
             return (404, json!({"error": "not found"}));
         }
+        if let Some(h) = path.strip_prefix("/batches/") {
+            return self.batch(h);
+        }
         match path.strip_prefix("/block/") {
             Some(rest) => self.block(rest),
             None if path == "/tip" => self.tip(),
             None => (404, json!({"error": "not found"})),
+        }
+    }
+
+    /// A proven block, as `sb prove-batches` wrote it.
+    fn batch(&self, which: &str) -> (u16, Value) {
+        let Ok(height) = which.parse::<u32>() else {
+            return (400, json!({"error": "height expected"}));
+        };
+        let Some(dir) = &self.batches else {
+            return (404, json!({"error": "no proven blocks"}));
+        };
+        match std::fs::read_to_string(dir.join(format!("{height}.json"))) {
+            Ok(text) => match serde_json::from_str::<Value>(&text) {
+                Ok(v) => (200, v),
+                Err(e) => (500, json!({"error": format!("proven block {height}: {e}")})),
+            },
+            Err(_) => (404, json!({"error": "not proven"})),
         }
     }
 

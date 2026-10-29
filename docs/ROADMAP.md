@@ -41,6 +41,7 @@ in `RUNS.md`.
 | Witness-carried envelopes, a separate deployment profile | §22.1, §A.4 | `WITNESS-CARRIER.md`, commit-and-reveal publisher through all three fee models, indexer rule, measured on the private signet, reviewed (`REVIEW-WITNESS-CARRIER.md`) |
 | Fee-unlock vault as a development scaffold | §20.5, §22.3 | `FEE-VAULT.md`, `sb fee-vault`, deterministic release rule and ledger, backing guard, reclaim, run on the private signet with both endings and every refusal, reviewed (`REVIEW-FEE-VAULT-IMPL.md`) |
 | Publication privacy and wallet policy | §22.3, §20.6 | `PUBLICATION.md`: a SOCKS5 proxy for every outbound connection, a separate publication route, delayed broadcast within the window, a shared anchor depth per deployment, random change placement, the residual surfaces named; tested against an in-process proxy, run on signet through an SSH forward, reviewed (`REVIEW-PUBLICATION-IMPL.md`) |
+| Succinct replay proofs | §22.2 | `REPLAY-PROOF.md`: the completeness result (enumeration cannot be proven short of every raw transaction), the batch circuit over an indexed nullifier tree and a root tree (≈ 217 000 constraints per slot, measured), batched verification, the recursion frontier measured on a two-chain (155 000 constraints per native level); `sb prove-batches` and the `proof:` light client, run on signet (245 blocks, 110 KB against 35 MB); design reviewed on paper, slices 1–2 firsthand |
 
 ## Next
 
@@ -50,6 +51,10 @@ numbers, that it cannot be implemented at present (or that nobody knows
 how). The intended output is an article in academic form, a
 continuation of the original devoted to its §22. The owner's
 post-quantum thread comes after that.
+
+To be chosen from "Later" below.
+
+## Completed directions, as planned
 
 ### 5. Succinct replay proofs (§22.2)
 
@@ -61,10 +66,9 @@ nothing a proof could be made against short of every raw transaction,
 so an indexer's enumeration stays trusted or full blocks are needed);
 a batch circuit over an indexed nullifier tree and a root tree with
 batched verification of the transfer proofs, measured; the recursion
-frontier (one native level on a two-chain, none beyond without a cycle
-or folding), with an experiment to put a number on it.
-
-## Completed directions, as planned
+frontier (one native level on a two-chain, measured; none beyond
+without a cycle or folding); the indexer's proven blocks and the light
+client that syncs from them, run on signet.
 
 ### 4. Publication privacy and wallet policy (§22.3)
 
@@ -165,7 +169,6 @@ behaviour side by side, recorded in `RUNS.md`.
   operator.
 * Proof systems with smaller proofs and without re-randomisation
   (Polymath, Pari; §22.1); a standard arity with padding (§22.1).
-* A succinct proof of replay for light clients (§22.2), open research.
 * Opt-in certified-recipient lineage (§22.4, §D).
 
 ### A thread of the owner's own

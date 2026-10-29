@@ -1,4 +1,4 @@
-# Succinct replay proofs (draft v0.3)
+# Succinct replay proofs (draft v0.4)
 
 The paper's §22.2 asks whether a light client can obtain a **succinct
 proof that `R[h]` is the correct deterministic replay** of the accepted
@@ -17,11 +17,13 @@ replay proof is a statement *about* replay, produced by an indexer and
 checked by a client, and a client that does not want it replays as
 before.
 
-Status: draft; slices 1, 2 and 4 of §5 implemented and measured (the
-commitments kept by replay, the batch circuit `T`, the two-chain
-experiment); slice 3 (the protocol) next. Reviewed on paper by the
-project's security reviewer (v0.1, slice 1 firsthand); v0.2 folded in
-the rigour notes, v0.3 replaces estimates by measurements.
+Status: draft; slices 1–4 of §5 implemented (the commitments kept by
+replay, the batch circuit `T`, the indexer's `prove-batches` and the
+`proof:` light client, the two-chain experiment), tested end to end and
+run on signet (§6). Reviewed by the project's
+security reviewer (v0.1 on paper, slices 1 and 2 firsthand); v0.2
+folded in the rigour notes, v0.3 replaced estimates by measurements,
+v0.4 describes the protocol as built.
 
 ## 1. Replay as a relation
 
@@ -273,20 +275,45 @@ constant size (`T`) plus the layer of §4.3; the cost is linear in the
 number of batches and independent of the transfers inside a batch up
 to that layer.
 
-### 4.5 The protocol
+### 4.5 The protocol, as built
 
-The indexer (`sb serve`) closes batches of `B` blocks and publishes, per
-batch: the two state digests, the `n` statements, the `T` proof, and
-the transfer proofs (for batched verification) or their aggregate. A
-client with `--chain proof:<url>` holds the activation state, fetches
-batches in order, verifies `T` and the transfer proofs, recomputes `D`
-from the statements, and advances its digests. It keeps **no nullifier
-set and no root history** (their roots are in the digest) and rebuilds
-only what a wallet needs from the statements: the note tree's leaves
-for its own notes' paths (the leaves are a function of the statements).
-What it downloads per batch is `n × 576` bytes of statements plus the
-proofs, instead of `n × 700` bytes of envelopes plus partial Merkle
-trees plus the full nullifier set over time.
+A batch is one block, in fragments of `n` slots when the block has more
+accepted envelopes than `n` (`applied` chains the fragments). The
+indexer (`sb prove-batches`) rebuilds the trees as they were before each
+replayed block from its history, builds the fragments, proves them and
+writes, per block, a **proven block**: the block hash, the opening of
+the state after it, and per fragment the three public inputs, the `T`
+proof, the opening it ends in and the slots: each a statement (18
+elements), its kind, the carrier txid, the envelope's own proof (none for
+a mint) and `ct_out` (for the sender's recovery, not bound by the
+batch). A block without carriers is written without a proof. `sb serve`
+publishes them at `GET /batches/<height>`.
+
+A client with `--chain proof:<url>` starts from the activation state and
+takes blocks in order. For a proven block it checks that the first
+fragment starts from its own digest, verifies every `T` proof, checks
+each fragment's opening against the proof's `s_next`, recomputes `D`
+from the statements, batch-verifies the transfer proofs under the
+transfer key and the swap proofs under the swap key (§4.3, option 2),
+and only then applies the statements: the leaves into its note tree,
+events for its wallet, the nullifiers into a plain set for the wallet's
+bookkeeping, and the nullifier commitment's root and size from the
+proven opening. It then appends the block's root to its root tree and
+requires the resulting opening to be the one the proofs end in. For an
+**empty** block it advances the same way by itself and requires the
+indexer's claimed opening to agree. A reorganisation shows as the
+indexer's final digest for the client's last block differing from the
+client's own; the client rolls back block by block until they agree.
+
+So the client keeps the note tree (the wallet needs paths) and the root
+tree (it needs `H` to step over empty blocks: an append-only tree, 32
+bytes per block) and **never keeps or checks the nullifier tree**, the
+one structure whose cost grows with every transfer and whose
+non-membership checks are what `T` proves. It downloads `18 × 32`
+bytes of statement plus 192 bytes of proof per envelope and one `T`
+proof per fragment, instead of blocks, carriers and partial Merkle
+trees; what a wallet gets from its data is the same as from a full
+replay, with no envelope bytes kept.
 
 ### 4.6 What stays open or trusted
 
@@ -334,11 +361,25 @@ trees plus the full nullifier set over time.
 * **Two-chain** (`experiments/twochain`): 154 649 BW6-761 constraints to
   verify one BLS12-377 Groth16 proof with 17 public inputs in-circuit
   (75 003 for the verifier gadget), satisfied.
-* Proving time and key size of `T`, bytes per batch and client
-  verification time: with slice 3.
+* **End to end** (`crates/sb-cli/tests/proof_e2e.rs`): an indexer
+  proves a history of a mint and two transfers to the light client's
+  wallet (and the empty blocks between), the client syncs from the
+  proofs alone and sees the balances, spends from its own tree through a
+  separate publication route, and syncs the resulting block; a proven
+  block with a slot's kind changed, or declared empty, is refused.
+* **Signet** (`RUNS.md`, 29 October 2026, deployment `signet-dev-2`,
+  245 blocks, 4 envelopes, batch size 4): proving 31–54 s per fragment
+  on a laptop after a 36-second setup, 4.6 GB peak; the 245 proven
+  blocks weigh 110 KB; a light client synced them in 24 s with the same
+  balances as the full indexer, against 35.2 MB of full blocks for the
+  same heights.
 
 ## 7. Changelog
 
+* **v0.4** — the protocol as built (§4.5): one block per batch in
+  fragments, proven blocks with their openings, the client's checks in
+  order, what it keeps (note tree, root tree) and does not (nullifier
+  tree), empty blocks and reorganisations; the end-to-end test in §6.
 * **v0.3** — measurements replace estimates: the per-slot cost of `T`
   and its shape (17-element statements, the all-zero skip slot, the
   size and `applied` fields of the digest, fragments); the two-chain

@@ -52,9 +52,15 @@ pub struct ReplayState {
     /// The root history as a commitment: leaf `i` is the root of the
     /// `i`-th replayed block. Derived from `roots`.
     pub root_tree: NoteTree,
+    /// `Some` for a light client's state (`crate::proof`): it keeps no
+    /// nullifier tree, only what the proofs it verified say about it.
+    pub light: Option<LightView>,
 }
 
 /// Serialisable event record; outputs are re-derived from `raw` on load.
+/// A light client's event (`crate::proof`) has no envelope bytes: `raw`
+/// is empty and the statement fields below carry what replay would have
+/// derived from it.
 #[derive(Serialize, Deserialize)]
 struct EventRecord {
     height: u32,
@@ -70,6 +76,42 @@ struct EventRecord {
     leaves: Vec<Fr>,
     #[serde(default, with = "hexbytes::opt_bytes")]
     memo: Option<Vec<u8>>,
+    /// `1` transfer, `2` mint, `3` swap; only with an empty `raw`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    kind: Option<u8>,
+    #[serde(
+        default,
+        with = "hexbytes::fr_vec",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    nullifiers: Vec<Fr>,
+    /// `(pk_eph, ct_note)` as hex, per output.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    outputs: Vec<(String, String)>,
+    #[serde(
+        default,
+        with = "hexbytes::fr_vec",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    h_aux: Vec<Fr>,
+    #[serde(
+        default,
+        with = "hexbytes::opt_bytes",
+        skip_serializing_if = "Option::is_none"
+    )]
+    ct_out: Option<Vec<u8>>,
+}
+
+/// What a light client knows of the nullifier commitment it does not keep
+/// (`docs/REPLAY-PROOF.md` §4.5): the root and size the last verified
+/// batch left, and their history per block for rollbacks.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LightView {
+    #[serde(with = "hexbytes::fr")]
+    pub nf_root: Fr,
+    pub nf_size: u64,
+    /// `(height, nf_root, nf_size)` after each verified block.
+    pub history: Vec<(u32, String, u64)>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -83,6 +125,8 @@ struct StateFile {
     blocks: Vec<BlockCheckpoint>,
     events: Vec<EventRecord>,
     rejections: Vec<Rejection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    light: Option<LightView>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -108,6 +152,7 @@ impl Default for ReplayState {
             rejections: Vec::new(),
             nullifier_tree: IndexedMerkleTree::new(),
             root_tree: NoteTree::from_leaves(&[EMPTY_ROOTS[DEPTH]]),
+            light: None,
         }
     }
 }
@@ -116,13 +161,15 @@ impl ReplayState {
     /// Rebuild the two commitments from the replayed history (after a
     /// load or a rollback; both are pure functions of it).
     pub fn rebuild_commitments(&mut self) {
-        let nfs: Vec<Fr> = self
-            .events
-            .iter()
-            .flat_map(|e| e.nullifiers.iter().copied())
-            .collect();
-        self.nullifier_tree =
-            IndexedMerkleTree::from_values(&nfs).expect("replay accepts no duplicate nullifier");
+        if self.light.is_none() {
+            let nfs: Vec<Fr> = self
+                .events
+                .iter()
+                .flat_map(|e| e.nullifiers.iter().copied())
+                .collect();
+            self.nullifier_tree = IndexedMerkleTree::from_values(&nfs)
+                .expect("replay accepts no duplicate nullifier");
+        }
         // leaf 0 is the root before activation (replay's `root_at` for any
         // earlier height), leaf i the root of the i-th replayed block
         let mut roots = vec![EMPTY_ROOTS[DEPTH]];
@@ -151,11 +198,15 @@ impl ReplayState {
     /// between blocks: `height` is the next block to replay, `applied` 0.
     /// `activation` is the first replayed height.
     pub fn opening(&self, activation: u32) -> StateOpening {
+        let (nf_root, nf_size) = match &self.light {
+            Some(l) => (l.nf_root, l.nf_size),
+            None => (self.nullifier_tree.root(), self.nullifier_tree.size()),
+        };
         StateOpening {
             root: self.tree.root(),
             size: self.tree.size(),
-            nf_root: self.nullifier_tree.root(),
-            nf_size: self.nullifier_tree.size(),
+            nf_root,
+            nf_size,
             h_root: self.root_tree.root(),
             height: self.last_height().map_or(activation, |h| h + 1),
             applied: 0,
@@ -221,6 +272,22 @@ impl ReplayState {
             self.rejections.truncate(cp.rejections_before);
             self.roots.remove(&cp.height);
         }
+        if let Some(l) = &mut self.light {
+            l.history.retain(|(h, _, _)| *h <= height);
+            match l.history.last() {
+                Some((_, root, size)) => {
+                    l.nf_root = hex::decode(root)
+                        .ok()
+                        .and_then(|b| sb_primitives::encoding::fr_from_bytes(&b).ok())
+                        .unwrap_or_else(|| IndexedMerkleTree::new().root());
+                    l.nf_size = *size;
+                }
+                None => {
+                    l.nf_root = IndexedMerkleTree::new().root();
+                    l.nf_size = 1;
+                }
+            }
+        }
         self.rebuild_commitments();
     }
 
@@ -246,6 +313,39 @@ impl ReplayState {
                     height: e.height,
                     tx_index: e.tx_index,
                     txid: e.txid,
+                    kind: e.raw.is_empty().then_some(match e.kind {
+                        EventKind::Transfer => 1,
+                        EventKind::Mint => 2,
+                        EventKind::Swap => 3,
+                    }),
+                    nullifiers: if e.raw.is_empty() {
+                        e.nullifiers.clone()
+                    } else {
+                        vec![]
+                    },
+                    outputs: if e.raw.is_empty() {
+                        e.outputs
+                            .iter()
+                            .map(|(p, c)| {
+                                (
+                                    hex::encode(sb_primitives::encoding::point_to_bytes(p)),
+                                    hex::encode(c.to_bytes()),
+                                )
+                            })
+                            .collect()
+                    } else {
+                        vec![]
+                    },
+                    h_aux: if e.raw.is_empty() {
+                        e.h_aux.clone()
+                    } else {
+                        vec![]
+                    },
+                    ct_out: if e.raw.is_empty() {
+                        e.ct_out.map(|c| c.to_vec())
+                    } else {
+                        None
+                    },
                     raw: e.raw.clone(),
                     h_body: e.h_body,
                     first_position: e.first_position,
@@ -254,6 +354,7 @@ impl ReplayState {
                 })
                 .collect(),
             rejections: self.rejections.clone(),
+            light: self.light.clone(),
         };
         serde_json::to_string(&f).expect("serializable")
     }
@@ -277,6 +378,10 @@ impl ReplayState {
         }
         let mut events = Vec::with_capacity(f.events.len());
         for e in f.events {
+            if e.raw.is_empty() {
+                events.push(statement_event(e)?);
+                continue;
+            }
             let env = parse_envelope(&e.raw).map_err(|e| StateError::Corrupt(e.to_string()))?;
             let mut ev = match env {
                 Envelope::Transfer(t) => AcceptedEvent::from_transfer(
@@ -333,6 +438,7 @@ impl ReplayState {
             rejections: f.rejections,
             nullifier_tree: IndexedMerkleTree::new(),
             root_tree: NoteTree::new(),
+            light: f.light,
         };
         state.rebuild_commitments();
         Ok(state)
@@ -360,4 +466,48 @@ impl PartialEq for ReplayState {
             && self.events == other.events
             && self.rejections == other.rejections
     }
+}
+
+/// An event stored without its envelope (a light client's).
+fn statement_event(e: EventRecord) -> Result<AcceptedEvent, StateError> {
+    let kind = match e.kind {
+        Some(1) => EventKind::Transfer,
+        Some(2) => EventKind::Mint,
+        Some(3) => EventKind::Swap,
+        _ => return Err(StateError::Corrupt("statement event without a kind".into())),
+    };
+    let mut outputs = Vec::with_capacity(e.outputs.len());
+    for (p, c) in &e.outputs {
+        let p = hex::decode(p)
+            .ok()
+            .and_then(|b| sb_primitives::encoding::point_from_bytes(&b).ok())
+            .ok_or_else(|| StateError::Corrupt("statement event output key".into()))?;
+        let c = hex::decode(c)
+            .ok()
+            .and_then(|b| sb_core::note::NoteCiphertext::from_bytes(&b).ok())
+            .ok_or_else(|| StateError::Corrupt("statement event ciphertext".into()))?;
+        outputs.push((p, c));
+    }
+    let ct_out = match e.ct_out {
+        Some(v) => Some(
+            v.try_into()
+                .map_err(|_| StateError::Corrupt("statement event ct_out".into()))?,
+        ),
+        None => None,
+    };
+    Ok(AcceptedEvent {
+        kind,
+        height: e.height,
+        tx_index: e.tx_index,
+        txid: e.txid,
+        raw: Vec::new(),
+        h_body: e.h_body,
+        nullifiers: e.nullifiers,
+        outputs,
+        ct_out,
+        first_position: e.first_position,
+        leaves: e.leaves,
+        h_aux: e.h_aux,
+        memo: e.memo,
+    })
 }
