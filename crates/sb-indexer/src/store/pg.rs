@@ -186,14 +186,18 @@ impl StateStore for PgStore {
                 reason: row.get(3),
             });
         }
-        Ok(ReplayState {
+        let mut state = ReplayState {
             tree: NoteTree::from_leaves(&leaves),
             nullifiers,
             roots,
             blocks,
             events,
             rejections,
-        })
+            nullifier_tree: Default::default(),
+            root_tree: Default::default(),
+        };
+        state.rebuild_commitments();
+        Ok(state)
     }
 
     fn commit_block(&mut self, state: &ReplayState, index: usize) -> Result<(), StoreError> {

@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use sb_core::envelope::{Envelope, parse_envelope};
 use sb_core::event::{AcceptedEvent, EventKind};
+use sb_core::imt::IndexedMerkleTree;
 use sb_core::tree::{DEPTH, EMPTY_ROOTS, NoteTree};
 use sb_primitives::Fr;
 
@@ -43,6 +44,13 @@ pub struct ReplayState {
     pub blocks: Vec<BlockCheckpoint>,
     pub events: Vec<AcceptedEvent>,
     pub rejections: Vec<Rejection>,
+    /// The nullifier set as a commitment (`docs/REPLAY-PROOF.md` §4.1):
+    /// the same set as `nullifiers`, in acceptance order. Derived from
+    /// `events`; rebuilt on load and after a rollback.
+    pub nullifier_tree: IndexedMerkleTree,
+    /// The root history as a commitment: leaf `i` is the root of the
+    /// `i`-th replayed block. Derived from `roots`.
+    pub root_tree: NoteTree,
 }
 
 /// Serialisable event record; outputs are re-derived from `raw` on load.
@@ -87,6 +95,51 @@ pub enum StateError {
 }
 
 impl ReplayState {
+    /// Rebuild the two commitments from the replayed history (after a
+    /// load or a rollback; both are pure functions of it).
+    pub fn rebuild_commitments(&mut self) {
+        let nfs: Vec<Fr> = self
+            .events
+            .iter()
+            .flat_map(|e| e.nullifiers.iter().copied())
+            .collect();
+        self.nullifier_tree =
+            IndexedMerkleTree::from_values(&nfs).expect("replay accepts no duplicate nullifier");
+        let roots: Vec<Fr> = self.roots.values().copied().collect();
+        self.root_tree = NoteTree::from_leaves(&roots);
+    }
+
+    /// Do the commitments describe exactly the sets and history replay
+    /// keeps? (A test oracle; production code keeps them in step.)
+    pub fn check_commitments(&self) -> bool {
+        self.nullifier_tree.len() == self.nullifiers.len()
+            && self
+                .nullifiers
+                .iter()
+                .all(|nf| self.nullifier_tree.contains(nf))
+            && self.root_tree.size() == self.roots.len() as u64
+            && self
+                .roots
+                .values()
+                .zip(self.root_tree.leaves())
+                .all(|(a, b)| a == b)
+    }
+
+    /// `PH(T_STATE, R, N, H, h)`: the state digest a replay proof
+    /// transitions between (`docs/REPLAY-PROOF.md` §4.1); `h` is the last
+    /// replayed height, `0` before the first block.
+    pub fn digest(&self) -> Fr {
+        sb_primitives::poseidon::hash(
+            sb_primitives::tags::t_state(),
+            &[
+                self.tree.root(),
+                self.nullifier_tree.root(),
+                self.root_tree.root(),
+                Fr::from(self.last_height().unwrap_or(0)),
+            ],
+        )
+    }
+
     pub fn new() -> Self {
         Self::default()
     }
@@ -141,6 +194,7 @@ impl ReplayState {
             self.rejections.truncate(cp.rejections_before);
             self.roots.remove(&cp.height);
         }
+        self.rebuild_commitments();
     }
 
     pub fn to_json(&self) -> String {
@@ -243,14 +297,18 @@ impl ReplayState {
             ));
             events.push(ev);
         }
-        Ok(ReplayState {
+        let mut state = ReplayState {
             tree: NoteTree::from_leaves(&f.leaves),
             nullifiers: f.nullifiers.into_iter().collect(),
             roots,
             blocks: f.blocks,
             events,
             rejections: f.rejections,
-        })
+            nullifier_tree: IndexedMerkleTree::new(),
+            root_tree: NoteTree::new(),
+        };
+        state.rebuild_commitments();
+        Ok(state)
     }
 
     pub fn save(&self, path: &Path) -> Result<(), StateError> {

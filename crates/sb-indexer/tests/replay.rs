@@ -166,6 +166,14 @@ fn accept_spend_reject_and_reorg() {
             value: 0,
         }],
     );
+    // a zero nullifier is the nullifier tree's sentinel and is refused
+    // before the proof is looked at (REPLAY-PROOF.md §4.1)
+    let mut zero = t2.clone();
+    zero.body.nullifiers[0] = sb_primitives::Fr::from(0u64);
+    assert!(matches!(
+        idx.check_transfer(&zero.to_bytes(), ACTIVATION + 1),
+        Err(sb_indexer::RejectReason::ZeroNullifier)
+    ));
     let mut garbage = t2.to_bytes();
     garbage.truncate(100);
     chain.push_block(vec![carrier_tx(&garbage, 2), carrier_tx(&t2.to_bytes(), 3)]);
@@ -186,6 +194,13 @@ fn accept_spend_reject_and_reorg() {
     assert_eq!(bob_notes.len(), 1);
     // the builder places the outputs in a random order (PUBLICATION.md §3.2)
     assert_eq!(bob_notes[0].pos, 2 + bob_notes[0].output_index);
+    // the commitments of REPLAY-PROOF.md §4.1 follow the sets, and survive
+    // a JSON round trip
+    assert!(idx.state.check_commitments());
+    let digest = idx.state.digest();
+    let again = sb_indexer::state::ReplayState::from_json(&idx.state.to_json()).unwrap();
+    assert!(again.check_commitments());
+    assert_eq!(again.digest(), digest);
 
     // Block 1002: t2 republished (double spend) plus a fresh anchor-999 transfer
     // (still inside the window W = 5).
@@ -246,11 +261,15 @@ fn accept_spend_reject_and_reorg() {
     assert_eq!(idx.state.nullifiers.len(), 4);
     assert_eq!(idx.state.last_height(), Some(ACTIVATION + 2));
     assert_ne!(idx.state, snapshot);
+    // the commitments were rebuilt by the rollback and differ from before it
+    assert!(idx.state.check_commitments());
+    assert_ne!(idx.state.digest(), snapshot.digest());
 
     // Determinism: a fresh indexer over the same chain derives the same state.
     let mut fresh = w.indexer();
     fresh.sync(&chain).unwrap();
     assert_eq!(fresh.state, idx.state);
+    assert_eq!(fresh.state.digest(), idx.state.digest());
 
     // Persistence round trip.
     let json = idx.state.to_json();
