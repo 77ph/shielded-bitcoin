@@ -21,8 +21,9 @@ Status: draft. What is in the code: the fixed arity (§3.1, in the
 profile since v0.1), and, added with this document, random change
 placement (§3.2), `anchor_depth` in the deployment profile (§3.3), and
 the three network options of §2 (`--proxy`, `--publish-via`, `--delay`);
-tested and run on signet (§6). Reviewed on paper by the project's
-security reviewer (v0.1); v0.2 folds in the calibrations.
+tested and run on signet (§6). Reviewed by the project's security
+reviewer, on paper (v0.1, the calibrations folded into v0.2) and then the
+code firsthand: `docs/REVIEW-PUBLICATION-IMPL.md`.
 
 ## 1. What an observer sees, by vantage point
 
