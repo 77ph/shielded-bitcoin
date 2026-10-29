@@ -1,4 +1,4 @@
-# Succinct replay proofs (draft v0.4)
+# Succinct replay proofs (draft v0.5)
 
 The paper's §22.2 asks whether a light client can obtain a **succinct
 proof that `R[h]` is the correct deterministic replay** of the accepted
@@ -21,9 +21,11 @@ Status: draft; slices 1–4 of §5 implemented (the commitments kept by
 replay, the batch circuit `T`, the indexer's `prove-batches` and the
 `proof:` light client, the two-chain experiment), tested end to end and
 run on signet (§6). Reviewed by the project's
-security reviewer (v0.1 on paper, slices 1 and 2 firsthand); v0.2
-folded in the rigour notes, v0.3 replaced estimates by measurements,
-v0.4 describes the protocol as built.
+security reviewer: v0.1 on paper, slices 1–3 of the code firsthand
+(`docs/REVIEW-REPLAY-PROOF-IMPL.md`); v0.2 folded in the rigour notes,
+v0.3 replaced estimates by measurements, v0.4 described the protocol as
+built, v0.5 names the mint as the client's inflation surface (the
+review's F-3-1).
 
 ## 1. Replay as a relation
 
@@ -108,6 +110,18 @@ own filter commitment, which is an indexer again. So:
 > list, with omissions detectable only as a divergence between indexers
 > or against a full replay, exactly as the verified sync of `light:`
 > today (`README.md`, "Verified sync").
+
+Enumeration trust has a sharper edge than omission. A transfer the
+indexer **adds** is caught by the client, because its proof must verify
+and a valid transfer conserves value. A **mint** is not: a mint creates
+value, carries no proof, and is valid only by a fact of the Bitcoin
+layer (the carrier's payment to the vault, `BOUNDARY.md`) that a client
+holding headers cannot check. So the one place where an indexer can
+inflate the shielded supply towards a proof client is a mint it
+invents; a full replayer sees the carrier and refuses it, a proof client
+cannot. This is inherent to a light client of the development boundary,
+not to the proof: a PIPE-based peg (§20.4) would make the mint's
+backing a statement a proof could cover.
 
 This is the first result of this document, and it holds for every
 proof system: it is a property of what Bitcoin commits to.
@@ -318,7 +332,9 @@ replay, with no envelope bytes kept.
 ### 4.6 What stays open or trusted
 
 * Q2 (§3): the list's completeness, trusted to the indexer or checked
-  against full blocks.
+  against full blocks; and, sharper, the **backing of every mint** in
+  the list (§3), which only a full replayer verifies: a proof client
+  takes the creation of value on the indexer's word.
 * Batch boundaries and the batch size are the indexer's; a client that
   wants a proof for an arbitrary height needs the indexer to close a
   batch there.
@@ -361,6 +377,9 @@ replay, with no envelope bytes kept.
 * **Two-chain** (`experiments/twochain`): 154 649 BW6-761 constraints to
   verify one BLS12-377 Groth16 proof with 17 public inputs in-circuit
   (75 003 for the verifier gadget), satisfied.
+* **Not yet exercised end to end:** a reorganisation on the client's
+  side (the rollback through the digest history is implemented and
+  reviewed as logic only).
 * **End to end** (`crates/sb-cli/tests/proof_e2e.rs`): an indexer
   proves a history of a mint and two transfers to the light client's
   wallet (and the empty blocks between), the client syncs from the
@@ -376,6 +395,9 @@ replay, with no envelope bytes kept.
 
 ## 7. Changelog
 
+* **v0.5** — after the code review: the mint as the proof client's
+  inflation surface (§3, §4.6); the client-side reorganisation noted as
+  untested end to end (§6); the review linked.
 * **v0.4** — the protocol as built (§4.5): one block per batch in
   fragments, proven blocks with their openings, the client's checks in
   order, what it keeps (note tree, root tree) and does not (nullifier
