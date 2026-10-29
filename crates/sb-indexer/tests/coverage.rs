@@ -30,6 +30,7 @@ fn deployment(params: &TransferParams, name: &str) -> Deployment {
         setup: Setup::InsecureSeed { seed: [0u8; 32] },
         window_w: 10,
         anchor_depth: 3,
+        batch: None,
         k_min: 1,
         boundary: None,
         swap: None,

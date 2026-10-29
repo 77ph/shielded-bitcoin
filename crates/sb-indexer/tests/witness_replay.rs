@@ -30,6 +30,7 @@ fn witness_and_op_return_deployments_see_only_their_own_carriers() {
         setup: Setup::InsecureSeed { seed: [0u8; 32] },
         window_w: 100,
         anchor_depth: 3,
+        batch: None,
         k_min: 1,
         boundary: Some(DevBoundary {
             vault_script_hex: "51".into(),

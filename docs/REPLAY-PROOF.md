@@ -125,9 +125,13 @@ commitments with membership and non-membership proofs.
   need 255 hashes per path; the indexed tree needs 32 and fixes the set
   at 2³² nullifiers, which is a deployment parameter like the note
   tree's depth. Its root is `N_h`.
-* **Root history: an append-only Merkle tree of roots** by height
-  offset from activation (depth 32), root `H_h`; the anchor check is a
-  membership path.
+* **Root history: an append-only Merkle tree of roots** (depth 32),
+  root `H_h`: leaf 0 is the root before activation (the initial, empty
+  tree, which replay returns for any earlier anchor height), leaf `i`
+  the root of the `i`-th replayed block, so `R[h]` sits at
+  `h − activation + 1`. The anchor check is a membership path; an anchor
+  below activation is checked against the initial root as a constant,
+  with no path.
 * **Note tree:** as today (depth 32, `tree.rs`); appends are paths from
   the current frontier.
 * **State digest:** `PH(T_STATE, R, |R|, N, |N|, H, height, applied)`,

@@ -5,7 +5,10 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use sb_circuit::{SwapParams, SwapVerifier, TransferParams, TransferVerifier, vk_sha256};
+use sb_circuit::{
+    BatchParams, BatchVerifier, SwapParams, SwapVerifier, TransferParams, TransferVerifier,
+    vk_sha256,
+};
 use sb_core::address::Network;
 use sb_core::envelope::bytes_to_fr_253;
 use sb_primitives::Fr;
@@ -40,6 +43,16 @@ pub struct DevBoundary {
 
 /// The swap extension of a deployment (`docs/SWAP.md` §12): its own
 /// verifying-key hash and setup. Absent → kind `0x03` envelopes are rejected.
+/// The batch circuit of `docs/REPLAY-PROOF.md` §4.2 for this deployment.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BatchDeployment {
+    /// Slots per batch (`n`): the circuit's shape.
+    pub n: usize,
+    #[serde(with = "hexbytes")]
+    pub vk_sha256: [u8; 32],
+    pub setup: Setup,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SwapDeployment {
     #[serde(with = "hexbytes")]
@@ -82,6 +95,10 @@ pub struct Deployment {
     pub boundary: Option<DevBoundary>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub swap: Option<SwapDeployment>,
+    /// Replay proofs (`docs/REPLAY-PROOF.md`): the batch circuit's size and
+    /// setup, when the deployment's indexers prove their batches.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub batch: Option<BatchDeployment>,
     /// Where envelopes are published: the base profile's OP_RETURN output
     /// (default) or the witness carrier of `docs/WITNESS-CARRIER.md`. A
     /// different carrier is a different, non-interoperable deployment.
@@ -206,6 +223,67 @@ impl Deployment {
     }
 
     /// The swap extension's verifier, if the deployment has it.
+    /// The batch circuit's shape for this deployment.
+    pub fn batch_shape(&self) -> Option<sb_circuit::groth16::BatchShape> {
+        self.batch
+            .as_ref()
+            .map(|b| sb_circuit::groth16::BatchShape {
+                n: b.n,
+                activation: self.activation_height,
+                window_w: self.window_w,
+                k_min: self.k_min,
+                const_salt: self.const_salt_fr(),
+            })
+    }
+
+    /// Proving parameters of the batch circuit (indexers that prove).
+    pub fn batch_params(&self, base_dir: &Path) -> Result<Option<BatchParams>, DeploymentError> {
+        let (Some(b), Some(shape)) = (&self.batch, self.batch_shape()) else {
+            return Ok(None);
+        };
+        let params = match &b.setup {
+            Setup::InsecureSeed { seed } => BatchParams::insecure_setup(shape, seed)?,
+            Setup::Ceremony { pk_path, .. } => {
+                let pk_path = pk_path
+                    .as_ref()
+                    .ok_or_else(|| std::io::Error::other("no batch proving key in the profile"))?;
+                BatchParams::from_pk_bytes(shape, &std::fs::read(base_dir.join(pk_path))?)?
+            }
+        };
+        if vk_sha256(params.vk()) != b.vk_sha256 {
+            return Err(DeploymentError::VkMismatch {
+                expected: hex::encode(b.vk_sha256),
+                got: hex::encode(vk_sha256(params.vk())),
+            });
+        }
+        Ok(Some(params))
+    }
+
+    /// The batch circuit's verifier (clients).
+    pub fn batch_verifier(
+        &self,
+        base_dir: &Path,
+    ) -> Result<Option<BatchVerifier>, DeploymentError> {
+        let (Some(b), Some(shape)) = (&self.batch, self.batch_shape()) else {
+            return Ok(None);
+        };
+        let v = match &b.setup {
+            Setup::InsecureSeed { seed } => {
+                BatchVerifier::new(BatchParams::insecure_setup(shape, seed)?.vk().clone())
+            }
+            Setup::Ceremony { vk_path, .. } => {
+                BatchVerifier::from_vk_bytes(&std::fs::read(base_dir.join(vk_path))?)?
+            }
+        };
+        if vk_sha256(&v.vk) != b.vk_sha256 {
+            return Err(DeploymentError::VkMismatch {
+                expected: hex::encode(b.vk_sha256),
+                got: hex::encode(vk_sha256(&v.vk)),
+            });
+        }
+        Ok(Some(v))
+    }
+
     pub fn swap_verifier(&self, base_dir: &Path) -> Result<Option<SwapVerifier>, DeploymentError> {
         let Some(sw) = &self.swap else {
             return Ok(None);
@@ -240,6 +318,7 @@ mod tests {
             setup: Setup::InsecureSeed { seed: [1u8; 32] },
             window_w: 100,
             anchor_depth: 3,
+            batch: None,
             k_min: 1,
             boundary: None,
             swap: None,

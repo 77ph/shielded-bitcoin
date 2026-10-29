@@ -45,6 +45,7 @@ fn world() -> World {
         setup: Setup::InsecureSeed { seed: [0u8; 32] },
         window_w: 100,
         anchor_depth: 3,
+        batch: None,
         k_min: 1,
         boundary: Some(DevBoundary {
             vault_script_hex: "51".into(),

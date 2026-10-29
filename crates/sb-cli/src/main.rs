@@ -139,6 +139,9 @@ enum Cmd {
         /// Anchor depth every wallet of the deployment uses (docs/PUBLICATION.md §3.3).
         #[arg(long, default_value = "3")]
         anchor_depth: u32,
+        /// Enable replay proofs with an insecure batch-circuit setup of this many slots (docs/REPLAY-PROOF.md).
+        #[arg(long)]
+        batch_insecure: Option<usize>,
     },
     /// Multi-party setup of the Groth16 parameters (docs/CEREMONY.md).
     Ceremony {
@@ -1045,6 +1048,7 @@ fn main() -> Result<()> {
         carrier,
         window,
         anchor_depth,
+        batch_insecure,
     } = &cli.cmd
     {
         let base = cli
@@ -1144,6 +1148,7 @@ fn main() -> Result<()> {
             window_w: *window,
             k_min: 1,
             anchor_depth: *anchor_depth,
+            batch: None,
             boundary: vault_script.as_ref().map(|v| DevBoundary {
                 vault_script_hex: v.clone(),
                 operator_address: operator_address.clone(),
@@ -1153,6 +1158,34 @@ fn main() -> Result<()> {
                 CarrierArg::OpReturn => sb_indexer::carrier::CarrierMode::OpReturn,
                 CarrierArg::Witness => sb_indexer::carrier::CarrierMode::Witness,
             },
+        };
+        let d = match batch_insecure {
+            Some(n) => {
+                let seed: [u8; 32] = match setup_seed {
+                    Some(h) => hex::decode(h)?
+                        .try_into()
+                        .map_err(|_| anyhow!("seed must be 32 bytes"))?,
+                    None => [0u8; 32],
+                };
+                let shape = sb_circuit::groth16::BatchShape {
+                    n: *n,
+                    activation: d.activation_height,
+                    window_w: d.window_w,
+                    k_min: d.k_min,
+                    const_salt: d.const_salt_fr(),
+                };
+                eprintln!("running the insecure batch setup for {n} slots…");
+                let params = sb_circuit::BatchParams::insecure_setup(shape, &seed)?;
+                Deployment {
+                    batch: Some(sb_indexer::deployment::BatchDeployment {
+                        n: *n,
+                        vk_sha256: vk_sha256(params.vk()),
+                        setup: Setup::InsecureSeed { seed },
+                    }),
+                    ..d
+                }
+            }
+            None => d,
         };
         if let Some(p) = cli.profile.parent() {
             std::fs::create_dir_all(p)?;

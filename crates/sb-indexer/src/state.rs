@@ -36,7 +36,7 @@ pub struct BlockCheckpoint {
     pub nullifiers_added: Vec<Fr>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct ReplayState {
     pub tree: NoteTree,
     pub nullifiers: HashSet<Fr>,
@@ -95,6 +95,23 @@ pub enum StateError {
     Corrupt(String),
 }
 
+impl Default for ReplayState {
+    /// The state before activation: empty, with the root tree already
+    /// holding the initial root as its leaf 0 (`docs/REPLAY-PROOF.md` §4.1).
+    fn default() -> Self {
+        ReplayState {
+            tree: NoteTree::new(),
+            nullifiers: HashSet::new(),
+            roots: BTreeMap::new(),
+            blocks: Vec::new(),
+            events: Vec::new(),
+            rejections: Vec::new(),
+            nullifier_tree: IndexedMerkleTree::new(),
+            root_tree: NoteTree::from_leaves(&[EMPTY_ROOTS[DEPTH]]),
+        }
+    }
+}
+
 impl ReplayState {
     /// Rebuild the two commitments from the replayed history (after a
     /// load or a rollback; both are pure functions of it).
@@ -106,7 +123,10 @@ impl ReplayState {
             .collect();
         self.nullifier_tree =
             IndexedMerkleTree::from_values(&nfs).expect("replay accepts no duplicate nullifier");
-        let roots: Vec<Fr> = self.roots.values().copied().collect();
+        // leaf 0 is the root before activation (replay's `root_at` for any
+        // earlier height), leaf i the root of the i-th replayed block
+        let mut roots = vec![EMPTY_ROOTS[DEPTH]];
+        roots.extend(self.roots.values().copied());
         self.root_tree = NoteTree::from_leaves(&roots);
     }
 
@@ -118,11 +138,12 @@ impl ReplayState {
                 .nullifiers
                 .iter()
                 .all(|nf| self.nullifier_tree.contains(nf))
-            && self.root_tree.size() == self.roots.len() as u64
+            && self.root_tree.size() == self.roots.len() as u64 + 1
+            && self.root_tree.leaves()[0] == EMPTY_ROOTS[DEPTH]
             && self
                 .roots
                 .values()
-                .zip(self.root_tree.leaves())
+                .zip(&self.root_tree.leaves()[1..])
                 .all(|(a, b)| a == b)
     }
 

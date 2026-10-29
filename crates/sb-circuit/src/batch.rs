@@ -16,7 +16,7 @@ use ark_r1cs_std::select::CondSelectGadget;
 use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
 
 use sb_core::batch::{BatchStatement, BatchWitness, SLOT_ELEMENTS, StateOpening};
-use sb_core::tree::DEPTH;
+use sb_core::tree::{DEPTH, EMPTY_ROOTS};
 use sb_primitives::Fr;
 use sb_primitives::poseidon::gadget::hash_var;
 use sb_primitives::tags::{t_batch, t_imt, t_state};
@@ -43,6 +43,16 @@ pub struct BatchCircuit {
 
 fn missing<T>(v: Option<T>) -> Result<T, SynthesisError> {
     v.ok_or(SynthesisError::AssignmentMissing)
+}
+
+impl BatchCircuit {
+    /// Synthesise without proving: is the witness satisfying, and how many
+    /// constraints are there? (For tests and for a prover's sanity check.)
+    pub fn check(self) -> Result<(bool, usize), SynthesisError> {
+        let cs = ark_relations::r1cs::ConstraintSystem::new_ref();
+        self.generate_constraints(cs.clone())?;
+        Ok((cs.is_satisfied()?, cs.num_constraints()))
+    }
 }
 
 /// `a < b` as integers, for any two field elements (both are decomposed
@@ -170,21 +180,34 @@ impl ConstraintSynthesizer<Fr> for BatchCircuit {
                 32,
             )?;
             h_anchor.enforce_equal(&elems[0])?;
+            // an anchor below activation opens to the initial (empty) root by
+            // definition (replay's `root_at`); one at or above it is leaf
+            // `h_anchor − activation + 1` of the root tree, whose leaf 0 is
+            // that initial root
+            let pre = Bit::new_witness(cs.clone(), || {
+                Ok(sw.is_some_and(|s| !s.statement.mint && s.statement.h_anchor < self.activation))
+            })?;
+            let pre_anchor = &active_tx & &pre;
+            let in_tree = &active_tx & &!pre;
+            enforce_geq_u32_if(&(&activation - Var::one()), &h_anchor, &pre_anchor)?;
+            r_anchor.conditional_enforce_equal(&Var::Constant(EMPTY_ROOTS[DEPTH]), &pre_anchor)?;
+            enforce_geq_u32_if(&h_anchor, &activation, &in_tree)?;
             let (anchor_pos, anchor_bits) = alloc_bounded(
                 cs.clone(),
                 Some(sw.map_or(Fr::zero(), |s| {
-                    if s.statement.mint {
+                    if s.statement.mint || s.statement.h_anchor < self.activation {
                         Fr::zero()
                     } else {
-                        Fr::from(s.statement.h_anchor.wrapping_sub(self.activation))
+                        Fr::from(s.statement.h_anchor - self.activation + 1)
                     }
                 })),
                 DEPTH,
             )?;
-            anchor_pos.conditional_enforce_equal(&(&h_anchor - &activation), &active_tx)?;
+            anchor_pos
+                .conditional_enforce_equal(&(&h_anchor - &activation + Var::one()), &in_tree)?;
             let anchor_sibs = alloc_siblings(cs.clone(), sw.map(|s| &s.anchor_siblings))?;
             merkle_root_var(r_anchor, &anchor_bits, &anchor_sibs)?
-                .conditional_enforce_equal(&prev.h_root, &active_tx)?;
+                .conditional_enforce_equal(&prev.h_root, &in_tree)?;
             let w_fr = Var::Constant(Fr::from(self.window_w));
             let k_fr = Var::Constant(Fr::from(self.k_min));
             enforce_geq_u32_if(&(&h_anchor + &w_fr), &prev.height, &active_tx)?;
@@ -275,7 +298,8 @@ impl ConstraintSynthesizer<Fr> for BatchCircuit {
             DEPTH,
         )?;
         let ra_sibs = alloc_siblings(cs.clone(), ra.map(|p| &p.siblings))?;
-        ra_pos.conditional_enforce_equal(&(&prev.height - &activation), &final_block)?;
+        ra_pos
+            .conditional_enforce_equal(&(&prev.height - &activation + Var::one()), &final_block)?;
         merkle_root_var(&Var::zero(), &ra_bits, &ra_sibs)?
             .conditional_enforce_equal(&prev.h_root, &final_block)?;
         let appended = merkle_root_var(&cur_root, &ra_bits, &ra_sibs)?;

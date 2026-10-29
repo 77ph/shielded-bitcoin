@@ -36,6 +36,7 @@ impl World {
             setup: Setup::InsecureSeed { seed: [0u8; 32] },
             window_w: 5,
             anchor_depth: 3,
+            batch: None,
             k_min: 1,
             boundary: None,
             swap: None,
@@ -270,6 +271,41 @@ fn accept_spend_reject_and_reorg() {
     fresh.sync(&chain).unwrap();
     assert_eq!(fresh.state, idx.state);
     assert_eq!(fresh.state.digest(ACTIVATION), idx.state.digest(ACTIVATION));
+
+    // Replay proofs (REPLAY-PROOF.md §4.5): every replayed block, including
+    // the mint's and the empty ones, builds fragments that satisfy the batch
+    // circuit and chain through the state digests to the replayed state
+    {
+        let salt = w.deployment.const_salt_fr();
+        let mut expected_prev = sb_indexer::state::ReplayState::default()
+            .opening(ACTIVATION)
+            .digest();
+        for b in &idx.state.blocks {
+            let frags =
+                sb_indexer::batch::build_block(&idx.state, b.height, 2, ACTIVATION, &salt).unwrap();
+            for f in &frags {
+                assert_eq!(f.statement.s_prev, expected_prev, "the chain of digests");
+                let (ok, _) = sb_circuit::BatchCircuit {
+                    n: 2,
+                    activation: ACTIVATION,
+                    window_w: w.deployment.window_w,
+                    k_min: w.deployment.k_min,
+                    const_salt: salt,
+                    statement: Some(f.statement),
+                    witness: Some(f.witness.clone()),
+                }
+                .check()
+                .unwrap();
+                assert!(ok, "block {} fragment", b.height);
+                expected_prev = f.statement.s_next;
+            }
+        }
+        assert_eq!(
+            expected_prev,
+            idx.state.digest(ACTIVATION),
+            "ends at the replayed state"
+        );
+    }
 
     // Persistence round trip.
     let json = idx.state.to_json();
