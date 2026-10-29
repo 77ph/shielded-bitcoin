@@ -9,6 +9,8 @@ members = [
     "crates/sb-ceremony",
     "crates/sb-cli",
 ]
+# standalone measurements with their own dependencies (experiments/README.md)
+exclude = ["experiments/twochain"]
 
 [workspace.package]
 version = "0.1.0"

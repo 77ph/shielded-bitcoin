@@ -7,6 +7,7 @@ use std::path::Path;
 use bitcoin::BlockHash;
 use serde::{Deserialize, Serialize};
 
+use sb_core::batch::StateOpening;
 use sb_core::envelope::{Envelope, parse_envelope};
 use sb_core::event::{AcceptedEvent, EventKind};
 use sb_core::imt::IndexedMerkleTree;
@@ -125,19 +126,24 @@ impl ReplayState {
                 .all(|(a, b)| a == b)
     }
 
-    /// `PH(T_STATE, R, N, H, h)`: the state digest a replay proof
-    /// transitions between (`docs/REPLAY-PROOF.md` §4.1); `h` is the last
-    /// replayed height, `0` before the first block.
-    pub fn digest(&self) -> Fr {
-        sb_primitives::poseidon::hash(
-            sb_primitives::tags::t_state(),
-            &[
-                self.tree.root(),
-                self.nullifier_tree.root(),
-                self.root_tree.root(),
-                Fr::from(self.last_height().unwrap_or(0)),
-            ],
-        )
+    /// The state as a batch proof opens it (`docs/REPLAY-PROOF.md` §4.1),
+    /// between blocks: `height` is the next block to replay, `applied` 0.
+    /// `activation` is the first replayed height.
+    pub fn opening(&self, activation: u32) -> StateOpening {
+        StateOpening {
+            root: self.tree.root(),
+            size: self.tree.size(),
+            nf_root: self.nullifier_tree.root(),
+            nf_size: self.nullifier_tree.size(),
+            h_root: self.root_tree.root(),
+            height: self.last_height().map_or(activation, |h| h + 1),
+            applied: 0,
+        }
+    }
+
+    /// The state digest a replay proof transitions between.
+    pub fn digest(&self, activation: u32) -> Fr {
+        self.opening(activation).digest()
     }
 
     pub fn new() -> Self {

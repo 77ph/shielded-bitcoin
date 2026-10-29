@@ -1,0 +1,18 @@
+[package]
+name = "twochain"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ark-bls12-377 = { version = "0.5", features = ["r1cs"] }
+ark-bw6-761 = "0.5"
+ark-groth16 = { version = "0.5", features = ["r1cs"] }
+ark-r1cs-std = "0.5"
+ark-relations = "0.5"
+ark-ff = "0.5"
+ark-ec = "0.5"
+ark-std = "0.5"
+ark-snark = "0.5"
+ark-crypto-primitives = { version = "0.5", default-features = false, features = ["snark", "r1cs"] }
+
+[workspace]

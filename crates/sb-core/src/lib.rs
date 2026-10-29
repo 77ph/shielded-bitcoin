@@ -2,6 +2,7 @@
 //! the note tree (paper §5, §6, §9, §12, §13, §A.3, §A.5).
 
 pub mod address;
+pub mod batch;
 pub mod envelope;
 pub mod event;
 pub mod feeauth;

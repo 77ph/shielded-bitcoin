@@ -229,10 +229,8 @@ impl IndexedMerkleTree {
         };
         let new_position = self.leaves.len();
         // the path of the still-empty slot, in the tree after the rewrite
-        let new_path = MerklePath {
-            position: new_position as u64,
-            siblings: self.empty_slot_siblings(new_position),
-        };
+        let new_path = self.tree.append_path();
+        debug_assert_eq!(new_path.position, new_position as u64);
         self.leaves.push(new_leaf);
         self.tree.append(new_leaf.hash());
         self.index.insert(key(&value), new_position);
@@ -245,14 +243,9 @@ impl IndexedMerkleTree {
         })
     }
 
-    /// Siblings of the (empty) slot `pos == size` in the current tree.
-    fn empty_slot_siblings(&self, pos: usize) -> [Fr; DEPTH] {
-        let mut probe = self.tree.clone();
-        probe.append(Fr::from(0u64));
-        probe
-            .path_at(pos as u64, probe.size())
-            .expect("just appended")
-            .siblings
+    /// Number of leaves, the sentinel included (the next free position).
+    pub fn size(&self) -> u64 {
+        self.leaves.len() as u64
     }
 
     pub fn leaves(&self) -> &[Leaf] {
