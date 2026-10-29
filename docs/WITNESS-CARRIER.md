@@ -16,6 +16,8 @@ This document only says where the bytes are and how they get there.
 
 Status: draft, implemented (`profile-new --carrier witness`, the
 publisher, the relayer, the indexer rule); §6 carries measured numbers.
+Reviewed firsthand by the project's security reviewer: findings and their
+status are in `docs/REVIEW-WITNESS-CARRIER.md`.
 
 ## 1. Transactions
 

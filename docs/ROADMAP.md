@@ -38,9 +38,34 @@ in `RUNS.md`.
 | Direction | Paper | State |
 |---|---|---|
 | Atomic swap between a shielded note and transparent Bitcoin through `h_aux` and a P2WSH HTLC | §22.5 | `SWAP.md`, extension circuit (SHA-256 in circuit), kind `0x03`, `sb swap` / `sb htlc`, both endings run on the private signet under Bitcoin Core, reviewed (`REVIEW-SWAP.md`) |
-| Witness-carried envelopes, a separate deployment profile | §22.1, §A.4 | `WITNESS-CARRIER.md`, commit-and-reveal publisher through all three fee models, indexer rule, measured on the private signet |
+| Witness-carried envelopes, a separate deployment profile | §22.1, §A.4 | `WITNESS-CARRIER.md`, commit-and-reveal publisher through all three fee models, indexer rule, measured on the private signet, reviewed (`REVIEW-WITNESS-CARRIER.md`) |
 
 ## Next
+
+### 3. Fee-unlock vault (§20.5, §22.3)
+
+The paper's intended fee model: the user proves authorization to a fee
+vault whose Bitcoin liquidity is reserved for that user's publication
+costs, the vault releases the Bitcoin that funds the carrier, and
+fee-paying capability is derived from metaprotocol state instead of the
+user's transparent wallet cluster. The paper makes the vault PIPE-based
+and asks for its own leakage analysis.
+
+What gets built (`FEE-VAULT.md`): a development scaffold of that vault in
+the same sense as the development boundary of `BOUNDARY.md`: the release
+rule is enforced by the operator's code where a PIPE covenant would
+enforce it. A reservation is a shielded note to the vault whose `rseed`
+commits to an authorization key; a draw is a signed request naming the
+envelope to publish and the most it may cost; the vault's rule is
+deterministic (accepted deposit, valid signature, valid envelope, fee
+within credit) and the ledger it keeps never releases more than was
+deposited; a reclaim path returns unspent credit by the same rule. The
+document states what the operator can and cannot do, what the covenant
+would replace, and the leakage of the model next to the three existing
+ones. Acceptance: the document reviewed, tests at every layer, a signet
+run with a funded draw, a refused one and a reclaim in `RUNS.md`.
+
+## Completed directions, as planned
 
 ### 1. Atomic swap between a shielded note and transparent Bitcoin (§22.5)
 
@@ -104,8 +129,8 @@ behaviour side by side, recorded in `RUNS.md`.
 ### Later, from the same section of the paper
 
 * Peg-in and peg-out through PIPEs v2 (§20.4, §22.3; ePrint 2026/186),
-  replacing the custodial development boundary; the fee-unlock vault
-  (§20.5) with it.
+  replacing the custodial development boundary and the fee vault's
+  operator.
 * Proof systems with smaller proofs and without re-randomisation
   (Polymath, Pari; §22.1); a standard arity with padding (§22.1).
 * A succinct proof of replay for light clients (§22.2), open research.

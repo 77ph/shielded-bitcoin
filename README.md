@@ -204,6 +204,8 @@ ceremony), is built and run on signet. `docs/ROADMAP.md` records what is
 done and what comes next, taken from the paper's own "Future Work": first
 the atomic swap between a shielded note and transparent Bitcoin through
 the reserved `h_aux` slot and a Bitcoin HTLC (§22.5), then witness-carried
-envelopes (§22.1).
+envelopes (§22.1), both built, run and reviewed; next the fee-unlock vault
+(§20.5). The security reviewer's firsthand reviews are the
+`docs/REVIEW-*.md` files.
 
 Rust 1.85+ (edition 2024).
