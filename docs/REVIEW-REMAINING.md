@@ -9,7 +9,7 @@ needs; and the arithmetic the document invites a reader to check is
 correct — I re-derived it. No findings. Two unit-precision refinements, no
 errors.
 
-**Ref:** `fe8b868` (`REMAINING.md` v0.1; `REPLAY-PROOF.md` v0.6 carries the
+**Ref:** `efc395c` (`REMAINING.md` v0.1; `REPLAY-PROOF.md` v0.6 carries the
 same BW6-767 measurement). Read firsthand: the whole document, and the
 arithmetic re-derived in a calculator. The ePrint sources I did **not**
 re-fetch (I cannot reach them here); I checked the quoted claims against

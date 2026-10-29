@@ -7,7 +7,7 @@ through the proxy or fails, the proxy is set before any connection can be
 memoised un-proxied, and a delayed carrier is re-validated against the
 window before it is broadcast.
 
-**Ref:** net-layer implementation at `33bf2af` (reviewed against current
+**Ref:** net-layer implementation at `6e1800c` (reviewed against current
 `main`; the later docs commit is an address scrub that does not touch the
 code). Read firsthand: `crates/sb-indexer/src/net.rs` (whole), every
 caller of `net::agent()` / `net::connect_tcp`, `main.rs` (the `set_proxy`

@@ -7,8 +7,8 @@ Multi-party Computation for zk-SNARK Parameters in the Random Beacon
 Model"* (BGM17), the one the Zcash Sapling parameters were made with — and
 against general trusted-setup soundness.
 
-**Reviewed at:** `bb2f379` (the tooling), `f5db2ae` (the transcript
-importer, the drill script, and findings F-1/F-2), and `7bd8f48` (finding
+**Reviewed at:** `0ecd46e` (the tooling), `b1adf30` (the transcript
+importer, the drill script, and findings F-1/F-2), and `647a889` (finding
 F-3 and the per-contribution phase-2 check). Curve BLS12-381,
 `arkworks` 0.5.0.
 
@@ -108,7 +108,7 @@ outright.
 
 ## Findings
 
-### F-1 — `verify_shape` now checks `β` across `G1` and `G2` (FIXED, `f5db2ae`)
+### F-1 — `verify_shape` now checks `β` across `G1` and `G2` (FIXED, `b1adf30`)
 
 Before the fix, the `β`-in-`G1`-vs-`G2` consistency check lived only in
 `verify_transition`. `phase2-new`, `phase2-verify` and `phase1-import` call
@@ -125,7 +125,7 @@ generators the same function has already pinned), with a test that
 `verify_shape` alone now rejects a mismatched `beta_g2`. Verified: the
 check is correct and reachable from all three callers.
 
-### F-2 — contribution secrets are wiped from memory (FIXED, `f5db2ae`)
+### F-2 — contribution secrets are wiped from memory (FIXED, `b1adf30`)
 
 The secret scalars and the derived power vectors are now overwritten
 (`zeroize`) after each contribution. `CEREMONY.md` scopes this honestly: it
@@ -134,7 +134,7 @@ copies the wipe does not reach, and a machine that swaps or dumps core can
 still leak them — so a contribution should run on a trusted machine. The
 claim that secrets are "never written to disk" is accurate. Verified.
 
-### F-3 — a foreign transcript's provenance is now enforced, not printed (FIXED, `7bd8f48`)
+### F-3 — a foreign transcript's provenance is now enforced, not printed (FIXED, `647a889`)
 
 **Scope: only the import of a foreign powers-of-tau transcript for a
 value-holding deployment. It does not affect a ceremony that runs its own
@@ -213,7 +213,7 @@ yet, that is a reasonable place to leave it.
 
 ---
 
-*Reviewed 2026-10-28 against `bb2f379` / `f5db2ae` / `7bd8f48`. Findings
+*Reviewed 2026-10-28 against `0ecd46e` / `b1adf30` / `647a889`. Findings
 F-1, F-2 and F-3 verified fixed; one forward-looking residual noted under
 F-3 (optional provenance pin), left to the warning and this document while
 no keys hold value. An independent specialist review is still owed before a

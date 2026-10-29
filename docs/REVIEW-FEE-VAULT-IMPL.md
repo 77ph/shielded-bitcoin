@@ -1,13 +1,13 @@
 # Review — fee-vault implementation (paper §20.5, `docs/FEE-VAULT.md`)
 
 **Verdict: PASS, firsthand, no findings.** The implementation matches the
-FEE-VAULT.md v0.1 design (paper-passed at `507aa8b`) and honours the
+FEE-VAULT.md v0.1 design (paper-passed at `04885eb`) and honours the
 zero-loss invariant: on correct function the vault loses zero client and
 zero operator funds; the sole fund-at-risk path is the operator's
 deliberate, loud `--force` under-back — an emergency brake, not an
 operating mode.
 
-**Ref:** `312e458` (parent `507aa8b`). Read firsthand:
+**Ref:** `63026f2` (parent `04885eb`). Read firsthand:
 `crates/sb-cli/src/vault.rs` (whole), `relay.rs` (whole), `feeauth.rs`,
 `crates/sb-core/src/feeauth.rs`, `keys.rs:158` (`fee_auth_secret`),
 `sb-wallet/src/wallet.rs` (`build_send_seeded`), `sb-core/src/note.rs`
