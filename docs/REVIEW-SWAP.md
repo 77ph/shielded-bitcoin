@@ -6,9 +6,9 @@ atomic-swap properties it claims and against the paper's motivating example
 (§22.5): a shielded note exchanged for transparent Bitcoin through the
 reserved `h_aux` leaf slot and a standard Bitcoin HTLC.
 
-**Reviewed at:** `c5519f5` (the circuit), `0332d4c` (envelope/replay/
-deployment), `7007d46` (wallet, HTLC, `sb swap`/`sb htlc`, end to end), and
-`ce4a5a7` (the localsignet drill and `docs/RUNS.md`). Curve BLS12-381,
+**Reviewed at:** `f854c38` (the circuit), `2cb395b` (envelope/replay/
+deployment), `5908a20` (wallet, HTLC, `sb swap`/`sb htlc`, end to end), and
+`fad605d` (the localsignet drill and `docs/RUNS.md`). Curve BLS12-381,
 Groth16; the extension is a separate circuit with its own verifying key and
 does not change base profile v0.2.
 
@@ -139,7 +139,7 @@ a wallet only ever produces prime-order transmission keys.
 
 ---
 
-*Reviewed 2026-10-29 against `c5519f5` / `0332d4c` / `7007d46` / `ce4a5a7`.
+*Reviewed 2026-10-29 against `f854c38` / `2cb395b` / `5908a20` / `fad605d`.
 Circuit, host, HTLC, wallet and the end-to-end and localsignet runs checked
 firsthand; F-1 verified fixed; the caveats are inherent to HTLC atomic
 swaps and are stated in `SWAP.md`.*

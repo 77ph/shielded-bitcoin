@@ -6,7 +6,7 @@ the paper's witness-carried envelopes (§22.1, §A.4) and against the one
 property a publication carrier must have: every implementation reads the
 *same* envelope from the *same* transaction.
 
-**Reviewed at:** `cc8c4fc` (the profile) and `5feba7a` (the annex fix and
+**Reviewed at:** `37d2d3c` (the profile) and `8a32313` (the annex fix and
 the relay caveat). The witness carrier is a separate, non-interoperable
 deployment profile selected by a `carrier` field; it does not change the
 base OP_RETURN profile, the envelope format, the statement, or replay.
@@ -81,7 +81,7 @@ witness data is one weight unit per byte.
 
 ## Finding
 
-**F-1 — an annex could hide the script from the reader (FIXED, `5feba7a`).**
+**F-1 — an annex could hide the script from the reader (FIXED, `8a32313`).**
 The first pass took the second-to-last witness element unconditionally,
 which is the control block, not the script, when a BIP 341 annex is present;
 such a reveal was read as "not a candidate" and its envelope ignored. No
@@ -111,7 +111,7 @@ and states the rule in `docs/WITNESS-CARRIER.md` §4. Re-verified.
 
 ---
 
-*Reviewed 2026-10-29 against `cc8c4fc` / `5feba7a`. Commitment, NUMS key-path
+*Reviewed 2026-10-29 against `37d2d3c` / `8a32313`. Commitment, NUMS key-path
 unspendability, deterministic consensus-exact extraction (including the
 annex), base-profile non-regression and the measured weights checked
 firsthand; F-1 verified fixed; the relay caveat is a network property, not a
