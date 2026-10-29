@@ -334,8 +334,14 @@ replay or a fresh light state is needed. Two consequences of judging
 by digests rather than block hashes: a branch replaced by one with the
 same replay effect (empty blocks for empty blocks) needs no rollback
 at all, the client's digests agree and it carries on; and the client's
-recorded block hashes for such heights may name orphaned blocks, which
-nothing on the client depends on.
+recorded block hashes for such heights, and the carrier txids in its
+events and in the wallet's note, swap and payout records, may then name
+orphaned blocks and transactions. Neither balance nor spendability
+depends on them: the wallet scans the verified leaves, the replayed
+nullifiers and its own event history, never a block hash or a txid
+against the live chain; they are metadata, stale in that one case,
+and a display that resolves such a txid against the chain would show
+an orphan.
 
 On the indexer's side a reorganisation is handled by `sb prove-batches`
 and by the server. The prover, when not told `--from`, starts at the
@@ -423,7 +429,9 @@ replay, with no envelope bytes kept.
   101-block branch of empty blocks replaced by 102 empty blocks needs no
   rollback (same replay effect); a 101-block branch carrying a transfer,
   replaced, is refused as a reorganisation deeper than the client
-  re-checks.
+  re-checks. Reviewed firsthand by the auditor (prover, server, wallet
+  scan, the test's assertions): sound, no findings; a production
+  deployment should make the rollback depth a deployment parameter.
 * **End to end** (`crates/sb-cli/tests/proof_e2e.rs`): an indexer
   proves a history of a mint and two transfers to the light client's
   wallet (and the empty blocks between), the client syncs from the
