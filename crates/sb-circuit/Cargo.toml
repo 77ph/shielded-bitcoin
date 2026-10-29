@@ -19,6 +19,7 @@ ark-relations.workspace = true
 ark-r1cs-std.workspace = true
 ark-groth16.workspace = true
 ark-snark.workspace = true
+ark-crypto-primitives.workspace = true
 rand.workspace = true
 rand_chacha.workspace = true
 sha2.workspace = true
