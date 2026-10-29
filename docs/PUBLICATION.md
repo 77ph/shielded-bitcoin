@@ -248,8 +248,9 @@ above for more than they are.
   placement and the retry property of §3.5 in `sb-wallet`'s builder.
 * **Signet** (`RUNS.md`, 29 October 2026): a transfer published through
   an SSH dynamic forward with `--delay 60-180`. The network saw the
-  server's address (`2a01:4f8:c013:eb87::1`) instead of the laptop's
-  (`84.43.158.231`); the hold drawn was 156 s; the carrier confirmed
+  server's address instead of the laptop's (checked with `ifconfig.me`
+  through and beside the forward); the hold drawn was 156 s; the carrier
+  confirmed
   43 s after broadcast with anchor age 3, the deployment's depth.
 
 ## 7. Changelog

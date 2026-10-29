@@ -331,9 +331,10 @@ Esplora as the chain source, every connection through an SSH dynamic
 forward to the project's Hetzner server (`ssh -D 127.0.0.1:1080`), given
 to `sb` as `--proxy socks5://127.0.0.1:1080` (`docs/PUBLICATION.md` §2.1).
 
-**The route.** From the laptop, `ifconfig.me` answered `84.43.158.231`
-directly and `2a01:4f8:c013:eb87::1` (the server's address) through the
-forward. The sync (`sb sync`, two blocks of catch-up) and the scans
+**The route.** From the laptop, `ifconfig.me` answered the laptop's own
+public address directly and the server's address through the forward
+(two different addresses on two different networks; neither is recorded
+here). The sync (`sb sync`, two blocks of catch-up) and the scans
 of both wallets ran through the same forward; nothing left the laptop
 directly.
 
