@@ -132,7 +132,7 @@ Per input `i`, in addition to the base input witness:
 | `pk_refund_i` | Jubjub point (coordinates) |
 | `t_refund_i` | `u32` |
 | `s_i` | 32 bytes |
-| `d_refund_i` | 11 bytes |
+| `d_refund_i` | 11 bytes: the diversifier of the refund party's address whose `pk_d` is `pk_refund`; the wallet finds it in its own address book (the paths it has handed out, plus a margin), so a refund address should be one the wallet has actually derived — the implementation uses its default address |
 | `pk_owner_i` | the note owner's `pk_d`, witnessed as `pk_owner_root` with `pk_owner = [8] pk_owner_root` (as output keys are in the base circuit) |
 | `refund_i` | boolean: the refund branch is taken |
 

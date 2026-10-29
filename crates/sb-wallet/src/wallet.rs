@@ -15,16 +15,20 @@ use rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
-use sb_circuit::TransferParams;
+use sb_circuit::{SwapParams, TransferParams};
 use sb_core::address::{Network, PaymentAddress};
 use sb_core::event::{AcceptedEvent, txid_hex};
 use sb_core::keys::{Seed, WalletKeys};
-use sb_core::note::{NotePlaintext, nullifier};
+use sb_core::lock::{LockOpening, Secret};
+use sb_core::note::{NotePlaintext, nullifier, nullifier_locked};
 use sb_core::tree::NoteTree;
-use sb_primitives::Fr;
-use sb_primitives::encoding::{fr_from_bytes, fr_to_bytes};
+use sb_primitives::encoding::{fr_from_bytes, fr_to_bytes, point_from_bytes, point_to_bytes};
+use sb_primitives::{Fr, JubjubAffine};
 
-use crate::builder::{BuildError, BuiltTransfer, Recipient, SpendableNote, build_transfer};
+use crate::builder::{
+    BuildError, BuiltSwap, BuiltTransfer, Recipient, SpendableNote, SwapInput, SwapOutput,
+    build_swap_transfer, build_transfer,
+};
 use crate::scan::{scan_incoming, scan_outgoing};
 
 /// Default wallet anchor depth `K_wallet` (profile §9).
@@ -54,9 +58,27 @@ pub struct NoteRecord {
     pub spent_at: Option<u32>,
     /// `h_body` of a built-but-not-yet-accepted transfer that consumes it.
     pub locked_by: Option<String>,
+    /// The leaf's `h_aux` slot, hex; empty or zero for a plain note. A
+    /// locked note (`docs/SWAP.md`) is spent only through the swap
+    /// extension and does not count towards the plain balance.
+    #[serde(default)]
+    pub h_aux: String,
 }
 
 impl NoteRecord {
+    /// Is this a plain note (no lock in its slot)?
+    pub fn is_plain(&self) -> bool {
+        self.h_aux.is_empty() || self.h_aux.bytes().all(|b| b == b'0')
+    }
+
+    pub fn h_aux_fr(&self) -> Result<Fr, WalletError> {
+        if self.is_plain() {
+            Ok(Fr::from(0u64))
+        } else {
+            fr_hex(&self.h_aux)
+        }
+    }
+
     pub fn plaintext(&self) -> Result<NotePlaintext, WalletError> {
         let d = hex::decode(&self.d).map_err(|e| WalletError::Corrupt(e.to_string()))?;
         Ok(NotePlaintext {
@@ -81,6 +103,42 @@ impl NoteRecord {
     }
 }
 
+/// A swap agreement this wallet is a party to (`docs/SWAP.md` §9).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SwapRecord {
+    /// `SHA-256(s)`, hex: the agreement's identifier.
+    pub hash: String,
+    /// `"x"` (holds the secret, locks the note, claims the HTLC) or `"y"`.
+    pub role: String,
+    /// The secret, hex, when we are X.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secret: Option<String>,
+    pub v_sh: u64,
+    pub v_btc: u64,
+    /// X's refund address (shielded, encoded).
+    pub refund_address: String,
+    /// Y's shielded address, the locked note's owner.
+    #[serde(default)]
+    pub owner_address: String,
+    pub t_refund: u32,
+    pub t_htlc: u32,
+    /// Compressed secp256k1 keys, hex: X claims the HTLC, Y refunds it.
+    pub btc_pk_x: String,
+    #[serde(default)]
+    pub btc_pk_y: String,
+    /// `h_aux` of the locked note, hex, once agreed.
+    #[serde(default)]
+    pub h_aux: String,
+    /// `offered`, `accepted`, `locked`, `funded`, `claimed`, `refunded`, `done`.
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lock_txid: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub htlc_outpoint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spend_txid: Option<String>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SentRecord {
     pub value: u64,
@@ -90,6 +148,19 @@ pub struct SentRecord {
     pub txid: String,
     /// `true` when the output went to one of this wallet's own addresses.
     pub is_change: bool,
+    /// Enough to rebuild the note we created: for refunding a locked note
+    /// (`docs/SWAP.md` §9). Empty on records written before the extension.
+    #[serde(default)]
+    pub rseed: String,
+    #[serde(default)]
+    pub h_body_create: String,
+    #[serde(default)]
+    pub output_index: u64,
+    #[serde(default)]
+    pub h_aux: String,
+    /// The recipient's `pk_d`, compressed hex.
+    #[serde(default)]
+    pub pk_d: String,
 }
 
 /// An operator payout made (or refused) for a withdraw request.
@@ -173,6 +244,8 @@ struct WalletFile {
     sent: Vec<SentRecord>,
     #[serde(default)]
     payouts: Vec<PayoutRecord>,
+    #[serde(default)]
+    swaps: Vec<SwapRecord>,
     scanned_events: usize,
     last_scanned_txid: Option<String>,
     next_address_index: u64,
@@ -204,6 +277,8 @@ pub enum WalletError {
     PassphraseRequired,
     #[error("wrong passphrase (or corrupt wallet file)")]
     WrongPassphrase,
+    #[error("no unspent locked note (or sent locked note) with that lock")]
+    NoSuchLockedNote,
 }
 
 pub struct Wallet {
@@ -215,6 +290,7 @@ pub struct Wallet {
     pub notes: Vec<NoteRecord>,
     pub sent: Vec<SentRecord>,
     pub payouts: Vec<PayoutRecord>,
+    pub swaps: Vec<SwapRecord>,
     pub scanned_events: usize,
     pub last_scanned_txid: Option<[u8; 32]>,
     pub next_address_index: u64,
@@ -236,6 +312,7 @@ impl Wallet {
             notes: Vec::new(),
             sent: Vec::new(),
             payouts: Vec::new(),
+            swaps: Vec::new(),
             scanned_events: 0,
             last_scanned_txid: None,
             next_address_index: 0,
@@ -307,6 +384,7 @@ impl Wallet {
         w.notes = f.notes;
         w.sent = f.sent;
         w.payouts = f.payouts;
+        w.swaps = f.swaps;
         w.scanned_events = f.scanned_events;
         w.last_scanned_txid = match f.last_scanned_txid {
             Some(s) => {
@@ -348,6 +426,7 @@ impl Wallet {
             notes: self.notes.clone(),
             sent: self.sent.clone(),
             payouts: self.payouts.clone(),
+            swaps: self.swaps.clone(),
             scanned_events: self.scanned_events,
             last_scanned_txid: self.last_scanned_txid.map(hex::encode),
             next_address_index: self.next_address_index,
@@ -403,11 +482,21 @@ impl Wallet {
         (i, a)
     }
 
-    /// Spendable balance: unspent, unlocked notes.
+    /// Spendable balance: unspent, unlocked, plain notes.
     pub fn balance(&self) -> u64 {
         self.notes
             .iter()
-            .filter(|n| n.is_unspent())
+            .filter(|n| n.is_unspent() && n.is_plain())
+            .map(|n| n.value)
+            .sum()
+    }
+
+    /// Value held in unspent locked notes we own (claimable with their
+    /// preimages, not part of [`Self::balance`]).
+    pub fn locked_balance(&self) -> u64 {
+        self.notes
+            .iter()
+            .filter(|n| n.is_unspent() && !n.is_plain())
             .map(|n| n.value)
             .sum()
     }
@@ -438,7 +527,12 @@ impl Wallet {
         for ev in &events[self.scanned_events..] {
             // incoming
             for r in scan_incoming(&self.keys.ivk, const_salt, ev) {
-                let nf = nullifier(&self.keys.sk_nf, &r.note.rho(), r.pos);
+                let plain = r.h_aux == Fr::from(0u64);
+                let nf = if plain {
+                    nullifier(&self.keys.sk_nf, &r.note.rho(), r.pos)
+                } else {
+                    nullifier_locked(&r.note.rho(), r.pos)
+                };
                 if self.notes.iter().any(|n| n.pos == r.pos) {
                     continue;
                 }
@@ -454,6 +548,11 @@ impl Wallet {
                     txid: txid_hex(&r.txid),
                     spent_at: None,
                     locked_by: None,
+                    h_aux: if plain {
+                        String::new()
+                    } else {
+                        hex_fr(&r.h_aux)
+                    },
                 });
                 new_notes += 1;
             }
@@ -486,6 +585,15 @@ impl Wallet {
                             height: s.height,
                             txid: txid_hex(&s.txid),
                             is_change,
+                            rseed: hex_fr(&s.note.rseed),
+                            h_body_create: hex_fr(&ev.h_body),
+                            output_index: s.output_index,
+                            h_aux: if s.h_aux == Fr::from(0u64) {
+                                String::new()
+                            } else {
+                                hex_fr(&s.h_aux)
+                            },
+                            pk_d: hex::encode(point_to_bytes(&s.pk_d)),
                         });
                     }
                 }
@@ -520,7 +628,7 @@ impl Wallet {
         let mut candidates: Vec<&NoteRecord> = self
             .notes
             .iter()
-            .filter(|n| n.is_unspent() && n.pos < anchor_size)
+            .filter(|n| n.is_unspent() && n.is_plain() && n.pos < anchor_size)
             .collect();
         if candidates.is_empty() {
             return Err(if self.balance() == 0 {
@@ -605,6 +713,225 @@ impl Wallet {
     }
 }
 
+impl Wallet {
+    fn lock_inputs(&mut self, positions: &[u64], h_body: &Fr) {
+        let lock = hex_fr(h_body);
+        for n in self.notes.iter_mut() {
+            if positions.contains(&n.pos) {
+                n.locked_by = Some(lock.clone());
+            }
+        }
+    }
+
+    /// Lock `amount` to `owner` under `opening` (we are X): plain inputs of
+    /// ours, one locked output, change back to us (`docs/SWAP.md` §9 step 2).
+    #[allow(clippy::too_many_arguments)]
+    pub fn build_lock<R: RngCore + CryptoRng>(
+        &mut self,
+        params: &SwapParams,
+        const_salt: &[u8; 32],
+        tree: &NoteTree,
+        h_anchor: u32,
+        anchor_size: u64,
+        owner: PaymentAddress,
+        amount: u64,
+        opening: LockOpening,
+        rng: &mut R,
+    ) -> Result<BuiltSwap, WalletError> {
+        let selected = self.select_inputs(amount, anchor_size)?;
+        let inputs: Vec<SwapInput> = selected
+            .iter()
+            .map(|n| n.spendable().map(SwapInput::Plain))
+            .collect::<Result<_, _>>()?;
+        let positions: Vec<u64> = selected.iter().map(|n| n.pos).collect();
+        let total: u64 = selected.iter().map(|n| n.value).sum();
+        let mut outputs = vec![SwapOutput {
+            recipient: Recipient {
+                address: owner,
+                value: amount,
+            },
+            lock: Some(opening),
+        }];
+        if total > amount {
+            outputs.push(SwapOutput {
+                recipient: Recipient {
+                    address: self.default_address(),
+                    value: total - amount,
+                },
+                lock: None,
+            });
+        }
+        let built = build_swap_transfer(
+            params,
+            &self.keys,
+            const_salt,
+            tree,
+            h_anchor,
+            anchor_size,
+            &inputs,
+            &outputs,
+            rng,
+        )?;
+        self.lock_inputs(&positions, &built.statement.base.h_body);
+        Ok(built)
+    }
+
+    /// Claim the locked note whose slot is `opening.commitment()` with
+    /// `secret` (we are Y), paying its value to ourselves.
+    #[allow(clippy::too_many_arguments)]
+    pub fn build_claim<R: RngCore + CryptoRng>(
+        &mut self,
+        params: &SwapParams,
+        const_salt: &[u8; 32],
+        tree: &NoteTree,
+        h_anchor: u32,
+        anchor_size: u64,
+        opening: LockOpening,
+        secret: Secret,
+        rng: &mut R,
+    ) -> Result<BuiltSwap, WalletError> {
+        let h_aux = hex_fr(&opening.commitment());
+        let note = self
+            .notes
+            .iter()
+            .find(|n| n.h_aux == h_aux && n.is_unspent())
+            .ok_or(WalletError::NoSuchLockedNote)?;
+        if note.pos >= anchor_size {
+            return Err(WalletError::NothingUnderAnchor);
+        }
+        let pos = note.pos;
+        let value = note.value;
+        let input = SwapInput::Claim {
+            note: note.spendable()?,
+            opening,
+            secret,
+        };
+        let built = build_swap_transfer(
+            params,
+            &self.keys,
+            const_salt,
+            tree,
+            h_anchor,
+            anchor_size,
+            &[input],
+            &[SwapOutput {
+                recipient: Recipient {
+                    address: self.default_address(),
+                    value,
+                },
+                lock: None,
+            }],
+            rng,
+        )?;
+        self.lock_inputs(&[pos], &built.statement.base.h_body);
+        Ok(built)
+    }
+
+    /// Refund a locked note we created (we are X): rebuilt from the sent
+    /// record whose slot is `opening.commitment()`, paid back to us.
+    #[allow(clippy::too_many_arguments)]
+    pub fn build_refund<R: RngCore + CryptoRng>(
+        &mut self,
+        params: &SwapParams,
+        const_salt: &[u8; 32],
+        tree: &NoteTree,
+        h_anchor: u32,
+        anchor_size: u64,
+        opening: LockOpening,
+        rng: &mut R,
+    ) -> Result<BuiltSwap, WalletError> {
+        let h_aux = hex_fr(&opening.commitment());
+        let sent = self
+            .sent
+            .iter()
+            .find(|s| s.h_aux == h_aux)
+            .ok_or(WalletError::NoSuchLockedNote)?;
+        if sent.pos >= anchor_size {
+            return Err(WalletError::NothingUnderAnchor);
+        }
+        let d = hex::decode(&sent.to_d).map_err(|e| WalletError::Corrupt(e.to_string()))?;
+        let note = SpendableNote {
+            note: NotePlaintext {
+                value: sent.value,
+                d: d.try_into()
+                    .map_err(|_| WalletError::Corrupt("diversifier".into()))?,
+                rseed: fr_hex(&sent.rseed)?,
+            },
+            h_body_create: fr_hex(&sent.h_body_create)?,
+            output_index: sent.output_index,
+            pos: sent.pos,
+        };
+        let owner_bytes =
+            hex::decode(&sent.pk_d).map_err(|e| WalletError::Corrupt(e.to_string()))?;
+        let owner: JubjubAffine =
+            point_from_bytes(&owner_bytes).map_err(|e| WalletError::Corrupt(e.to_string()))?;
+        let value = sent.value;
+        let d_refund = self
+            .diversifier_for(&opening.pk_refund)
+            .ok_or(WalletError::NoSuchLockedNote)?;
+        let built = build_swap_transfer(
+            params,
+            &self.keys,
+            const_salt,
+            tree,
+            h_anchor,
+            anchor_size,
+            &[SwapInput::Refund {
+                note,
+                opening,
+                owner,
+                d_refund,
+            }],
+            &[SwapOutput {
+                recipient: Recipient {
+                    address: self.default_address(),
+                    value,
+                },
+                lock: None,
+            }],
+            rng,
+        )?;
+        Ok(built)
+    }
+
+    /// The diversifier of this wallet's address with transmission key
+    /// `pk_d`, searched over the receive paths handed out so far plus a
+    /// margin (the address book, not a fixed range).
+    pub fn diversifier_for(&self, pk_d: &JubjubAffine) -> Option<[u8; 11]> {
+        let upto = self.next_address_index + 32;
+        (0..=upto)
+            .filter_map(|k| self.keys.ivk.address_at(k))
+            .find(|a| a.pk_d == *pk_d)
+            .map(|a| a.d)
+    }
+
+    /// The nullifier a locked note we created will carry (either path), from
+    /// its sent record: to tell a counterparty's claim from a note still
+    /// waiting for our refund.
+    pub fn sent_lock_nullifier(&self, h_aux: &str) -> Result<Fr, WalletError> {
+        let sent = self
+            .sent
+            .iter()
+            .find(|s| s.h_aux == h_aux)
+            .ok_or(WalletError::NoSuchLockedNote)?;
+        let rseed = fr_hex(&sent.rseed)?;
+        let rho = sb_primitives::poseidon::native::hash(
+            sb_primitives::tags::t_rho(),
+            std::slice::from_ref(&rseed),
+        );
+        Ok(nullifier_locked(&rho, sent.pos))
+    }
+
+    /// The swap record with this hash, if any.
+    pub fn swap_mut(&mut self, hash: &str) -> Option<&mut SwapRecord> {
+        self.swaps.iter_mut().find(|s| s.hash == hash)
+    }
+
+    pub fn swap(&self, hash: &str) -> Option<&SwapRecord> {
+        self.swaps.iter().find(|s| s.hash == hash)
+    }
+}
+
 /// Wallet anchor policy: the newest anchor a transfer included at
 /// `replayed_tip + 1` may use under `K_wallet`.
 pub fn anchor_for(replayed_tip: u32, k_wallet: u32) -> u32 {
@@ -627,6 +954,7 @@ mod private_branches {
             notes: vec![],
             sent: vec![],
             payouts: vec![],
+            swaps: vec![],
             scanned_events: 0,
             last_scanned_txid: None,
             next_address_index: 0,
@@ -652,6 +980,7 @@ mod private_branches {
             txid: "aa".repeat(32),
             spent_at: None,
             locked_by: None,
+            h_aux: String::new(),
         });
         let params = TransferParams::insecure_setup(&[0u8; 32]).unwrap();
         let mut rng = ChaCha20Rng::from_seed([1u8; 32]);

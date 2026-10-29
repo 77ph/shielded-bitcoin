@@ -1998,7 +1998,9 @@ name = "sb-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "ark-bls12-381",
  "ark-ff",
+ "ark-groth16",
  "bitcoin",
  "clap",
  "env_logger",

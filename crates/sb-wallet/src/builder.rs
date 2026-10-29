@@ -73,11 +73,14 @@ pub enum SwapInput {
         secret: Secret,
     },
     /// A locked note we created for `owner`, taken back after `t_refund`
-    /// with our refund key (the note's `d` is the owner's).
+    /// with our refund key (the note's `d` is the owner's); `d_refund` is
+    /// the diversifier of our address whose `pk_d` is the lock's
+    /// `pk_refund` (the wallet looks it up in its address book).
     Refund {
         note: SpendableNote,
         opening: LockOpening,
         owner: JubjubAffine,
+        d_refund: [u8; 11],
     },
 }
 
@@ -366,26 +369,25 @@ pub fn build_swap_transfer<R: RngCore + CryptoRng>(
                     false,
                 )
             }
-            SwapInput::Refund { opening, owner, .. } => {
-                // the refund key must be ours: the address whose pk_d is pk_refund
-                let d_refund = keys
+            SwapInput::Refund {
+                opening,
+                owner,
+                d_refund,
+                ..
+            } => {
+                // the refund key must be ours: d_refund must name the
+                // address whose pk_d the lock commits to
+                let ours = keys
                     .ivk
-                    .address_for(own_addr.d)
+                    .address_for(*d_refund)
                     .filter(|a| a.pk_d == opening.pk_refund)
-                    .map(|a| a.d)
-                    .or_else(|| {
-                        (0..64u64)
-                            .filter_map(|k| keys.ivk.address_at(k))
-                            .find(|a| a.pk_d == opening.pk_refund)
-                            .map(|a| a.d)
-                    })
                     .ok_or(BuildError::NotOwned(n.pos))?;
                 (
                     *owner,
                     opening.commitment(),
                     *opening,
                     Secret([0u8; 32]),
-                    d_refund,
+                    ours.d,
                     true,
                 )
             }

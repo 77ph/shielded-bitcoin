@@ -17,17 +17,43 @@ use sb_ceremony::phase1::Phase1;
 use sb_ceremony::phase2::Phase2;
 use sb_ceremony::powersoftau::import_response;
 use sb_ceremony::transcript::digest;
-use sb_circuit::{TransferCircuit, TransferParams, vk_sha256, vk_to_bytes};
+use sb_circuit::{SwapCircuit, TransferCircuit, TransferParams, vk_sha256, vk_to_bytes};
+
+/// Which circuit a ceremony is for: the base transfer or the swap extension.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum Circuit {
+    Base,
+    Swap,
+}
+
+impl Circuit {
+    fn domain(self) -> Result<usize> {
+        Ok(match self {
+            Circuit::Base => domain_size(TransferCircuit::default())?,
+            Circuit::Swap => domain_size(SwapCircuit::default())?,
+        })
+    }
+
+    fn initial_key(self, p: &Phase1) -> Result<ark_groth16::ProvingKey<ark_bls12_381::Bls12_381>> {
+        Ok(match self {
+            Circuit::Base => initial_proving_key(TransferCircuit::default(), p)?,
+            Circuit::Swap => initial_proving_key(SwapCircuit::default(), p)?,
+        })
+    }
+}
 
 #[derive(Subcommand)]
 pub enum CeremonyCmd {
-    /// Write the initial phase 1 accumulator sized for the transfer circuit.
+    /// Write the initial phase 1 accumulator sized for a circuit.
     Phase1New {
         #[arg(long)]
         out: PathBuf,
-        /// Domain size as a power of two (default: what the transfer circuit needs).
+        /// Domain size as a power of two (default: what the circuit needs).
         #[arg(long)]
         power: Option<u32>,
+        /// The circuit the accumulator must cover (`swap` needs 2^18, `base` 2^17).
+        #[arg(long, value_enum, default_value = "base")]
+        circuit: Circuit,
     },
     /// Apply fresh secrets to a phase 1 accumulator (and forget them).
     Phase1Contribute {
@@ -66,12 +92,14 @@ pub enum CeremonyCmd {
         #[arg(long)]
         after: PathBuf,
     },
-    /// Derive the transfer circuit's initial phase 2 key from a final phase 1 accumulator.
+    /// Derive a circuit's initial phase 2 key from a final phase 1 accumulator.
     Phase2New {
         #[arg(long)]
         phase1: PathBuf,
         #[arg(long)]
         out: PathBuf,
+        #[arg(long, value_enum, default_value = "base")]
+        circuit: Circuit,
     },
     /// Apply a fresh delta to a phase 2 key (and forget it).
     Phase2Contribute {
@@ -103,6 +131,8 @@ pub enum CeremonyCmd {
         initial: Option<PathBuf>,
         #[arg(long = "final")]
         final_: PathBuf,
+        #[arg(long, value_enum, default_value = "base")]
+        circuit: Circuit,
     },
     /// Write the proving and verifying keys of a finished phase 2 (pin the printed hash in the profile).
     Export {
@@ -144,15 +174,19 @@ fn write_file(path: &Path, bytes: &[u8]) -> Result<[u8; 32]> {
 pub fn run(cmd: CeremonyCmd) -> Result<()> {
     let mut rng_for_checks = rng(None);
     match cmd {
-        CeremonyCmd::Phase1New { out, power } => {
+        CeremonyCmd::Phase1New {
+            out,
+            power,
+            circuit,
+        } => {
+            let needed = circuit.domain()?;
             let n = match power {
                 Some(p) if (1..=28).contains(&p) => 1usize << p,
                 Some(p) => bail!("power {p} is out of range (1..=28)"),
-                None => domain_size(TransferCircuit::default())?,
+                None => needed,
             };
-            let needed = domain_size(TransferCircuit::default())?;
             if n < needed {
-                bail!("the transfer circuit needs a domain of {needed}; {n} is too small");
+                bail!("the {circuit:?} circuit needs a domain of {needed}; {n} is too small");
             }
             let p = Phase1::new(n)?;
             let d = write_file(&out, &p.to_bytes()?)?;
@@ -241,12 +275,16 @@ pub fn run(cmd: CeremonyCmd) -> Result<()> {
             Phase1::verify_transition(&b, d, &a, &mut rng_for_checks)?;
             println!("valid: {} -> {}", hex::encode(d), hex::encode(d2));
         }
-        CeremonyCmd::Phase2New { phase1, out } => {
+        CeremonyCmd::Phase2New {
+            phase1,
+            out,
+            circuit,
+        } => {
             let (p, d) = read_phase1(&phase1)?;
             eprintln!("checking the accumulator's shape…");
             p.verify_shape(&mut rng_for_checks)?;
-            eprintln!("deriving the transfer circuit's key (domain {})…", p.n);
-            let pk = initial_proving_key(TransferCircuit::default(), &p)?;
+            eprintln!("deriving the {circuit:?} circuit's key (domain {})…", p.n);
+            let pk = circuit.initial_key(&p)?;
             let q = Phase2::new(pk)?;
             let d2 = write_file(&out, &q.to_bytes()?)?;
             println!(
@@ -287,14 +325,15 @@ pub fn run(cmd: CeremonyCmd) -> Result<()> {
             phase1,
             initial,
             final_,
+            circuit,
         } => {
             let q = read_phase2(&final_)?;
             let initial = match (phase1, initial) {
                 (Some(phase1), _) => {
                     let (p, _) = read_phase1(&phase1)?;
                     p.verify_shape(&mut rng_for_checks)?;
-                    eprintln!("recomputing the initial key…");
-                    initial_proving_key(TransferCircuit::default(), &p)?
+                    eprintln!("recomputing the {circuit:?} initial key…");
+                    circuit.initial_key(&p)?
                 }
                 (None, Some(initial)) => {
                     let q0 = read_phase2(&initial)?;

@@ -286,6 +286,7 @@ fn lock_claim_refund_and_rejections() {
                 note: ys[0].0.clone(),
                 opening,
                 owner: y_addr.pk_d,
+                d_refund: x_addr.d,
             }],
             &[SwapOutput {
                 recipient: Recipient {
@@ -338,6 +339,7 @@ fn lock_claim_refund_and_rejections() {
                 note: ys[0].0.clone(),
                 opening,
                 owner: y_addr.pk_d,
+                d_refund: x_addr.d,
             }],
             &[SwapOutput {
                 recipient: Recipient {

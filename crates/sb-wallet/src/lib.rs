@@ -12,4 +12,6 @@ pub use builder::{
 };
 pub use payout::{PayoutRequest, PendingPayout, build_payout_memo, parse_payout_memo};
 pub use scan::{ReceivedNote, SentNote, scan_incoming, scan_outgoing};
-pub use wallet::{K_WALLET, NoteRecord, PayoutRecord, SentRecord, Wallet, WalletError, anchor_for};
+pub use wallet::{
+    K_WALLET, NoteRecord, PayoutRecord, SentRecord, SwapRecord, Wallet, WalletError, anchor_for,
+};

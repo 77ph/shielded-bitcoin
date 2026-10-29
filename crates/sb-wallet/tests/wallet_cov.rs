@@ -212,6 +212,7 @@ fn record(pos: u64, value: u64, txid: &str) -> NoteRecord {
         txid: txid.to_string(),
         spent_at: None,
         locked_by: None,
+        h_aux: String::new(),
     }
 }
 

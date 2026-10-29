@@ -30,6 +30,23 @@ pub struct FundingKey {
     pub address: Address,
 }
 
+impl FundingKey {
+    /// The compressed public key (a swap's Bitcoin-side key).
+    pub fn pubkey(&self) -> CompressedPublicKey {
+        self.pk
+    }
+
+    /// ECDSA over a BIP 143 sighash (for script-path spends such as the
+    /// swap HTLC).
+    pub fn sign(&self, sighash: [u8; 32]) -> bitcoin::ecdsa::Signature {
+        let secp = Secp256k1::new();
+        bitcoin::ecdsa::Signature {
+            signature: secp.sign_ecdsa(&Message::from_digest(sighash), &self.sk),
+            sighash_type: EcdsaSighashType::All,
+        }
+    }
+}
+
 /// Which derivation chain an index lives on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Chain {

@@ -6,9 +6,11 @@
 
 mod ceremony;
 mod funding;
+mod htlc;
 mod http;
 mod relay;
 mod serve;
+mod swap;
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -89,6 +91,14 @@ enum Cmd {
         /// Proving key from `sb ceremony export` (wallets need it; indexers do not).
         #[arg(long, requires = "ceremony_vk")]
         ceremony_pk: Option<String>,
+        /// Enable the swap extension with an insecure setup from the same seed (docs/SWAP.md).
+        #[arg(long, conflicts_with = "swap_vk")]
+        swap_insecure: bool,
+        /// Enable the swap extension with a ceremony's verifying key (path relative to the profile).
+        #[arg(long)]
+        swap_vk: Option<String>,
+        #[arg(long, requires = "swap_vk")]
+        swap_pk: Option<String>,
         #[arg(long, default_value = "100")]
         window: u32,
     },
@@ -96,6 +106,16 @@ enum Cmd {
     Ceremony {
         #[command(subcommand)]
         cmd: ceremony::CeremonyCmd,
+    },
+    /// Atomic swaps between shielded notes and transparent Bitcoin (docs/SWAP.md).
+    Swap {
+        #[command(subcommand)]
+        cmd: swap::SwapCmd,
+    },
+    /// The Bitcoin HTLC side of a swap (docs/SWAP.md §9).
+    Htlc {
+        #[command(subcommand)]
+        cmd: swap::HtlcCmd,
     },
     /// Create a wallet (encrypted unless --no-encrypt).
     WalletNew {
@@ -249,11 +269,11 @@ enum Cmd {
     },
 }
 
-struct Ctx {
+pub(crate) struct Ctx {
     db: Option<String>,
     passphrase_file: Option<PathBuf>,
     profile_path: PathBuf,
-    deployment: Deployment,
+    pub(crate) deployment: Deployment,
     data_dir: PathBuf,
     chain: String,
 }
@@ -264,7 +284,7 @@ impl Ctx {
             .join(format!("state-{}.json", self.deployment.name))
     }
 
-    fn wallet_path(&self, name: &str) -> PathBuf {
+    pub(crate) fn wallet_path(&self, name: &str) -> PathBuf {
         self.data_dir.join("wallets").join(format!("{name}.json"))
     }
 
@@ -275,7 +295,7 @@ impl Ctx {
             .unwrap_or_else(|| PathBuf::from("."))
     }
 
-    fn chain_source(&self) -> Result<Box<dyn ChainSource>> {
+    pub(crate) fn chain_source(&self) -> Result<Box<dyn ChainSource>> {
         match self.light_source()? {
             Some(l) => Ok(Box::new(l)),
             None => Self::full_source(&self.chain),
@@ -323,7 +343,7 @@ impl Ctx {
 
     /// UTXO lookup and broadcast through the same backend as `--chain` (for
     /// `light:`, through its full source; a relayer needs none).
-    fn publisher(&self) -> Result<Box<dyn funding::Publisher>> {
+    pub(crate) fn publisher(&self) -> Result<Box<dyn funding::Publisher>> {
         let spec = match self.chain.strip_prefix("light:") {
             Some(rest) => match rest.split_once('|') {
                 Some((_, full)) => full,
@@ -365,14 +385,15 @@ impl Ctx {
         })
     }
 
-    fn indexer(&self) -> Result<(Indexer, Box<dyn sb_indexer::StateStore>)> {
+    pub(crate) fn indexer(&self) -> Result<(Indexer, Box<dyn sb_indexer::StateStore>)> {
         let verifier = self.deployment.verifier(&self.base_dir())?;
         let mut store = self.store()?;
         let state = store.load()?;
-        Ok((
-            Indexer::new(self.deployment.clone(), verifier, state),
-            store,
-        ))
+        let mut idx = Indexer::new(self.deployment.clone(), verifier, state);
+        if let Some(sv) = self.deployment.swap_verifier(&self.base_dir())? {
+            idx = idx.with_swap_verifier(sv);
+        }
+        Ok((idx, store))
     }
 
     /// Passphrase from --passphrase-file, then SB_WALLET_PASSPHRASE, then a prompt.
@@ -392,7 +413,7 @@ impl Ctx {
         Ok(p)
     }
 
-    fn wallet(&self, name: &str) -> Result<Wallet> {
+    pub(crate) fn wallet(&self, name: &str) -> Result<Wallet> {
         let path = self.wallet_path(name);
         match Wallet::load(&path, None) {
             Ok(w) => {
@@ -409,7 +430,7 @@ impl Ctx {
         }
     }
 
-    fn btc_network(&self) -> bitcoin::Network {
+    pub(crate) fn btc_network(&self) -> bitcoin::Network {
         match self.deployment.network {
             SbNetwork::Mainnet => bitcoin::Network::Bitcoin,
             SbNetwork::Testnet => bitcoin::Network::Testnet,
@@ -420,7 +441,7 @@ impl Ctx {
 
     /// Proving parameters; an insecure-seed setup is generated once and
     /// kept under the data directory, keyed by the verifying-key hash.
-    fn params(&self) -> Result<sb_circuit::TransferParams> {
+    pub(crate) fn params(&self) -> Result<sb_circuit::TransferParams> {
         if !matches!(self.deployment.setup, Setup::InsecureSeed { .. }) {
             return Ok(self.deployment.params(&self.base_dir())?);
         }
@@ -449,7 +470,48 @@ impl Ctx {
         Ok(params)
     }
 
-    fn funding(&self, wallet: &Wallet) -> Result<funding::FundingWallet> {
+    /// The swap extension's proving parameters, cached like [`Self::params`].
+    pub(crate) fn swap_params(&self) -> Result<sb_circuit::SwapParams> {
+        let sw = self
+            .deployment
+            .swap
+            .as_ref()
+            .ok_or_else(|| anyhow!("this deployment has no swap extension"))?;
+        if !matches!(sw.setup, Setup::InsecureSeed { .. }) {
+            return Ok(self
+                .deployment
+                .swap_params(&self.base_dir())?
+                .expect("swap section present"));
+        }
+        let cache = self
+            .data_dir
+            .join("params")
+            .join(format!("{}.pk", hex::encode(sw.vk_sha256)));
+        if let Ok(bytes) = std::fs::read(&cache) {
+            if let Ok(params) = sb_circuit::SwapParams::from_pk_bytes(&bytes) {
+                if vk_sha256(params.vk()) == sw.vk_sha256 {
+                    return Ok(params);
+                }
+            }
+            eprintln!(
+                "warning: ignoring a corrupt proving-key cache {}",
+                cache.display()
+            );
+        }
+        let params = self
+            .deployment
+            .swap_params(&self.base_dir())?
+            .expect("swap section present");
+        if let Some(dir) = cache.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if let Err(e) = std::fs::write(&cache, params.pk_to_bytes()?) {
+            eprintln!("warning: could not cache the proving key: {e}");
+        }
+        Ok(params)
+    }
+
+    pub(crate) fn funding(&self, wallet: &Wallet) -> Result<funding::FundingWallet> {
         let seed = hex::decode(wallet.seed_hex())?;
         Ok(funding::FundingWallet::new(
             seed.try_into().unwrap(),
@@ -472,7 +534,7 @@ impl Ctx {
 
     /// Pay `outputs` from the wallet's fee coins, broadcast, and persist the
     /// address counters the payment advanced.
-    fn pay(
+    pub(crate) fn pay(
         &self,
         wallet: &mut Wallet,
         name: &str,
@@ -497,14 +559,14 @@ impl Ctx {
 
     /// Write a carrier to the outbox and publish it as `mode` says; `payer`
     /// is the wallet (and its name) whose fee coins pay when self-funding.
-    fn publish(
+    pub(crate) fn publish(
         &self,
         payer: Option<(&mut Wallet, &str)>,
         label: &str,
         entry: &OutboxEntry,
         fee_rate: u64,
         mode: PublishMode,
-    ) -> Result<()> {
+    ) -> Result<Option<bitcoin::Txid>> {
         let outbox = self.data_dir.join("outbox");
         std::fs::create_dir_all(&outbox)?;
         let envelope = hex::decode(&entry.envelope)?;
@@ -519,7 +581,7 @@ impl Ctx {
             envelope.len(),
             json_path.display()
         );
-        match mode {
+        let txid = match mode {
             PublishMode::Outbox => {
                 println!("unfunded carrier (no inputs) in {}", tx_path.display());
                 println!("publish it from any wallet, e.g. Bitcoin Core:");
@@ -535,6 +597,7 @@ impl Ctx {
                         "or through a sponsored relayer:         sb publish {label} --relay http://host:port"
                     );
                 }
+                None
             }
             PublishMode::Relay(url) => {
                 if !entry.extra.is_empty() {
@@ -543,14 +606,16 @@ impl Ctx {
                 let memo = entry.memo.as_deref().map(hex::decode).transpose()?;
                 let txid = relay::submit(&url, &envelope, memo.as_deref())?;
                 println!("relayed by {url}: {txid}");
+                Some(txid)
             }
             PublishMode::SelfFund => {
                 let (wallet, name) = payer.ok_or_else(|| anyhow!("no wallet to pay from"))?;
                 let tx = self.pay(wallet, name, outputs, fee_rate)?;
                 println!("broadcast {} ({} vB)", tx.compute_txid(), tx.vsize());
+                Some(tx.compute_txid())
             }
-        }
-        Ok(())
+        };
+        Ok(txid)
     }
 }
 
@@ -574,7 +639,7 @@ fn unfunded_hex(outputs: &[bitcoin::TxOut]) -> String {
 }
 
 /// How a built carrier leaves the wallet.
-enum PublishMode {
+pub(crate) enum PublishMode {
     /// Only the outbox: fund it elsewhere or `sb publish` it later.
     Outbox,
     /// Pay from this wallet's fee coins.
@@ -593,7 +658,7 @@ impl PublishMode {
         }
     }
 
-    fn pick(no_broadcast: bool, relay: Option<String>) -> Self {
+    pub(crate) fn pick(no_broadcast: bool, relay: Option<String>) -> Self {
         match (no_broadcast, relay) {
             (true, _) => PublishMode::Outbox,
             (false, Some(url)) => PublishMode::Relay(url),
@@ -605,7 +670,7 @@ impl PublishMode {
 /// A carrier waiting in the outbox: the envelope, the optional payout memo
 /// and the extra outputs the carrier must have (a mint's vault payment).
 #[derive(Debug, Serialize, Deserialize)]
-struct OutboxEntry {
+pub(crate) struct OutboxEntry {
     envelope: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     memo: Option<String>,
@@ -620,7 +685,7 @@ struct ExtraOutput {
 }
 
 impl OutboxEntry {
-    fn new(envelope: &[u8], memo: Option<Vec<u8>>, extra: Vec<bitcoin::TxOut>) -> Self {
+    pub(crate) fn new(envelope: &[u8], memo: Option<Vec<u8>>, extra: Vec<bitcoin::TxOut>) -> Self {
         OutboxEntry {
             envelope: hex::encode(envelope),
             memo: memo.map(hex::encode),
@@ -669,6 +734,9 @@ fn main() -> Result<()> {
         setup_seed,
         ceremony_vk,
         ceremony_pk,
+        swap_insecure,
+        swap_vk,
+        swap_pk,
         window,
     } = &cli.cmd
     {
@@ -721,6 +789,43 @@ fn main() -> Result<()> {
                 (Setup::InsecureSeed { seed }, vk_sha256(params.vk()))
             }
         };
+        let swap = match (swap_insecure, swap_vk) {
+            (true, _) => {
+                let seed: [u8; 32] = match setup_seed {
+                    Some(h) => hex::decode(h)?
+                        .try_into()
+                        .map_err(|_| anyhow!("seed must be 32 bytes"))?,
+                    None => [0u8; 32],
+                };
+                eprintln!("running the insecure swap setup to pin its verifying key…");
+                let params = sb_circuit::SwapParams::insecure_setup(&seed)?;
+                Some(sb_indexer::deployment::SwapDeployment {
+                    vk_sha256: vk_sha256(params.vk()),
+                    setup: Setup::InsecureSeed { seed },
+                })
+            }
+            (false, Some(vk_path)) => {
+                let bytes = std::fs::read(base.join(vk_path))
+                    .with_context(|| format!("swap verifying key {vk_path}"))?;
+                let verifier = sb_circuit::SwapVerifier::from_vk_bytes(&bytes)?;
+                if let Some(pk_path) = swap_pk {
+                    let pk = std::fs::read(base.join(pk_path))
+                        .with_context(|| format!("swap proving key {pk_path}"))?;
+                    let params = sb_circuit::SwapParams::from_pk_bytes(&pk)?;
+                    if vk_sha256(params.vk()) != vk_sha256(&verifier.vk) {
+                        bail!("the swap proving key's verifying key differs from {vk_path}");
+                    }
+                }
+                Some(sb_indexer::deployment::SwapDeployment {
+                    vk_sha256: vk_sha256(&verifier.vk),
+                    setup: Setup::Ceremony {
+                        vk_path: vk_path.clone(),
+                        pk_path: swap_pk.clone(),
+                    },
+                })
+            }
+            (false, None) => None,
+        };
         let d = Deployment {
             profile: sb_core::PROFILE_VERSION.into(),
             name: name.clone(),
@@ -735,7 +840,7 @@ fn main() -> Result<()> {
                 vault_script_hex: v.clone(),
                 operator_address: operator_address.clone(),
             }),
-            swap: None,
+            swap,
         };
         if let Some(p) = cli.profile.parent() {
             std::fs::create_dir_all(p)?;
@@ -760,6 +865,8 @@ fn main() -> Result<()> {
 
     match cli.cmd {
         Cmd::ProfileNew { .. } | Cmd::Ceremony { .. } => unreachable!(),
+        Cmd::Swap { cmd } => swap::run_swap(&ctx, cmd)?,
+        Cmd::Htlc { cmd } => swap::run_htlc(&ctx, cmd)?,
         Cmd::WalletEncrypt { name } => {
             let mut w = ctx.wallet(&name)?;
             let pass = ctx.passphrase("New passphrase: ", true)?;
@@ -810,6 +917,15 @@ fn main() -> Result<()> {
             };
             println!("shielded address: {}", addr.encode(ctx.deployment.network));
             println!("funding address:  {}", ctx.funding_address(&w)?);
+            println!(
+                "swap pubkey:      {}",
+                hex::encode(
+                    ctx.funding(&w)?
+                        .key(funding::Chain::Receive, 0)?
+                        .pubkey()
+                        .to_bytes()
+                )
+            );
         }
         Cmd::Sync => {
             let (mut idx, mut store) = ctx.indexer()?;
@@ -1234,9 +1350,19 @@ fn print_wallet(w: &Wallet) {
         w.notes.iter().filter(|n| n.spent_at.is_some()).count(),
         w.notes.iter().filter(|n| n.locked_by.is_some()).count()
     );
+    if w.locked_balance() > 0 {
+        println!(
+            "hash-locked {} sat in {} swap note(s), claimable with their preimages",
+            w.locked_balance(),
+            w.notes
+                .iter()
+                .filter(|n| n.is_unspent() && !n.is_plain())
+                .count()
+        );
+    }
     for n in &w.notes {
         println!(
-            "  pos {} value {} height {} {}{}",
+            "  pos {} value {} height {} {}{}{}",
             n.pos,
             n.value,
             n.height,
@@ -1249,7 +1375,8 @@ fn print_wallet(w: &Wallet) {
                 " (locked)"
             } else {
                 ""
-            }
+            },
+            if n.is_plain() { "" } else { " (hash-locked)" }
         );
     }
     for s in &w.sent {
