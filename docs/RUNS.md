@@ -353,3 +353,39 @@ deployment's depth plus nothing, because no block came in during the
 Bob's balance 200 → 500 sat, Alice's 600 → 300. What mempool.space saw of
 the submission was the server's address; what the chain shows is an
 825-vB carrier with anchor age 3, like every carrier of this deployment.
+
+## Public signet, 29 October 2026: replay proofs for the whole deployment history, a light client synced from them
+
+Deployment `signet-dev-2` (activation 328 300), its profile extended with
+a batch circuit of 4 slots (`--batch-insecure 4`; every other field of
+the profile byte-identical). The indexer's state (245 blocks replayed,
+4 accepted envelopes: the mint at 328 301, transfers at 328 304,
+328 308 and 328 527) was proven on the laptop, served locally, and
+synced by a light client in a fresh data directory holding only the two
+wallet files (`docs/REPLAY-PROOF.md` §4.5).
+
+**Proving** (`sb prove-batches`, release build): the insecure batch setup
+for 4 slots in about 36 s, then one fragment per block with carriers:
+43.3 s, 31.2 s, 42.7 s and 53.6 s; the 241 empty blocks written without
+a proof in under 2 s each (the builder rebuilds the trees before every
+block from the history, so the time grows with it). 4 min 39 s wall
+clock for the 245 blocks, 4.6 GB of memory at peak. The proven blocks
+weigh **110 KB** together (hex JSON).
+
+**The light client** (`--chain proof:http://127.0.0.1:…`): 245 blocks in
+23.8 s, `accepted: 4`, the state digest chain verified end to end, the
+four envelope proofs batch-verified under the transfer key; a second
+sync found nothing new. Both wallets report the same balances as the
+full indexer (Bob 500 sat over 3 notes, Alice 300 sat), and the light
+state file keeps no envelope bytes and no nullifier tree. The 3.6 GB
+peak is the insecure batch setup run to derive the verifying key: a
+deployment with a ceremony ships the key as a file.
+
+**What the client downloaded instead of the chain:** 110 KB of proven
+blocks against **35.2 MB** of full blocks for the same 245 heights
+(about 320 times less), or against the 2 189 bytes of envelopes plus
+their carriers' partial Merkle trees that the `light:` verified sync of
+`README.md` fetches, with the difference that here the client also
+skipped every nullifier-set check and never held the set. What it still
+trusts the indexer for is the enumeration of carriers (§3 of the design):
+that these four were all of them.

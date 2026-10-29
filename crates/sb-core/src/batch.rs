@@ -87,6 +87,58 @@ impl SlotStatement {
         v.push(Fr::from(self.mint as u64));
         v.try_into().expect("SLOT_ELEMENTS")
     }
+
+    /// The inverse of [`Self::to_elements`], `None` if the elements are
+    /// not a statement: a height above `u32`, a point off the curve or
+    /// outside the prime-order subgroup, a kind other than 0 or 1.
+    pub fn from_elements(e: &[Fr]) -> Option<Self> {
+        use ark_ff::{BigInteger, PrimeField};
+        if e.len() != SLOT_ELEMENTS {
+            return None;
+        }
+        let u32_of = |f: &Fr| -> Option<u32> {
+            let b = f.into_bigint().to_bytes_le();
+            if b[4..].iter().any(|x| *x != 0) {
+                return None;
+            }
+            Some(u32::from_le_bytes(b[..4].try_into().ok()?))
+        };
+        let h_anchor = u32_of(&e[0])?;
+        let mut pk_eph = [JubjubAffine::default(); N_OUT];
+        let mut ct = [NoteCiphertext {
+            c0: Fr::from(0u64),
+            c1: Fr::from(0u64),
+            tag: Fr::from(0u64),
+        }; N_OUT];
+        for j in 0..N_OUT {
+            let base = 4 + j * 5;
+            let p = JubjubAffine::new_unchecked(e[base], e[base + 1]);
+            if !(p.is_on_curve() && p.is_in_correct_subgroup_assuming_on_curve()) {
+                return None;
+            }
+            pk_eph[j] = p;
+            ct[j] = NoteCiphertext {
+                c0: e[base + 2],
+                c1: e[base + 3],
+                tag: e[base + 4],
+            };
+        }
+        let mint = match u32_of(&e[17])? {
+            0 => false,
+            1 => true,
+            _ => return None,
+        };
+        Some(SlotStatement {
+            h_anchor,
+            r_anchor: e[1],
+            nullifiers: [e[2], e[3]],
+            pk_eph,
+            ct,
+            h_body: e[14],
+            h_aux: [e[15], e[16]],
+            mint,
+        })
+    }
 }
 
 /// `D = PH(T_BATCH, st_1 … st_n)` over `n` slots, an empty slot being all
@@ -209,6 +261,13 @@ mod tests {
             batch_digest(&[Some(st)]),
             "the kind is committed"
         );
+        assert_eq!(SlotStatement::from_elements(&st.to_elements()), Some(st));
+        let mut bad = st.to_elements();
+        bad[17] = Fr::from(2u64);
+        assert_eq!(SlotStatement::from_elements(&bad), None, "kind");
+        let mut bad = st.to_elements();
+        bad[4] += Fr::from(1u64);
+        assert_eq!(SlotStatement::from_elements(&bad), None, "point");
         let a = batch_digest(&[Some(st), None]);
         let b = batch_digest(&[None, Some(st)]);
         assert_ne!(a, b, "the order is committed");

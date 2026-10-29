@@ -9,6 +9,7 @@ mod feeauth;
 mod funding;
 mod htlc;
 mod http;
+mod prove;
 mod relay;
 mod serve;
 mod swap;
@@ -162,6 +163,15 @@ enum Cmd {
     FeeVault {
         #[command(subcommand)]
         cmd: vault::FeeVaultCmd,
+    },
+    /// Indexer: prove the replayed blocks for light clients (docs/REPLAY-PROOF.md §4.5).
+    ProveBatches {
+        /// First height to (re)prove; default: the first unproven one.
+        #[arg(long)]
+        from: Option<u32>,
+        /// Build the fragments and write the files with zero proofs (timing the builder only).
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Create a wallet (encrypted unless --no-encrypt).
     WalletNew {
@@ -370,6 +380,58 @@ impl Ctx {
         self.data_dir.join(format!("fee-vault-{name}.json"))
     }
 
+    /// Proven blocks of this deployment (docs/REPLAY-PROOF.md §4.5).
+    pub(crate) fn batches_dir(&self) -> PathBuf {
+        self.data_dir.join("batches").join(&self.deployment.name)
+    }
+
+    /// `proof:<url>`: the indexer a light client syncs proven blocks from.
+    pub(crate) fn proof_url(&self) -> Option<&str> {
+        self.chain.strip_prefix("proof:")
+    }
+
+    /// The batch circuit's proving parameters, cached in the data
+    /// directory for an insecure setup like [`Self::params`].
+    pub(crate) fn batch_params(&self) -> Result<sb_circuit::BatchParams> {
+        let b = self
+            .deployment
+            .batch
+            .as_ref()
+            .ok_or_else(|| anyhow!("this deployment has no batch circuit"))?;
+        let shape = self.deployment.batch_shape().expect("batch is set");
+        if !matches!(b.setup, Setup::InsecureSeed { .. }) {
+            return self
+                .deployment
+                .batch_params(&self.base_dir())?
+                .ok_or_else(|| anyhow!("no batch parameters"));
+        }
+        let cache = self
+            .data_dir
+            .join("params")
+            .join(format!("batch-{}.pk", hex::encode(b.vk_sha256)));
+        if let Ok(bytes) = std::fs::read(&cache) {
+            if let Ok(params) = sb_circuit::BatchParams::from_pk_bytes(shape, &bytes) {
+                if vk_sha256(params.vk()) == b.vk_sha256 {
+                    return Ok(params);
+                }
+            }
+            eprintln!(
+                "warning: ignoring a corrupt batch proving-key cache {}",
+                cache.display()
+            );
+        }
+        eprintln!("running the insecure batch setup ({} slots)…", b.n);
+        let params = self
+            .deployment
+            .batch_params(&self.base_dir())?
+            .ok_or_else(|| anyhow!("no batch parameters"))?;
+        if let Some(dir) = cache.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        std::fs::write(&cache, params.pk_to_bytes()?)?;
+        Ok(params)
+    }
+
     fn base_dir(&self) -> PathBuf {
         self.profile_path
             .parent()
@@ -426,6 +488,11 @@ impl Ctx {
     /// UTXO lookup and broadcast through the same backend as `--chain` (for
     /// `light:`, through its full source; a relayer needs none).
     pub(crate) fn publisher(&self) -> Result<Box<dyn funding::Publisher>> {
+        if self.publish_via.is_none() && self.proof_url().is_some() {
+            bail!(
+                "proof:<url> has no publisher: add --publish-via <full source>, or publish through --relay or --fee-vault"
+            );
+        }
         let spec = match self.publish_via.as_deref() {
             Some(s) => s,
             None => match self.chain.strip_prefix("light:") {
@@ -1215,6 +1282,9 @@ fn main() -> Result<()> {
         Cmd::Swap { cmd } => swap::run_swap(&ctx, cmd)?,
         Cmd::Htlc { cmd } => swap::run_htlc(&ctx, cmd)?,
         Cmd::FeeVault { cmd } => vault::run(&ctx, cmd)?,
+        Cmd::ProveBatches { from, dry_run } => {
+            prove::run(&ctx, from, dry_run)?;
+        }
         Cmd::WalletEncrypt { name } => {
             let mut w = ctx.wallet(&name)?;
             let pass = ctx.passphrase("New passphrase: ", true)?;
@@ -1276,6 +1346,35 @@ fn main() -> Result<()> {
             );
         }
         Cmd::Sync => {
+            if let Some(url) = ctx.proof_url() {
+                let (mut idx, mut store) = ctx.indexer()?;
+                let base = ctx.base_dir();
+                let batch_v = ctx.deployment.batch_verifier(&base)?.ok_or_else(|| {
+                    anyhow!("this deployment has no batch circuit; a proof client needs one")
+                })?;
+                let transfer_v = ctx.deployment.verifier(&base)?;
+                let swap_v = ctx.deployment.swap_verifier(&base)?;
+                let v = sb_indexer::proof::ProofVerifiers {
+                    batch: &batch_v,
+                    transfer: &transfer_v.vk,
+                    swap: swap_v.as_ref().map(|s| &s.vk),
+                };
+                let client = sb_indexer::proof::ProofClient::new(url);
+                let r = sb_indexer::proof::sync(
+                    &mut idx.state,
+                    &client,
+                    &ctx.deployment,
+                    &v,
+                    Some(store.as_mut()),
+                    &mut rand::thread_rng(),
+                )?;
+                println!("{r:?}");
+                if let Some(s) = prove::light_summary(&idx.state) {
+                    println!("{s}");
+                }
+                print_status(&idx);
+                return Ok(());
+            }
             let (mut idx, mut store) = ctx.indexer()?;
             let light = ctx.light_source()?;
             let chain: Box<dyn ChainSource> = match &light {
@@ -1593,6 +1692,7 @@ fn main() -> Result<()> {
                 indexer,
                 store,
                 chain,
+                batches: Some(ctx.batches_dir()),
             }
             .serve(listener, max_requests)?;
         }

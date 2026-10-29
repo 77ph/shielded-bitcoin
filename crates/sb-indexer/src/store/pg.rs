@@ -195,6 +195,7 @@ impl StateStore for PgStore {
             rejections,
             nullifier_tree: Default::default(),
             root_tree: Default::default(),
+            light: None,
         };
         state.rebuild_commitments();
         Ok(state)
