@@ -36,6 +36,7 @@ tags! {
     t_mac = "sb/v1/mac";
     t_aux = "sb/v1/aux";
     t_nflock = "sb/v1/nflock";
+    t_feeauth = "sb/v1/feeauth";
 }
 
 #[cfg(test)]

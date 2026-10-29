@@ -445,7 +445,7 @@ pub fn run_swap(ctx: &Ctx, cmd: SwapCmd) -> Result<()> {
                 &label,
                 &entry,
                 fee_rate,
-                PublishMode::pick(no_broadcast, relay),
+                PublishMode::pick(no_broadcast, relay, None, None),
             )?;
             if let Some(t) = txid {
                 w.swap_mut(&a.hash).unwrap().lock_txid = Some(t.to_string());
@@ -567,7 +567,7 @@ pub fn run_swap(ctx: &Ctx, cmd: SwapCmd) -> Result<()> {
                 &label,
                 &entry,
                 fee_rate,
-                PublishMode::pick(no_broadcast, relay),
+                PublishMode::pick(no_broadcast, relay, None, None),
             )?;
             if let Some(t) = txid {
                 w.swap_mut(&hash).unwrap().spend_txid = Some(t.to_string());
@@ -635,7 +635,7 @@ pub fn run_swap(ctx: &Ctx, cmd: SwapCmd) -> Result<()> {
                 &label,
                 &entry,
                 fee_rate,
-                PublishMode::pick(no_broadcast, relay),
+                PublishMode::pick(no_broadcast, relay, None, None),
             )?;
             if let Some(t) = txid {
                 w.swap_mut(&hash).unwrap().spend_txid = Some(t.to_string());

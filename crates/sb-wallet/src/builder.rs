@@ -164,6 +164,36 @@ pub fn build_transfer<R: RngCore + CryptoRng>(
     outputs: &[Recipient],
     rng: &mut R,
 ) -> Result<BuiltTransfer, BuildError> {
+    build_transfer_seeded(
+        params,
+        keys,
+        const_salt,
+        tree,
+        h_anchor,
+        anchor_size,
+        inputs,
+        outputs,
+        &[],
+        rng,
+    )
+}
+
+/// [`build_transfer`] with a chosen `rseed` for some outputs: `rseeds[j]`
+/// seeds output `j`, `None` or absent means random. A fee-vault deposit
+/// commits to its authorization key this way (`docs/FEE-VAULT.md` §2).
+#[allow(clippy::too_many_arguments)]
+pub fn build_transfer_seeded<R: RngCore + CryptoRng>(
+    params: &TransferParams,
+    keys: &WalletKeys,
+    const_salt: &[u8; 32],
+    tree: &NoteTree,
+    h_anchor: u32,
+    anchor_size: u64,
+    inputs: &[SpendableNote],
+    outputs: &[Recipient],
+    rseeds: &[Option<Fr>],
+    rng: &mut R,
+) -> Result<BuiltTransfer, BuildError> {
     if inputs.len() > N_IN {
         return Err(BuildError::InputCount);
     }
@@ -220,12 +250,17 @@ pub fn build_transfer<R: RngCore + CryptoRng>(
     // 2. output construction
     let mut output_witnesses = Vec::with_capacity(N_OUT);
     let mut addresses = Vec::with_capacity(N_OUT);
-    for o in outputs {
+    for (j, o) in outputs.iter().enumerate() {
+        let rseed = rseeds
+            .get(j)
+            .copied()
+            .flatten()
+            .unwrap_or_else(|| Fr::rand(rng));
         output_witnesses.push(OutputWitness {
             note: NotePlaintext {
                 value: o.value,
                 d: o.address.d,
-                rseed: Fr::rand(rng),
+                rseed,
             },
             pk_d: o.address.pk_d,
         });

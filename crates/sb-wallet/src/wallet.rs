@@ -27,7 +27,7 @@ use sb_primitives::{Fr, JubjubAffine};
 
 use crate::builder::{
     BuildError, BuiltSwap, BuiltTransfer, Recipient, SpendableNote, SwapInput, SwapOutput,
-    build_swap_transfer, build_transfer,
+    build_swap_transfer, build_transfer_seeded,
 };
 use crate::scan::{scan_incoming, scan_outgoing};
 
@@ -163,6 +163,28 @@ pub struct SentRecord {
     pub pk_d: String,
 }
 
+/// A fee-vault deposit this wallet made (`docs/FEE-VAULT.md` §8): the
+/// account it draws against at that vault.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FeeAccountRecord {
+    /// The vault's URL when the deposit was made (its address below is
+    /// what identifies the vault; the URL may change).
+    pub vault: String,
+    /// The vault's deposit address: the account belongs to this vault.
+    #[serde(default)]
+    pub address: String,
+    /// Index of the authorization key in the wallet's derivation.
+    pub index: u64,
+    /// The x-only public key `P`, hex.
+    pub key: String,
+    /// `h_body` of the deposit transfer, hex.
+    pub h_body: String,
+    pub value: u64,
+    /// Carrier txid once published.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub txid: Option<String>,
+}
+
 /// An operator payout made (or refused) for a withdraw request.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PayoutRecord {
@@ -246,6 +268,11 @@ struct WalletFile {
     payouts: Vec<PayoutRecord>,
     #[serde(default)]
     swaps: Vec<SwapRecord>,
+    #[serde(default)]
+    fee_accounts: Vec<FeeAccountRecord>,
+    /// Next fee-vault authorization key index.
+    #[serde(default)]
+    fee_deposit_next: u64,
     scanned_events: usize,
     last_scanned_txid: Option<String>,
     next_address_index: u64,
@@ -291,6 +318,8 @@ pub struct Wallet {
     pub sent: Vec<SentRecord>,
     pub payouts: Vec<PayoutRecord>,
     pub swaps: Vec<SwapRecord>,
+    pub fee_accounts: Vec<FeeAccountRecord>,
+    pub fee_deposit_next: u64,
     pub scanned_events: usize,
     pub last_scanned_txid: Option<[u8; 32]>,
     pub next_address_index: u64,
@@ -313,6 +342,8 @@ impl Wallet {
             sent: Vec::new(),
             payouts: Vec::new(),
             swaps: Vec::new(),
+            fee_accounts: Vec::new(),
+            fee_deposit_next: 0,
             scanned_events: 0,
             last_scanned_txid: None,
             next_address_index: 0,
@@ -385,6 +416,8 @@ impl Wallet {
         w.sent = f.sent;
         w.payouts = f.payouts;
         w.swaps = f.swaps;
+        w.fee_accounts = f.fee_accounts;
+        w.fee_deposit_next = f.fee_deposit_next;
         w.scanned_events = f.scanned_events;
         w.last_scanned_txid = match f.last_scanned_txid {
             Some(s) => {
@@ -427,6 +460,8 @@ impl Wallet {
             sent: self.sent.clone(),
             payouts: self.payouts.clone(),
             swaps: self.swaps.clone(),
+            fee_accounts: self.fee_accounts.clone(),
+            fee_deposit_next: self.fee_deposit_next,
             scanned_events: self.scanned_events,
             last_scanned_txid: self.last_scanned_txid.map(hex::encode),
             next_address_index: self.next_address_index,
@@ -672,6 +707,34 @@ impl Wallet {
         amount: u64,
         rng: &mut R,
     ) -> Result<BuiltTransfer, WalletError> {
+        self.build_send_seeded(
+            params,
+            const_salt,
+            tree,
+            h_anchor,
+            anchor_size,
+            to,
+            amount,
+            None,
+            rng,
+        )
+    }
+
+    /// [`Self::build_send`] with a chosen `rseed` for the payment output
+    /// (a fee-vault deposit, `docs/FEE-VAULT.md` §2).
+    #[allow(clippy::too_many_arguments)]
+    pub fn build_send_seeded<R: RngCore + CryptoRng>(
+        &mut self,
+        params: &TransferParams,
+        const_salt: &[u8; 32],
+        tree: &NoteTree,
+        h_anchor: u32,
+        anchor_size: u64,
+        to: PaymentAddress,
+        amount: u64,
+        rseed: Option<Fr>,
+        rng: &mut R,
+    ) -> Result<BuiltTransfer, WalletError> {
         let selected: Vec<NoteRecord> = self
             .select_inputs(amount, anchor_size)?
             .into_iter()
@@ -692,7 +755,7 @@ impl Wallet {
                 value: total - amount,
             });
         }
-        let built = build_transfer(
+        let built = build_transfer_seeded(
             params,
             &self.keys,
             const_salt,
@@ -701,6 +764,7 @@ impl Wallet {
             anchor_size,
             &inputs,
             &outputs,
+            &[rseed],
             rng,
         )?;
         let lock = hex_fr(&built.statement.h_body);
@@ -955,6 +1019,8 @@ mod private_branches {
             sent: vec![],
             payouts: vec![],
             swaps: vec![],
+            fee_accounts: vec![],
+            fee_deposit_next: 0,
             scanned_events: 0,
             last_scanned_txid: None,
             next_address_index: 0,

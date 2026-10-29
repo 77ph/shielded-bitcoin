@@ -151,6 +151,18 @@ impl WalletKeys {
     pub fn pk_d(&self, d: [u8; DIVERSIFIER_LEN]) -> Option<JubjubAffine> {
         self.ivk.address_for(d).map(|a| a.pk_d)
     }
+
+    /// Secret of the `index`-th fee-vault authorization key
+    /// (`docs/FEE-VAULT.md` §2): `HKDF(sk_master, "sb/v1/feeauth" ‖ LE64(index))`,
+    /// 32 bytes for the deployment layer to use as a secp256k1 secret key.
+    pub fn fee_auth_secret(&self, index: u64) -> [u8; 32] {
+        let mut info = Vec::with_capacity(13 + 8);
+        info.extend_from_slice(b"sb/v1/feeauth");
+        info.extend_from_slice(&index.to_le_bytes());
+        let mut out = [0u8; 32];
+        hkdf(&self.sk_master, &info, &mut out);
+        out
+    }
 }
 
 #[cfg(test)]

@@ -4,6 +4,7 @@
 pub mod address;
 pub mod envelope;
 pub mod event;
+pub mod feeauth;
 pub mod keys;
 pub mod lock;
 pub mod note;

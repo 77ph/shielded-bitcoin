@@ -223,7 +223,12 @@ fn handle_http(mut conn: TcpStream, s: &Shared) {
                             .all(|o| o.value.to_sat() == 0 || o.value.to_sat() >= 294) =>
                     {
                         let txid = tx.compute_txid();
-                        s.mempool.lock().unwrap().push(tx);
+                        // like Bitcoin Core: a transaction already in the
+                        // mempool is answered with its txid, not added twice
+                        let mut mempool = s.mempool.lock().unwrap();
+                        if !mempool.iter().any(|t| t.compute_txid() == txid) {
+                            mempool.push(tx);
+                        }
                         (200, "text/plain", txid.to_string().into_bytes())
                     }
                     Some(_) => (

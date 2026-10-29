@@ -25,7 +25,11 @@ model beside the three of `BOUNDARY.md` ("Fee funding"), with the same
 three questions answered: who pays, what each party sees, what happens
 when the service is unavailable.
 
-Status: draft, not yet implemented. Numbers in §11 are to be measured.
+Status: draft, implemented (`sb fee-vault serve | deposit | accounts |
+reclaim | status`, `--fee-vault` on `send`, `withdraw` and `publish`),
+run on the private signet (§11, `RUNS.md`). Reviewed on paper by the
+project's security reviewer (v0.1); the code review follows in
+`docs/REVIEW-FEE-VAULT.md` when it exists.
 
 ## 1. Roles and flow
 
@@ -206,12 +210,18 @@ operator that is offline (§9).
     "<P hex>": {
       "released": 1234,
       "reclaimed": 0,
-      "draws":    [{"txid": "…", "h_body": "…", "fee": 617, "at": 190}],
+      "draws":    [{"txid": "…", "h_body": "…", "fee": 617, "at": 190,
+                    "raw": ["<carrier tx hex>"], "nullifiers": ["…", "…"],
+                    "settled": false}],
       "reclaims": []
     }
   }
 }
 ```
+
+`raw` and `nullifiers` are kept while the entry is unsettled (I3) and
+dropped once replay has accepted the transfer; `at` is the vault's tip
+when the entry was written.
 
 Invariants, checked by the code on every write and reported by
 `sb fee-vault status`:
@@ -226,16 +236,27 @@ Invariants, checked by the code on every write and reported by
   other received note). So the bound the vault maintains is over **all**
   notes it received from others:
   `outstanding = Σ received(not own change) − Σ released − Σ reclaimed`,
-  and its shielded wallet refuses to spend below `outstanding` (a `sb
-  send`/`sb withdraw` from the vault's wallet checks the ledger and stops,
-  `--force` overrides and is logged). What the operator may spend is
-  `earned = Σ released`: the fees it has actually been paid, and only
-  those.
+  and its shielded wallet refuses to spend below `outstanding`: a `sb
+  send` or `sb withdraw` from a wallet that has a ledger checks it and
+  stops. The one lever past it is `--force`, and it is the operator's
+  **under-backing lever**: it prints the shortfall, requires the operator
+  to type `under-back <shortfall>` on the terminal, and is logged. It
+  exists for the operator to move earned fees out while the arithmetic is
+  conservative (an undrawn note that is not a deposit still counts), not
+  as a quiet flag; §9 names it as the one way the operator can leave
+  credit unbacked. What the operator may spend without it is
+  `earned = Σ released + Σ reclaim fees`: the fees it has actually been
+  paid, and only those.
 * **I3, write before broadcast.** A crash between the write and the
-  broadcast leaves a charged, unpublished draw; on restart the vault
-  rebroadcasts any entry whose `txid` is not in its mempool or chain and
-  reverts the entry if the rebroadcast is refused. A crash between a
-  broadcast and nothing (the write came first) loses nothing.
+  broadcast leaves a charged, unpublished draw. On restart, **before the
+  first request is served**, the vault settles every entry whose transfer
+  replay has accepted, re-broadcasts the raw transactions of the rest
+  (a network that already knows them answers so, which counts as
+  success), reverts any entry the network refuses (the credit returns,
+  a reclaim's locked notes are released), and rebuilds its set of pending
+  nullifiers from the entries that remain, so the same envelope cannot be
+  charged twice across a restart. A crash after the broadcast (the write
+  came first) loses nothing.
 * **I4, determinism.** Two vault instances with the same wallet, ledger
   and chain compute the same `credit(P)` and give the same answers.
 
@@ -251,7 +272,7 @@ its fee wallet, as for any `sb` wallet.
 | | Request | Response |
 |---|---|---|
 | `GET /info` | | `{deployment, network, tip, fee_rate, margin, carrier, deposit_address, min_depth, fee_estimate: {transfer, withdraw}}` |
-| `GET /credit/<P hex>` | | `{deposited, released, reclaimed, credit, settled: bool}`: public knowledge to whoever knows `P`, which only the client and the vault do |
+| `GET /credit/<P hex>` | | `{deposited, unsettled, released, reclaimed, credit, settled: bool}`: `deposited` counts only settled deposits, `unsettled` the rest; public knowledge to whoever knows `P`, which only the client and the vault do |
 | `POST /draw` | `{envelope: hex, memo?: hex, key: P hex, max_fee, sig: hex}` | `{txid, fee, credit}` or `{error}` (400) |
 | `POST /reclaim` | `{key: P hex, address, deposited, sig: hex}` | `{txid, amount, fee}` or `{error}` (400) |
 
@@ -259,25 +280,35 @@ its fee wallet, as for any `sb` wallet.
 vault's rate plus the margin; the actual fee may be higher when the pool's
 coin selection needs more inputs, which is why a draw carries `max_fee`.
 Submissions per client address per minute are limited as for the relayer
-(`--max-checks-per-minute`); `/info` and `/credit` are answered from
-memory; request bodies are capped.
+(`--max-checks-per-minute`); `/info` is answered from memory, `/credit`
+after a replay to the tip (at most once per sync interval, as every
+draw); request bodies are capped.
 
 ## 8. Wallet side
 
+* `sb fee-vault serve --name <vault wallet> --listen … --fee-rate …
+  [--margin …]` runs the vault; `sb fee-vault status --name <vault
+  wallet>` shows the operator the I2 bound against the shielded balance.
 * `sb fee-vault deposit --name <w> --vault <url> --amount <sat>`: reads
   `/info`, takes the next deposit key, builds the transfer to
   `deposit_address` with `rseed = C(P)`, publishes it through the chosen
   model (self-funding by default, `--relay`, `--no-broadcast` as any
-  carrier), and records the account `{vault url, key index, P, h_body,
-  value}` in the wallet file. `sb fee-vault accounts` lists accounts with
-  their credit as the vault reports it (and `settled` from the chain).
+  carrier), and records the account `{vault url, vault deposit address,
+  key index, P, h_body, value}` in the wallet file. The vault is
+  identified by its deposit address, so a vault that moves to another URL
+  still serves the account. `sb fee-vault accounts [--vault <url>]` lists
+  accounts with their credit as the vault reports it.
 * `sb send … --fee-vault <url>`, `sb withdraw … --fee-vault <url>`,
   `sb publish <label> --fee-vault <url>`: the wallet picks the account at
-  that URL with the largest credit, sets `max_fee = 2 × fee_estimate` for
-  the kind (headroom for extra pool inputs; `--max-fee` overrides), signs,
-  posts the draw, and prints the txid and the credit left. The sender's
-  notes stay locked until the transfer is seen accepted, as with every
-  model.
+  that URL with the largest credit, sets `max_fee = min(2 × fee_estimate,
+  credit)` for the kind (headroom for extra pool inputs, never above what
+  the credit holds) and does not post a draw when the credit is below the
+  estimate; `--max-fee` overrides the ceiling and that check, the vault
+  being the judge. It signs, posts the draw, and prints the
+  txid, the fee charged and the credit left. The sender's notes stay
+  locked until the transfer is seen accepted, as with every model. A
+  deposit can be topped up under the same key (`--index`), which is how
+  a remainder too small to reclaim (below the reclaim fee) is recovered.
 * `sb fee-vault reclaim --name <w> --vault <url> [--to <address>]`: signs
   a reclaim to one of the wallet's own addresses (the default: a fresh
   one) and posts it.
@@ -304,7 +335,7 @@ the covenant by the operator's code. Stated per property:
 | Exit | R-R, served by the code while the operator is online | a timeout path the user can take alone | liveness no longer depends on the operator |
 | What the operator can do | refuse to serve (censor), go offline (credit waits), keep the pool's own Bitcoin | nothing beyond publishing | censorship and downtime remain the covenant's only residual (anyone can publish) |
 | What the operator cannot do, in both | publish for a key without its signature, charge above `max_fee` or above credit, double-charge, redirect a memo, read the transfer | the same, by consensus | the guarantee moves from "the code does this" to "the chain does this" |
-| Client's exposure | unspent credit, if the operator goes away for good; bounded by deposit size (deposit for a few publications at a time) | none beyond the fee | the bound is removed, not the rule |
+| Client's exposure | unspent credit, if the operator goes away for good, or spends below it with `--force` (the one under-backing lever, loud and confirmed, §6 I2); bounded by deposit size (deposit for a few publications at a time) | none beyond the fee | the bound is removed, not the rule |
 | Operator's exposure | miner fees of carriers that replay then rejects (a client's double publication); bounded by that client's credit, since the fee was charged | the same, inherent to publishing | none |
 | Fee privacy | carriers are funded from the operator's pool: the client's carriers mix with every other client's (§10) | a per-reservation UTXO funds that user's carriers: they link to each other and to the reservation on chain | the covenant version is **worse** here unless the reserved liquidity is pooled; the paper flags "vault access patterns" as metadata for this reason |
 
@@ -355,10 +386,21 @@ unspent credit (§9) and the pattern the vault sees.
 
 ## 11. Measured
 
-To be filled by the signet run (`RUNS.md`): deposit, a funded draw, the
-refusals (bad signature, unsettled deposit, unknown key, fee above
-`max_fee`, insufficient credit, double publication), a reclaim, with the
-fees charged and the ledger after each step.
+On the private signet (`RUNS.md`, 29 October 2026; OP_RETURN carrier,
+1 sat/vB, margin 10 sat):
+
+| Step | Charged | Note |
+|---|---|---|
+| deposit of 2 500 sat | the client's own carrier, 825 vB | an ordinary transfer |
+| transfer draw | **833 sat** | 823 vB + margin; equals `/info`'s estimate for one pool input |
+| withdraw draw (34-byte memo) | **878 sat** | 868 vB + margin; the estimate assumes a 46-byte memo (890) |
+| reclaim of 2 789 sat | **833 sat** | 1 956 sat returned |
+| refusals: `max_fee 1`, credit 789 < 833, reclaim below its fee, bad signature, unknown key, duplicate | nothing | the rule's order of §5 |
+
+A restart with a draw pending in the mempool re-broadcast it and charged
+it once; the end state of the ledger (released 1 711, reclaimed 2 789,
+earned 2 544) matched the vault wallet's balance against an outstanding
+credit of 0.
 
 ## 12. Changelog
 

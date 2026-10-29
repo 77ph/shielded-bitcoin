@@ -353,6 +353,9 @@ fn lock_claim_refund_and_rejections() {
         )
         .unwrap()
     };
+    // the early refund is an unsatisfiable witness: in a debug build the
+    // prover's debug_assert panics on it, so this test needs --release
+    // (as CI runs it); in release the proof is produced and fails to verify
     let early = refund_at(T_REFUND - 1);
     let on_time = refund_at(T_REFUND);
     chain.push_block(vec![

@@ -39,8 +39,13 @@ in `RUNS.md`.
 |---|---|---|
 | Atomic swap between a shielded note and transparent Bitcoin through `h_aux` and a P2WSH HTLC | §22.5 | `SWAP.md`, extension circuit (SHA-256 in circuit), kind `0x03`, `sb swap` / `sb htlc`, both endings run on the private signet under Bitcoin Core, reviewed (`REVIEW-SWAP.md`) |
 | Witness-carried envelopes, a separate deployment profile | §22.1, §A.4 | `WITNESS-CARRIER.md`, commit-and-reveal publisher through all three fee models, indexer rule, measured on the private signet, reviewed (`REVIEW-WITNESS-CARRIER.md`) |
+| Fee-unlock vault as a development scaffold | §20.5, §22.3 | `FEE-VAULT.md`, `sb fee-vault`, deterministic release rule and ledger, backing guard, reclaim, run on the private signet with both endings and every refusal, design reviewed on paper |
 
 ## Next
+
+To be chosen from "Later" below.
+
+## Completed directions, as planned
 
 ### 3. Fee-unlock vault (§20.5, §22.3)
 
@@ -64,8 +69,6 @@ document states what the operator can and cannot do, what the covenant
 would replace, and the leakage of the model next to the three existing
 ones. Acceptance: the document reviewed, tests at every layer, a signet
 run with a funded draw, a refused one and a reclaim in `RUNS.md`.
-
-## Completed directions, as planned
 
 ### 1. Atomic swap between a shielded note and transparent Bitcoin (§22.5)
 

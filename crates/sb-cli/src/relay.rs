@@ -21,22 +21,54 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
-use bitcoin::Txid;
+use bitcoin::{OutPoint, Transaction, Txid};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use sb_indexer::{ChainSource, Indexer, StateStore};
+use sb_indexer::carrier::{CarrierMode, MEMO_MAGIC, carrier_output, memo_output};
+use sb_indexer::{ChainSource, Indexer, StateStore, TransferCheck};
 use sb_primitives::Fr;
 use sb_wallet::Wallet;
 
-use crate::funding::{FundingState, FundingWallet, Publisher};
-use crate::http::{read_request, respond};
+use crate::funding::{Chain, Coin, FundingState, FundingWallet, Publisher};
+use crate::http::{post_json, read_request, respond};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RelayRequest {
     pub envelope: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memo: Option<String>,
+}
+
+/// A carrier built from the fee wallet but not yet broadcast: one
+/// transaction (OP_RETURN mode) or a commit-and-reveal pair, the counters
+/// it advanced, and the miner fee it pays in total.
+pub struct Carrier {
+    pub txs: Vec<Transaction>,
+    pub next: FundingState,
+    pub fee: u64,
+}
+
+impl Carrier {
+    /// The carrier's txid: the reveal's in witness mode.
+    pub fn txid(&self) -> Txid {
+        self.txs
+            .last()
+            .expect("a carrier has a transaction")
+            .compute_txid()
+    }
+}
+
+/// Miner fee of `tx`: its inputs' values (looked up) minus its outputs'.
+pub(crate) fn tx_fee(tx: &Transaction, value_of: impl Fn(&OutPoint) -> Option<u64>) -> Result<u64> {
+    let mut ins = 0u64;
+    for i in &tx.input {
+        ins += value_of(&i.previous_output)
+            .ok_or_else(|| anyhow!("fee: unknown input {}", i.previous_output))?;
+    }
+    let outs: u64 = tx.output.iter().map(|o| o.value.to_sat()).sum();
+    ins.checked_sub(outs)
+        .ok_or_else(|| anyhow!("fee: outputs exceed inputs"))
 }
 
 /// A running relayer: indexer, chain, fee wallet and the policy knobs.
@@ -98,7 +130,7 @@ impl Relayer {
         }
     }
 
-    fn funding_state(&self) -> FundingState {
+    pub(crate) fn funding_state(&self) -> FundingState {
         FundingState {
             receive: self.wallet.funding_receive,
             change: self.wallet.funding_change,
@@ -107,7 +139,7 @@ impl Relayer {
 
     /// Replay to the tip (at most once per `sync_interval`); the check below
     /// is against the next block.
-    fn refresh(&mut self) -> Result<u32> {
+    pub(crate) fn refresh(&mut self) -> Result<u32> {
         if self
             .last_sync
             .is_none_or(|t| t.elapsed() >= self.sync_interval)
@@ -125,8 +157,17 @@ impl Relayer {
             .ok_or_else(|| anyhow!("indexer has not replayed any block"))
     }
 
+    /// Are any of these nullifiers in a carrier paid for but not yet replayed?
+    pub(crate) fn is_pending(&self, nullifiers: &[Fr]) -> bool {
+        nullifiers.iter().any(|nf| self.pending.contains(nf))
+    }
+
+    pub(crate) fn mark_pending(&mut self, nullifiers: impl IntoIterator<Item = Fr>) {
+        self.pending.extend(nullifiers);
+    }
+
     /// One more submission from `ip` allowed within the last minute?
-    fn admit(&mut self, ip: IpAddr) -> bool {
+    pub(crate) fn admit(&mut self, ip: IpAddr) -> bool {
         let minute_ago = Instant::now() - Duration::from_secs(60);
         let times = self.checks.entry(ip).or_default();
         times.retain(|t| *t > minute_ago);
@@ -138,36 +179,55 @@ impl Relayer {
         true
     }
 
-    /// Check, pay and broadcast one envelope.
-    pub fn relay(&mut self, envelope: &[u8], memo: Option<&[u8]>) -> Result<Txid> {
+    /// The envelope as the indexer would see it at `tip + 1` (profile §11),
+    /// plus the publication rules every paying service shares: transfers
+    /// only (a mint pays the vault), and a memo must be a payout memo that
+    /// fits a standard OP_RETURN.
+    pub(crate) fn check(&mut self, envelope: &[u8], memo: Option<&[u8]>) -> Result<TransferCheck> {
         let tip = self.refresh()?;
         let check = self
             .indexer
             .check_transfer(envelope, tip + 1)
             .map_err(|e| anyhow!("rejected: {e}"))?
             .ok_or_else(|| anyhow!("rejected: a mint pays the vault; publish it yourself"))?;
-        if check.nullifiers.iter().any(|nf| self.pending.contains(nf)) {
-            bail!("rejected: already relayed, waiting for a block");
-        }
         if let Some(m) = memo {
-            if !m.starts_with(&sb_indexer::carrier::MEMO_MAGIC) || m.len() > 80 {
+            if !m.starts_with(&MEMO_MAGIC) || m.len() > 80 {
                 bail!("rejected: memo must start with \"sbx\" and fit a standard OP_RETURN");
             }
         }
-        let hour_ago = Instant::now() - Duration::from_secs(3600);
-        self.paid_at.retain(|t| *t > hour_ago);
-        if self.paid_at.len() as u32 >= self.max_per_hour {
-            bail!("busy: hourly budget spent, try later");
-        }
-        let txid = if self.indexer.deployment.carrier == sb_indexer::carrier::CarrierMode::Witness {
-            let key = self.funding.key(crate::funding::Chain::Receive, 0)?;
-            let (coins, st) = self
-                .funding
-                .coins(self.publisher.as_ref(), self.funding_state())?;
+        Ok(check)
+    }
+
+    /// Build the carrier from the fee wallet's coins at this service's fee
+    /// rate, without broadcasting it.
+    pub(crate) fn build_carrier(&self, envelope: &[u8], memo: Option<&[u8]>) -> Result<Carrier> {
+        let (coins, st) = self
+            .funding
+            .coins(self.publisher.as_ref(), self.funding_state())?;
+        self.build_carrier_from(&coins, st, envelope, memo)
+    }
+
+    /// [`Self::build_carrier`] from given coins (the fee vault prices a
+    /// carrier before the envelope exists, from the same coins).
+    pub(crate) fn build_carrier_from(
+        &self,
+        coins: &[Coin],
+        st: FundingState,
+        envelope: &[u8],
+        memo: Option<&[u8]>,
+    ) -> Result<Carrier> {
+        let value_of = |o: &OutPoint| {
+            coins
+                .iter()
+                .find(|c| c.utxo.outpoint == *o)
+                .map(|c| c.utxo.value)
+        };
+        if self.indexer.deployment.carrier == CarrierMode::Witness {
+            let key = self.funding.key(Chain::Receive, 0)?;
             let p = crate::witness::build_pair(
                 &self.funding,
                 &key,
-                &coins,
+                coins,
                 st,
                 envelope,
                 vec![],
@@ -175,35 +235,72 @@ impl Relayer {
                 self.fee_rate,
                 self.network,
             )?;
-            self.wallet.funding_receive = p.next.receive;
-            self.wallet.funding_change = p.next.change;
-            self.wallet.save(&self.wallet_path)?;
-            let (_, r) = crate::witness::broadcast(self.publisher.as_ref(), &p)?;
-            r
+            let commit_fee = tx_fee(&p.commit, value_of)?;
+            let commit_txid = p.commit.compute_txid();
+            let reveal_fee = tx_fee(&p.reveal, |o| {
+                (o.txid == commit_txid)
+                    .then(|| {
+                        p.commit
+                            .output
+                            .get(o.vout as usize)
+                            .map(|x| x.value.to_sat())
+                    })
+                    .flatten()
+            })?;
+            Ok(Carrier {
+                txs: vec![p.commit, p.reveal],
+                next: p.next,
+                fee: commit_fee + reveal_fee,
+            })
         } else {
-            let mut outputs = vec![sb_indexer::carrier::carrier_output(envelope)];
+            let mut outputs = vec![carrier_output(envelope)];
             if let Some(m) = memo {
-                outputs.push(sb_indexer::carrier::memo_output(m));
+                outputs.push(memo_output(m));
             }
-            let (tx, next) = self.funding.pay(
-                self.publisher.as_ref(),
-                self.funding_state(),
-                outputs,
-                self.fee_rate,
-            )?;
-            // counters first: a crash after the broadcast must not reuse the
-            // change address (an unused index is the harmless outcome)
-            self.wallet.funding_receive = next.receive;
-            self.wallet.funding_change = next.change;
-            self.wallet.save(&self.wallet_path)?;
-            self.publisher.broadcast(&tx)?
-        };
-        self.pending.extend(check.nullifiers);
+            let (tx, next) = self.funding.build_tx(coins, st, outputs, self.fee_rate)?;
+            let fee = tx_fee(&tx, value_of)?;
+            Ok(Carrier {
+                txs: vec![tx],
+                next,
+                fee,
+            })
+        }
+    }
+
+    /// Persist the counters the carrier advanced, then broadcast it.
+    pub(crate) fn broadcast_carrier(&mut self, c: &Carrier) -> Result<Txid> {
+        // counters first: a crash after the broadcast must not reuse the
+        // change address (an unused index is the harmless outcome)
+        self.wallet.funding_receive = c.next.receive;
+        self.wallet.funding_change = c.next.change;
+        self.wallet.save(&self.wallet_path)?;
+        let mut txid = None;
+        for tx in &c.txs {
+            txid = Some(self.publisher.broadcast(tx)?);
+        }
+        txid.ok_or_else(|| anyhow!("empty carrier"))
+    }
+
+    /// Check, pay and broadcast one envelope.
+    pub fn relay(&mut self, envelope: &[u8], memo: Option<&[u8]>) -> Result<Txid> {
+        let check = self.check(envelope, memo)?;
+        if self.is_pending(&check.nullifiers) {
+            bail!("rejected: already relayed, waiting for a block");
+        }
+        let hour_ago = Instant::now() - Duration::from_secs(3600);
+        self.paid_at.retain(|t| *t > hour_ago);
+        if self.paid_at.len() as u32 >= self.max_per_hour {
+            bail!("busy: hourly budget spent, try later");
+        }
+        let carrier = self.build_carrier(envelope, memo)?;
+        let txid = self.broadcast_carrier(&carrier)?;
+        self.mark_pending(check.nullifiers);
         self.paid_at.push(Instant::now());
         log::info!(
-            "relayed transfer {} (anchor {}) in {txid}",
+            "relayed transfer {} (anchor {}) in {txid}, fee {} sat",
             hex::encode(&sb_primitives::encoding::fr_to_bytes(&check.h_body)[..8]),
-            check.h_anchor
+            check.h_anchor,
+            carrier.fee
         );
         Ok(txid)
     }
@@ -277,21 +374,7 @@ pub fn submit(url: &str, envelope: &[u8], memo: Option<&[u8]>) -> Result<Txid> {
         memo: memo.map(hex::encode),
     };
     let url = format!("{}/relay", url.trim_end_matches('/'));
-    let resp = ureq::post(&url)
-        .timeout(Duration::from_secs(120))
-        .send_json(&req)
-        .map_err(|e| match e {
-            ureq::Error::Status(code, r) => {
-                let text = r.into_string().unwrap_or_default();
-                let msg = serde_json::from_str::<Value>(&text)
-                    .ok()
-                    .and_then(|v| v["error"].as_str().map(str::to_string))
-                    .unwrap_or(text);
-                anyhow!("relayer refused ({code}): {}", msg.trim())
-            }
-            other => anyhow!("relayer unreachable: {other}"),
-        })?;
-    let v: Value = resp.into_json().context("relayer response")?;
+    let v = post_json(&url, &req, "relayer")?;
     v["txid"]
         .as_str()
         .ok_or_else(|| anyhow!("relayer response has no txid: {v}"))?

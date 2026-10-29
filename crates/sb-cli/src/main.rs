@@ -5,12 +5,14 @@
 //! ```
 
 mod ceremony;
+mod feeauth;
 mod funding;
 mod htlc;
 mod http;
 mod relay;
 mod serve;
 mod swap;
+mod vault;
 mod witness;
 
 use std::io::Write as _;
@@ -121,6 +123,11 @@ enum Cmd {
         #[command(subcommand)]
         cmd: swap::HtlcCmd,
     },
+    /// The fee vault: publication paid in shielded credit (docs/FEE-VAULT.md).
+    FeeVault {
+        #[command(subcommand)]
+        cmd: vault::FeeVaultCmd,
+    },
     /// Create a wallet (encrypted unless --no-encrypt).
     WalletNew {
         #[arg(long, default_value = "default")]
@@ -179,6 +186,15 @@ enum Cmd {
         /// Hand the envelope to a sponsored relayer (`http://host:port`) instead of paying the carrier.
         #[arg(long, conflicts_with = "no_broadcast")]
         relay: Option<String>,
+        /// Draw the carrier's fee from credit at a fee vault (`http://host:port`, docs/FEE-VAULT.md).
+        #[arg(long, conflicts_with_all = ["no_broadcast", "relay"])]
+        fee_vault: Option<String>,
+        /// The most the fee vault may charge (default: twice its estimate).
+        #[arg(long, requires = "fee_vault")]
+        max_fee: Option<u64>,
+        /// Operator of a fee vault: spend below the outstanding client credit (asks for confirmation).
+        #[arg(long)]
+        force: bool,
     },
     /// Withdraw `amount` sat to a Bitcoin address through the dev operator.
     Withdraw {
@@ -197,6 +213,15 @@ enum Cmd {
         /// Hand the envelope to a sponsored relayer (`http://host:port`) instead of paying the carrier.
         #[arg(long, conflicts_with = "no_broadcast")]
         relay: Option<String>,
+        /// Draw the carrier's fee from credit at a fee vault (`http://host:port`, docs/FEE-VAULT.md).
+        #[arg(long, conflicts_with_all = ["no_broadcast", "relay"])]
+        fee_vault: Option<String>,
+        /// The most the fee vault may charge (default: twice its estimate).
+        #[arg(long, requires = "fee_vault")]
+        max_fee: Option<u64>,
+        /// Operator of a fee vault: spend below the outstanding client credit (asks for confirmation).
+        #[arg(long)]
+        force: bool,
     },
     /// Publish a carrier from the outbox: pay it from a wallet's fee coins, or hand it to a relayer.
     Publish {
@@ -213,6 +238,12 @@ enum Cmd {
         /// Witness carrier: reveal an entry whose commit output was funded elsewhere.
         #[arg(long)]
         reveal: bool,
+        /// Draw the carrier's fee from credit at a fee vault (`http://host:port`, docs/FEE-VAULT.md).
+        #[arg(long, conflicts_with_all = ["relay", "reveal"])]
+        fee_vault: Option<String>,
+        /// The most the fee vault may charge (default: twice its estimate).
+        #[arg(long, requires = "fee_vault")]
+        max_fee: Option<u64>,
     },
     /// Serve the indexer API for verified-sync clients (`--chain light:<url>`).
     Serve {
@@ -293,6 +324,11 @@ impl Ctx {
 
     pub(crate) fn wallet_path(&self, name: &str) -> PathBuf {
         self.data_dir.join("wallets").join(format!("{name}.json"))
+    }
+
+    /// The fee-vault ledger of wallet `name` (docs/FEE-VAULT.md §6).
+    pub(crate) fn ledger_path(&self, name: &str) -> PathBuf {
+        self.data_dir.join(format!("fee-vault-{name}.json"))
     }
 
     fn base_dir(&self) -> PathBuf {
@@ -657,6 +693,23 @@ impl Ctx {
                 println!("relayed by {url}: {txid}");
                 Some(txid)
             }
+            PublishMode::FeeVault { url, max_fee } => {
+                if !entry.extra.is_empty() {
+                    bail!("a mint pays the vault; the fee vault only publishes transfers");
+                }
+                let (wallet, _) = payer.ok_or_else(|| {
+                    anyhow!("the fee vault needs the wallet that holds the deposit (--name)")
+                })?;
+                let memo = entry.memo.as_deref().map(hex::decode).transpose()?;
+                Some(vault::draw_from_wallet(
+                    &self.deployment,
+                    wallet,
+                    &url,
+                    &envelope,
+                    memo.as_deref(),
+                    max_fee,
+                )?)
+            }
             PublishMode::SelfFund if witness_mode => {
                 let (wallet, name) = payer.ok_or_else(|| anyhow!("no wallet to pay from"))?;
                 let reveal = self.publish_witness(wallet, name, &envelope, entry, fee_rate)?;
@@ -793,6 +846,8 @@ pub(crate) enum PublishMode {
     SelfFund,
     /// Hand the envelope to a sponsored relayer at this URL.
     Relay(String),
+    /// Draw the fee from credit at the fee vault at this URL.
+    FeeVault { url: String, max_fee: Option<u64> },
 }
 
 impl PublishMode {
@@ -802,14 +857,21 @@ impl PublishMode {
             PublishMode::Outbox => "outbox",
             PublishMode::SelfFund => "self-fund",
             PublishMode::Relay(_) => "relay",
+            PublishMode::FeeVault { .. } => "fee-vault",
         }
     }
 
-    pub(crate) fn pick(no_broadcast: bool, relay: Option<String>) -> Self {
-        match (no_broadcast, relay) {
-            (true, _) => PublishMode::Outbox,
-            (false, Some(url)) => PublishMode::Relay(url),
-            (false, None) => PublishMode::SelfFund,
+    pub(crate) fn pick(
+        no_broadcast: bool,
+        relay: Option<String>,
+        fee_vault: Option<String>,
+        max_fee: Option<u64>,
+    ) -> Self {
+        match (no_broadcast, relay, fee_vault) {
+            (true, _, _) => PublishMode::Outbox,
+            (false, Some(url), _) => PublishMode::Relay(url),
+            (false, None, Some(url)) => PublishMode::FeeVault { url, max_fee },
+            (false, None, None) => PublishMode::SelfFund,
         }
     }
 }
@@ -1036,6 +1098,7 @@ fn main() -> Result<()> {
         Cmd::ProfileNew { .. } | Cmd::Ceremony { .. } => unreachable!(),
         Cmd::Swap { cmd } => swap::run_swap(&ctx, cmd)?,
         Cmd::Htlc { cmd } => swap::run_htlc(&ctx, cmd)?,
+        Cmd::FeeVault { cmd } => vault::run(&ctx, cmd)?,
         Cmd::WalletEncrypt { name } => {
             let mut w = ctx.wallet(&name)?;
             let pass = ctx.passphrase("New passphrase: ", true)?;
@@ -1212,6 +1275,9 @@ fn main() -> Result<()> {
             fee_rate,
             no_broadcast,
             relay,
+            fee_vault,
+            max_fee,
+            force,
         } => {
             let (net, to_addr) = PaymentAddress::decode(&to)?;
             if net != ctx.deployment.network {
@@ -1237,6 +1303,7 @@ fn main() -> Result<()> {
                 &idx.state.events,
                 &idx.state.nullifiers,
             )?;
+            vault::backing_guard(&ctx, &w, &name, amount, force)?;
             eprintln!("loading proving parameters…");
             let params = ctx.params()?;
             eprintln!("proving (anchor {h_anchor}, tree size {size})…");
@@ -1261,7 +1328,7 @@ fn main() -> Result<()> {
                 &label,
                 &entry,
                 fee_rate,
-                PublishMode::pick(no_broadcast, relay),
+                PublishMode::pick(no_broadcast, relay, fee_vault, max_fee),
             )?;
             println!("inputs locked until the transfer is accepted (`sb unlock` to release)");
         }
@@ -1272,6 +1339,9 @@ fn main() -> Result<()> {
             fee_rate,
             no_broadcast,
             relay,
+            fee_vault,
+            max_fee,
+            force,
         } => {
             let boundary = ctx
                 .deployment
@@ -1311,6 +1381,7 @@ fn main() -> Result<()> {
                 &idx.state.events,
                 &idx.state.nullifiers,
             )?;
+            vault::backing_guard(&ctx, &w, &name, amount, force)?;
             eprintln!("loading proving parameters…");
             let params = ctx.params()?;
             eprintln!("proving withdraw of {amount} sat to {dest}…");
@@ -1335,7 +1406,7 @@ fn main() -> Result<()> {
                 &label,
                 &entry,
                 fee_rate,
-                PublishMode::pick(no_broadcast, relay),
+                PublishMode::pick(no_broadcast, relay, fee_vault, max_fee),
             )?;
             println!("the operator pays {dest} after the transfer is accepted");
         }
@@ -1345,6 +1416,8 @@ fn main() -> Result<()> {
             fee_rate,
             relay,
             reveal,
+            fee_vault,
+            max_fee,
         } => {
             let path = if label.contains('/') || label.ends_with(".json") {
                 PathBuf::from(&label)
@@ -1371,17 +1444,19 @@ fn main() -> Result<()> {
                 ctx.reveal_funded(&mut w, &name, &label, &entry, fee_rate)?;
                 return Ok(());
             }
-            // a relayer pays: no wallet of ours is involved
-            let mut payer = match relay {
-                Some(_) => None,
-                None => Some(ctx.wallet(&name)?),
+            // a relayer pays: no wallet of ours is involved (a fee vault
+            // needs the depositor's wallet to sign the draw)
+            let mut payer = if relay.is_some() {
+                None
+            } else {
+                Some(ctx.wallet(&name)?)
             };
             ctx.publish(
                 payer.as_mut().map(|w| (w, name.as_str())),
                 &label,
                 &entry,
                 fee_rate,
-                PublishMode::pick(false, relay),
+                PublishMode::pick(false, relay, fee_vault, max_fee),
             )?;
         }
         Cmd::Serve {
@@ -1585,8 +1660,21 @@ mod tests {
         assert_eq!(hex, expect);
         let entry = OutboxEntry::new(&[0xab; 10], Some(b"sbx\x01".to_vec()), vec![out]);
         assert_eq!(entry.outputs().unwrap().len(), 3);
-        assert_eq!(PublishMode::pick(true, Some("x".into())).name(), "outbox");
-        assert_eq!(PublishMode::pick(false, Some("x".into())).name(), "relay");
-        assert_eq!(PublishMode::pick(false, None).name(), "self-fund");
+        assert_eq!(
+            PublishMode::pick(true, Some("x".into()), None, None).name(),
+            "outbox"
+        );
+        assert_eq!(
+            PublishMode::pick(false, Some("x".into()), None, None).name(),
+            "relay"
+        );
+        assert_eq!(
+            PublishMode::pick(false, None, None, None).name(),
+            "self-fund"
+        );
+        assert_eq!(
+            PublishMode::pick(false, None, Some("v".into()), Some(9)).name(),
+            "fee-vault"
+        );
     }
 }

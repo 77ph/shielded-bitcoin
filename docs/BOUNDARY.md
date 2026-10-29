@@ -59,9 +59,9 @@ Every carrier transaction needs Bitcoin inputs to pay its miner fee, and
 those inputs are what links carriers at the Bitcoin layer (paper §20.5):
 the transfer proof says nothing about them. The paper requires any fee
 model to state who pays, what each party sees, and what happens when a
-service is unavailable. `sb` implements three, all outside the profile
-(`PROFILE.md` §14); the PIPE-based fee vault the paper intends is not one of
-them.
+service is unavailable. `sb` implements four, all outside the profile
+(`PROFILE.md` §14): the three below, and a development scaffold of the
+PIPE-based fee vault the paper intends, specified in `docs/FEE-VAULT.md`.
 
 ### 1. Self-funding from the wallet's fee wallet (default)
 
@@ -149,6 +149,25 @@ not a payout memo, and more than `--max-per-hour` carriers. Clients use
   needs a front proxy or an allow-list. Funds are never at risk beyond the
   hourly budget: only valid, unspent, never-seen transfers are paid for.
 
-What none of the three does: hide the **fact** of publication, the carrier
+### 4. Fee vault (paid in shielded credit)
+
+`sb fee-vault serve` runs the paper's fee-unlock vault (§20.5) with the
+operator's code in place of the PIPE covenant: a client deposits a
+shielded note to the vault whose `rseed` commits to an authorization key,
+then has carriers published from the vault's pool by signed draws against
+that credit, and reclaims what is left by the same key. The rule, the
+ledger invariants (no over-release, backing, write-before-broadcast), the
+leakage and what the covenant would replace are in `docs/FEE-VAULT.md`.
+
+* Who pays: the client, from its credit; the vault's pool fronts the
+  miner fee and is paid in shielded value.
+* What is visible: on chain, an ordinary transfer (the deposit) and
+  carriers in the vault's cluster, as for a relayer; to the vault, the
+  client's publication pattern under one deposit.
+* Unavailable: the carrier waits in the outbox for any other model;
+  credit waits for the vault (the one exposure of the model: unspent
+  credit, bounded by deposit size).
+
+What none of the four does: hide the **fact** of publication, the carrier
 size (700-byte envelopes in ~830–890 vB transactions), the anchor age or
 the fee rate; those fingerprints are the paper's §22.1.

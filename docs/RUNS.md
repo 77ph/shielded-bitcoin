@@ -262,3 +262,64 @@ same envelopes cost 242 / 825–892 / 839–870 vB in the OP_RETURN runs
 above. One operational note: the first withdraw attempt failed for want
 of fee coins in bob's wallet and left its input locked, as designed;
 `sb unlock` released it before the second attempt.
+
+## Private signet, 29 October 2026: the fee vault, both endings and every refusal
+
+`scripts/fee-vault-drill.sh` on the `localsignet-dev` deployment (OP_RETURN
+carrier, `K_min` 1), the client and the vault on one laptop in separate
+data directories, Bitcoin Core 30.2 validating the carriers, 8 minutes end
+to end (`sb-data-fv/LOG.md`, the vault's log and ledger beside it). The
+vault ran at 1 sat/vB with a 10-sat margin; `/info` quoted
+`fee_estimate: {transfer: 833, withdraw: 890}`.
+
+**Deposit.** Alice minted 20 000 sat, then deposited 2 500 sat
+(`032ba25a…`, an 825-vB carrier indistinguishable from any transfer).
+In the mempool and one block deep the vault reported
+`deposited 0 (unsettled 2500), credit 0`; two blocks later
+`deposited 2500, credit 2500`. Before the deposit the client refused a
+`--fee-vault` send without asking (`no deposit at …`).
+
+**Draws.** A send with `--max-fee 1` was refused by the vault
+(`fee 833 exceeds max_fee 1`), nothing charged. A 1 000-sat transfer to
+Bob was published by the vault in `d4f4bc43…` for **833 sat** (823 vB at
+1 sat/vB plus the margin), credit left 1 667; Bob's balance 1 000 after
+three blocks. A 2 000-sat withdraw to Bob's Bitcoin address, its payout
+memo signed into the draw, was published in `d79f7f09…` for **878 sat**
+(a 34-byte P2WPKH memo, 12 bytes under the estimate's P2TR assumption),
+credit left 789.
+
+**Restart with a pending draw (I3).** The vault was stopped with the
+withdraw still in the mempool and started again on another port. It
+settled nothing (the draw was not yet accepted), re-broadcast the raw
+carrier (Core already had it), rebuilt its pending set, and answered the
+client's `accounts --vault <new url>` with the same credit 789: the
+account is identified by the vault's deposit address, not its URL. After
+three blocks the withdraw was accepted and the ledger entry settled.
+
+**Refusals on the rule.** With 789 sat of credit, a transfer posted with
+`--max-fee 5000` was refused `insufficient credit: 789, need 833`; a
+reclaim was refused `credit 789 does not cover the reclaim fee 833`.
+Nothing was charged for either.
+
+**The operator's backing guard (I2).** With the vault stopped,
+`fee-vault status` showed received 2 500, released 1 711, outstanding
+789, shielded balance 2 500, `backing: ok`. A 2 400-sat send from the
+vault's wallet was refused (`leaves 100 sat against 789 sat of
+outstanding client credit (under-backed by 689 sat)`); a 100-sat send was
+built without a question.
+
+**Top-up and reclaim.** A 2 000-sat deposit under the same key
+(`--index 0`, `0dc6fa29…`) brought the credit to 2 789. The reclaim paid
+**1 956 sat** to a fresh address of Alice's in `d2de8d48…` (credit 2 789
+less the 833-sat fee of the returning transfer), accepted three blocks
+later; Alice's balance rose by exactly that, the account's credit went to
+0. The vault's final state: received 4 500, released 1 711, reclaimed
+2 789, earned 2 544, outstanding 0, shielded balance 2 544, `backing: ok`.
+The ledger holds the two draws and the reclaim, all settled, raw
+transactions and nullifiers dropped.
+
+What the run shows: the rule released exactly the fees of the carriers
+it published plus the margin, never more than the credit; the one draw a
+restart found pending was neither lost nor charged twice; the credit
+that remained was returned by the same key; and the operator's wallet
+refused to spend below what it still owed.

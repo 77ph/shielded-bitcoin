@@ -43,6 +43,42 @@ pub fn read_request(conn: &TcpStream) -> Result<(String, String, Vec<u8>)> {
     Ok((method, path, body))
 }
 
+/// `POST` a JSON body to `url` and parse the JSON answer. A refusal (non-2xx)
+/// becomes `<service> refused (<code>): <its error field>`, a transport
+/// failure `<service> unreachable: …`.
+pub fn post_json(url: &str, body: &impl serde::Serialize, service: &str) -> Result<Value> {
+    let resp = ureq::post(url)
+        .timeout(std::time::Duration::from_secs(120))
+        .send_json(body)
+        .map_err(|e| refusal(e, service))?;
+    resp.into_json()
+        .with_context(|| format!("{service} response"))
+}
+
+/// `GET` a JSON document from `url`, with the same error mapping.
+pub fn get_json(url: &str, service: &str) -> Result<Value> {
+    let resp = ureq::get(url)
+        .timeout(std::time::Duration::from_secs(30))
+        .call()
+        .map_err(|e| refusal(e, service))?;
+    resp.into_json()
+        .with_context(|| format!("{service} response"))
+}
+
+fn refusal(e: ureq::Error, service: &str) -> anyhow::Error {
+    match e {
+        ureq::Error::Status(code, r) => {
+            let text = r.into_string().unwrap_or_default();
+            let msg = serde_json::from_str::<Value>(&text)
+                .ok()
+                .and_then(|v| v["error"].as_str().map(str::to_string))
+                .unwrap_or(text);
+            anyhow::anyhow!("{service} refused ({code}): {}", msg.trim())
+        }
+        other => anyhow::anyhow!("{service} unreachable: {other}"),
+    }
+}
+
 pub fn respond(mut conn: TcpStream, status: u16, body: &Value) {
     let out = serde_json::to_vec(body).unwrap_or_default();
     let header = format!(
