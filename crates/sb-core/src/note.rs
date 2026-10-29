@@ -9,7 +9,7 @@ use sb_primitives::diversify::{diversifier_to_fr, diversify_hash};
 use sb_primitives::encoding::{DecodeError, fr_from_bytes, fr_to_bytes};
 use sb_primitives::poseidon::hash;
 use sb_primitives::scalar::scalar250;
-use sb_primitives::tags::{t_eph, t_kdf, t_leaf, t_mac, t_nf, t_rho, t_stream};
+use sb_primitives::tags::{t_eph, t_kdf, t_leaf, t_mac, t_nf, t_nflock, t_rho, t_stream};
 use sb_primitives::{Fr, JubjubAffine, JubjubScalar};
 
 /// `pt_note = (v, d, rseed)`.
@@ -185,6 +185,18 @@ pub fn note_leaf(
     pk_eph: &JubjubAffine,
     ct: &NoteCiphertext,
 ) -> Fr {
+    note_leaf_aux(const_salt, h_body, j, pk_eph, ct, &Fr::from(0u64))
+}
+
+/// The leaf with an explicit `h_aux` (the swap extension, `docs/SWAP.md` §3).
+pub fn note_leaf_aux(
+    const_salt: &Fr,
+    h_body: &Fr,
+    j: u64,
+    pk_eph: &JubjubAffine,
+    ct: &NoteCiphertext,
+    h_aux: &Fr,
+) -> Fr {
     hash(
         t_leaf(),
         &[
@@ -196,7 +208,7 @@ pub fn note_leaf(
             ct.c0,
             ct.c1,
             ct.tag,
-            Fr::from(0u64),
+            *h_aux,
         ],
     )
 }
@@ -204,6 +216,12 @@ pub fn note_leaf(
 /// `nf = PH(T_NF, sk_nf, rho, pos)`.
 pub fn nullifier(sk_nf: &Fr, rho: &Fr, pos: u64) -> Fr {
     hash(t_nf(), &[*sk_nf, *rho, Fr::from(pos)])
+}
+
+/// Nullifier of a locked note, `PH(T_NFLOCK, rho, pos)`: no key, so both
+/// swap parties can compute it (`docs/SWAP.md` §3).
+pub fn nullifier_locked(rho: &Fr, pos: u64) -> Fr {
+    hash(t_nflock(), &[*rho, Fr::from(pos)])
 }
 
 #[cfg(test)]

@@ -5,6 +5,7 @@ pub mod address;
 pub mod envelope;
 pub mod event;
 pub mod keys;
+pub mod lock;
 pub mod note;
 pub mod recovery;
 pub mod tree;

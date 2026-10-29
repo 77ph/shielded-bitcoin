@@ -8,8 +8,7 @@ transfer. It does not change the base profile v0.2: a deployment opts
 into the extension, base envelopes replay exactly as before, and the
 extension is a separate circuit with its own verifying key.
 
-Status: draft, implemented alongside; sections marked *measured* carry
-numbers from the implementation.
+Status: draft, implemented alongside; §13 carries measured numbers.
 
 ## 0. Summary
 
@@ -319,7 +318,7 @@ the extension.
 |---|---|
 | SHA-256 of a 32-byte `s` in circuit (arkworks gadget) | 39 482 constraints per input |
 | Base transfer circuit | 84 362 constraints, domain `2^17` |
-| Swap circuit (projected: base + 2 × (SHA-256 + E2–E7)) | ≈ 175 000 constraints, domain `2^18` |
+| Swap circuit (measured) | 174 803 constraints, 18 public inputs, domain `2^18` |
 | Envelope | 764 bytes (+64) |
 | Proof | 192 bytes (unchanged) |
 

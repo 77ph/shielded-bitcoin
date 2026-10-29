@@ -23,7 +23,9 @@ use sb_core::tree::DEPTH;
 use sb_primitives::Fr;
 use sb_primitives::diversify::{diversifier_to_fr, even_x_for_y};
 use sb_primitives::poseidon::gadget::hash_var;
-use sb_primitives::tags::{t_div, t_eph, t_kdf, t_leaf, t_mac, t_nf, t_node, t_rho, t_stream};
+use sb_primitives::tags::{
+    t_aux, t_div, t_eph, t_kdf, t_leaf, t_mac, t_nf, t_nflock, t_node, t_rho, t_stream,
+};
 
 pub type Var = FpVar<Fr>;
 pub type PointVar = EdwardsVar;
@@ -167,6 +169,18 @@ pub fn leaf_var(
     pk_eph: &PointVar,
     ct: &[Var; 3],
 ) -> Result<Var, SynthesisError> {
+    leaf_var_aux(const_salt, h_body, j, pk_eph, ct, &Var::zero())
+}
+
+/// The leaf with an explicit `h_aux` (swap extension, `docs/SWAP.md` §3).
+pub fn leaf_var_aux(
+    const_salt: &Var,
+    h_body: &Var,
+    j: &Var,
+    pk_eph: &PointVar,
+    ct: &[Var; 3],
+    h_aux: &Var,
+) -> Result<Var, SynthesisError> {
     hash_var(
         t_leaf(),
         &[
@@ -178,9 +192,61 @@ pub fn leaf_var(
             ct[0].clone(),
             ct[1].clone(),
             ct[2].clone(),
-            Var::zero(),
+            h_aux.clone(),
         ],
     )
+}
+
+/// `nf_lock = PH(T_NFLOCK, rho, pos)` (`docs/SWAP.md` §3).
+pub fn nullifier_locked_var(rho: &Var, pos: &Var) -> Result<Var, SynthesisError> {
+    hash_var(t_nflock(), &[rho.clone(), pos.clone()])
+}
+
+/// `h_aux = PH(T_AUX, H_lo, H_hi, pk_refund.x, pk_refund.y, t_refund)` (`docs/SWAP.md` §2).
+pub fn lock_commitment_var(
+    h_lo: &Var,
+    h_hi: &Var,
+    pk_refund: &PointVar,
+    t_refund: &Var,
+) -> Result<Var, SynthesisError> {
+    hash_var(
+        t_aux(),
+        &[
+            h_lo.clone(),
+            h_hi.clone(),
+            pk_refund.x.clone(),
+            pk_refund.y.clone(),
+            t_refund.clone(),
+        ],
+    )
+}
+
+/// `SHA-256(s)` of 32 witnessed bytes as `(H_lo, H_hi)`: each half is the
+/// little-endian integer of 16 digest bytes (`docs/SWAP.md` §1).
+pub fn sha256_halves_var(
+    s: &[ark_r1cs_std::uint8::UInt8<Fr>],
+) -> Result<(Var, Var), SynthesisError> {
+    let digest = ark_crypto_primitives::crh::sha256::constraints::Sha256Gadget::<Fr>::digest(s)?;
+    let pack = |bytes: &[ark_r1cs_std::uint8::UInt8<Fr>]| -> Result<Var, SynthesisError> {
+        let mut acc = Var::zero();
+        let mut weight = Fr::one();
+        for byte in bytes {
+            for bit in byte.to_bits_le()? {
+                acc += Var::from(bit) * weight;
+                weight = weight + weight;
+            }
+        }
+        Ok(acc)
+    };
+    Ok((pack(&digest.0[..16])?, pack(&digest.0[16..])?))
+}
+
+/// Enforce `a ≥ b` for two values already known to be below `2^32`, only
+/// when `cond` holds: `cond ? a − b : 0` must fit in 32 bits.
+pub fn enforce_geq_u32_if(a: &Var, b: &Var, cond: &Bit) -> Result<(), SynthesisError> {
+    let diff = Var::conditionally_select(cond, &(a - b), &Var::zero())?;
+    let _ = diff.to_bits_le_with_top_bits_zero(32)?;
+    Ok(())
 }
 
 /// `nf = PH(T_NF, sk_nf, rho, pos)`.

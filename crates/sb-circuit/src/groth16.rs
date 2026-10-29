@@ -10,6 +10,7 @@ use sha2::{Digest, Sha256};
 
 use sb_core::envelope::PROOF_LEN;
 
+use crate::swap::{SwapCircuit, SwapStatement, SwapWitness};
 use crate::transfer::{TransferCircuit, TransferStatement, TransferWitness};
 
 #[derive(Debug, thiserror::Error)]
@@ -133,4 +134,87 @@ pub fn proof_from_bytes(
     bytes: &[u8; PROOF_LEN],
 ) -> Result<Proof<Bls12_381>, ark_serialize::SerializationError> {
     Proof::<Bls12_381>::deserialize_compressed(&bytes[..])
+}
+
+/// Proving and verifying keys of the swap extension circuit (`docs/SWAP.md`).
+pub struct SwapParams {
+    pub pk: ProvingKey<Bls12_381>,
+    pub pvk: PreparedVerifyingKey<Bls12_381>,
+}
+
+impl SwapParams {
+    /// **Insecure** deterministic setup from a public seed (development only).
+    pub fn insecure_setup(seed: &[u8; 32]) -> Result<Self, ProofError> {
+        let mut rng = ChaCha20Rng::from_seed(*seed);
+        let (pk, _vk) =
+            Groth16::<Bls12_381>::circuit_specific_setup(SwapCircuit::default(), &mut rng)?;
+        Ok(Self::from_pk(pk))
+    }
+
+    pub fn from_pk(pk: ProvingKey<Bls12_381>) -> Self {
+        let pvk = Groth16::<Bls12_381>::process_vk(&pk.vk).expect("vk is well formed");
+        SwapParams { pk, pvk }
+    }
+
+    pub fn vk(&self) -> &VerifyingKey<Bls12_381> {
+        &self.pk.vk
+    }
+
+    pub fn prove<R: RngCore + CryptoRng>(
+        &self,
+        statement: &SwapStatement,
+        witness: &SwapWitness,
+        rng: &mut R,
+    ) -> Result<[u8; PROOF_LEN], ProofError> {
+        let circuit = SwapCircuit {
+            statement: Some(statement.clone()),
+            witness: Some(witness.clone()),
+        };
+        let proof = Groth16::<Bls12_381>::prove(&self.pk, circuit, rng)?;
+        Ok(proof_to_bytes(&proof)?)
+    }
+
+    pub fn pk_to_bytes(&self) -> Result<Vec<u8>, ProofError> {
+        let mut out = Vec::new();
+        self.pk.serialize_uncompressed(&mut out)?;
+        Ok(out)
+    }
+
+    /// Trusted local state, no subgroup checks (as [`TransferParams::from_pk_bytes`]).
+    pub fn from_pk_bytes(bytes: &[u8]) -> Result<Self, ProofError> {
+        let pk = ProvingKey::<Bls12_381>::deserialize_uncompressed_unchecked(bytes)?;
+        Ok(Self::from_pk(pk))
+    }
+}
+
+/// A verifier of swap envelopes (indexers).
+pub struct SwapVerifier {
+    pub vk: VerifyingKey<Bls12_381>,
+    pub pvk: PreparedVerifyingKey<Bls12_381>,
+}
+
+impl SwapVerifier {
+    pub fn new(vk: VerifyingKey<Bls12_381>) -> Self {
+        let pvk = Groth16::<Bls12_381>::process_vk(&vk).expect("vk is well formed");
+        SwapVerifier { vk, pvk }
+    }
+
+    pub fn from_vk_bytes(bytes: &[u8]) -> Result<Self, ProofError> {
+        Ok(Self::new(
+            VerifyingKey::<Bls12_381>::deserialize_compressed(bytes)?,
+        ))
+    }
+
+    /// `false` for an undecodable proof or a failed verification.
+    pub fn verify(&self, statement: &SwapStatement, proof: &[u8; PROOF_LEN]) -> bool {
+        let Ok(proof) = proof_from_bytes(proof) else {
+            return false;
+        };
+        Groth16::<Bls12_381>::verify_with_processed_vk(
+            &self.pvk,
+            &statement.to_field_elements(),
+            &proof,
+        )
+        .unwrap_or(false)
+    }
 }
