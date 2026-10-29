@@ -47,7 +47,8 @@ pub fn read_request(conn: &TcpStream) -> Result<(String, String, Vec<u8>)> {
 /// becomes `<service> refused (<code>): <its error field>`, a transport
 /// failure `<service> unreachable: …`.
 pub fn post_json(url: &str, body: &impl serde::Serialize, service: &str) -> Result<Value> {
-    let resp = ureq::post(url)
+    let resp = sb_indexer::net::agent()
+        .post(url)
         .timeout(std::time::Duration::from_secs(120))
         .send_json(body)
         .map_err(|e| refusal(e, service))?;
@@ -57,7 +58,8 @@ pub fn post_json(url: &str, body: &impl serde::Serialize, service: &str) -> Resu
 
 /// `GET` a JSON document from `url`, with the same error mapping.
 pub fn get_json(url: &str, service: &str) -> Result<Value> {
-    let resp = ureq::get(url)
+    let resp = sb_indexer::net::agent()
+        .get(url)
         .timeout(std::time::Duration::from_secs(30))
         .call()
         .map_err(|e| refusal(e, service))?;
@@ -75,7 +77,7 @@ fn refusal(e: ureq::Error, service: &str) -> anyhow::Error {
                 .unwrap_or(text);
             anyhow::anyhow!("{service} refused ({code}): {}", msg.trim())
         }
-        other => anyhow::anyhow!("{service} unreachable: {other}"),
+        other => anyhow::anyhow!("{service} unreachable: {other}{}", sb_indexer::net::route()),
     }
 }
 

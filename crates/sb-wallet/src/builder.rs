@@ -277,6 +277,12 @@ pub fn build_transfer_seeded<R: RngCore + CryptoRng>(
         });
         addresses.push(own_addr);
     }
+    // change placement (docs/PUBLICATION.md §3.2): the outputs go out in a
+    // uniformly random order, a lone real output against its dummy too
+    if rng.next_u32() & 1 == 1 {
+        output_witnesses.swap(0, 1);
+        addresses.swap(0, 1);
+    }
     let mut pk_eph = Vec::with_capacity(N_OUT);
     let mut ct_note = Vec::with_capacity(N_OUT);
     let mut entries = Vec::with_capacity(N_OUT);
@@ -684,5 +690,96 @@ mod coverage_tests {
             Err(BuildError::NotOwned(0))
         ));
         assert!(format!("{}", BuildError::InputCount).contains("inputs"));
+    }
+
+    /// docs/PUBLICATION.md §3.2: the payment lands at index 0 or 1 with
+    /// equal chance, so across a handful of seeds both positions occur.
+    #[test]
+    fn change_placement_is_random() {
+        let (k, a, tree, salt) = setup();
+        let other = WalletKeys::from_seed(&Seed([4u8; 32]));
+        let (_, b) = other.ivk.find_address(0);
+        let params = sb_circuit::TransferParams::insecure_setup(&[0u8; 32]).unwrap();
+        let mut positions = std::collections::HashSet::new();
+        for seed in 0..8u64 {
+            let mut rng = StdRng::seed_from_u64(seed);
+            let built = build_transfer(
+                &params,
+                &k,
+                &salt,
+                &tree,
+                0,
+                0,
+                &[],
+                &[Recipient {
+                    address: b,
+                    value: 0,
+                }],
+                &mut rng,
+            )
+            .unwrap();
+            let at = built
+                .output_addresses
+                .iter()
+                .position(|x| *x == b)
+                .expect("the recipient is one of the outputs");
+            assert_eq!(built.output_notes[at].d, b.d);
+            assert_eq!(built.output_addresses[1 - at], a, "the dummy is ours");
+            positions.insert(at);
+            if positions.len() == 2 {
+                break;
+            }
+        }
+        assert_eq!(positions.len(), 2, "both placements occur: {positions:?}");
+    }
+
+    /// docs/PUBLICATION.md §3.5: a rebuilt transfer shares nothing with the
+    /// first build but the nullifiers of the notes it spends.
+    #[test]
+    fn a_rebuilt_transfer_shares_only_its_nullifiers() {
+        let (k, a, mut tree, salt) = setup();
+        let salt_fe = sb_core::envelope::bytes_to_fr_253(&salt);
+        let n = note(&a, 5, 0);
+        tree.append(n.leaf(&salt_fe, &a.pk_d).unwrap());
+        let params = sb_circuit::TransferParams::insecure_setup(&[0u8; 32]).unwrap();
+        let build = |seed: u64| {
+            build_transfer(
+                &params,
+                &k,
+                &salt,
+                &tree,
+                0,
+                1,
+                std::slice::from_ref(&n),
+                &[Recipient {
+                    address: a,
+                    value: 5,
+                }],
+                &mut StdRng::seed_from_u64(seed),
+            )
+            .unwrap()
+        };
+        let first = build(11);
+        let second = build(12);
+        // the real input's nullifier is the same (it is a function of the
+        // note and its position); the dummy input's is not
+        let shared: Vec<_> = first
+            .statement
+            .nullifiers
+            .iter()
+            .filter(|nf| second.statement.nullifiers.contains(nf))
+            .collect();
+        assert_eq!(shared.len(), 1);
+        for j in 0..N_OUT {
+            assert!(!second.statement.pk_eph.contains(&first.statement.pk_eph[j]));
+            assert!(
+                !second
+                    .statement
+                    .ct_note
+                    .contains(&first.statement.ct_note[j])
+            );
+        }
+        assert_ne!(first.statement.h_body, second.statement.h_body);
+        assert_ne!(first.envelope.body.ct_out, second.envelope.body.ct_out);
     }
 }

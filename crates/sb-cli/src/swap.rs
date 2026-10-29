@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use sb_core::address::PaymentAddress;
 use sb_core::lock::{LockOpening, Secret};
-use sb_wallet::{K_WALLET, SwapRecord, anchor_for};
+use sb_wallet::{SwapRecord, anchor_for};
 
 use crate::funding::Chain;
 use crate::htlc::{Htlc, parse_outpoint};
@@ -176,7 +176,7 @@ pub enum HtlcCmd {
 
 /// `Δ = K_min + K_wallet + R` (`docs/SWAP.md` §10).
 fn delta(ctx: &Ctx) -> u32 {
-    ctx.deployment.k_min + K_WALLET + REACTION_MARGIN
+    ctx.deployment.k_min + ctx.deployment.anchor_depth + REACTION_MARGIN
 }
 
 fn check_timeouts(ctx: &Ctx, t_htlc: u32, t_refund: u32) -> Result<()> {
@@ -264,7 +264,7 @@ fn anchor(ctx: &Ctx) -> Result<(sb_indexer::Indexer, u32, u32, u64)> {
         .state
         .last_height()
         .ok_or_else(|| anyhow!("run `sb sync` first"))?;
-    let h_anchor = anchor_for(tip, K_WALLET);
+    let h_anchor = anchor_for(tip, ctx.deployment.anchor_depth);
     let size = idx
         .state
         .size_at(h_anchor)
@@ -606,7 +606,7 @@ pub fn run_swap(ctx: &Ctx, cmd: SwapCmd) -> Result<()> {
                 bail!(
                     "the refund opens at anchor {} and the wallet's anchor is {h_anchor} (tip {tip}); wait for height {}",
                     r.t_refund,
-                    r.t_refund + K_WALLET - 1
+                    r.t_refund + ctx.deployment.anchor_depth - 1
                 );
             }
             w.scan(

@@ -5,6 +5,7 @@ pub mod carrier;
 pub mod chain;
 pub mod deployment;
 pub mod hexbytes;
+pub mod net;
 pub mod replay;
 pub mod state;
 pub mod store;

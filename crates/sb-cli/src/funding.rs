@@ -318,7 +318,8 @@ impl EsploraPublisher {
 impl Publisher for EsploraPublisher {
     fn utxos(&self, address: &Address) -> Result<Vec<Utxo>> {
         let url = format!("{}/address/{}/utxo", self.base, address);
-        let list: Vec<EsploraUtxo> = ureq::get(&url)
+        let list: Vec<EsploraUtxo> = sb_indexer::net::agent()
+            .get(&url)
             .call()
             .context("esplora utxo")?
             .into_json()?;
@@ -339,16 +340,19 @@ impl Publisher for EsploraPublisher {
     fn broadcast(&self, tx: &Transaction) -> Result<Txid> {
         let hex = bitcoin::consensus::encode::serialize_hex(tx);
         let url = format!("{}/tx", self.base);
-        let resp = ureq::post(&url).send_string(&hex).map_err(|e| match e {
-            // Esplora answers policy rejections (dust, fee, missing inputs…) with 400 and a text body.
-            ureq::Error::Status(code, r) => {
-                anyhow!(
-                    "broadcast rejected ({code}): {}",
-                    r.into_string().unwrap_or_default().trim()
-                )
-            }
-            other => anyhow!("broadcast: {other}"),
-        })?;
+        let resp = sb_indexer::net::agent()
+            .post(&url)
+            .send_string(&hex)
+            .map_err(|e| match e {
+                // Esplora answers policy rejections (dust, fee, missing inputs…) with 400 and a text body.
+                ureq::Error::Status(code, r) => {
+                    anyhow!(
+                        "broadcast rejected ({code}): {}",
+                        r.into_string().unwrap_or_default().trim()
+                    )
+                }
+                other => anyhow!("broadcast: {other}{}", sb_indexer::net::route()),
+            })?;
         let txid = resp.into_string()?;
         txid.trim().parse().context("txid")
     }

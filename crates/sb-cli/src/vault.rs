@@ -33,7 +33,7 @@ use sb_indexer::carrier::MEMO_MAGIC;
 use sb_primitives::Fr;
 use sb_primitives::encoding::{fr_from_bytes, fr_to_bytes};
 use sb_wallet::wallet::FeeAccountRecord;
-use sb_wallet::{K_WALLET, Wallet, anchor_for};
+use sb_wallet::{Wallet, anchor_for};
 
 use crate::feeauth::{AuthKey, draw_message, reclaim_message, verify};
 use crate::funding::{Chain, Coin, FundingState, Utxo};
@@ -661,7 +661,7 @@ impl Vault {
         }
         let amount = cr.credit - fee;
         // the transfer that pays it
-        let h_anchor = anchor_for(tip, K_WALLET);
+        let h_anchor = anchor_for(tip, self.r.indexer.deployment.anchor_depth);
         let size = self
             .r
             .indexer
@@ -744,9 +744,17 @@ impl Vault {
         }
     }
 
-    /// Serve until `max_requests` requests were answered (`None`: forever).
-    /// Pending ledger entries are resolved before the first request (I3).
-    pub fn serve(&mut self, listener: TcpListener, max_requests: Option<u32>) -> Result<()> {
+    /// Serve until `max_requests` requests were answered (`None`: forever)
+    /// or, after any request, `stop_file` exists: a graceful stop for an
+    /// operator (and for tests, which must not kill a process whose ledger
+    /// and wallet are mid-write). Pending ledger entries are resolved
+    /// before the first request (I3).
+    pub fn serve(
+        &mut self,
+        listener: TcpListener,
+        max_requests: Option<u32>,
+        stop_file: Option<&Path>,
+    ) -> Result<()> {
         self.refresh()?;
         self.check_i1()?;
         self.resolve_pending()?;
@@ -761,6 +769,10 @@ impl Vault {
             log::info!("{peer}: {status}");
             respond(conn, status, &body);
             served += 1;
+            if stop_file.is_some_and(|f| f.exists()) {
+                log::info!("stop file present; stopping after {served} requests");
+                break;
+            }
         }
         Ok(())
     }
@@ -1046,6 +1058,9 @@ pub enum FeeVaultCmd {
         /// Stop after this many requests (tests).
         #[arg(long)]
         max_requests: Option<u32>,
+        /// Stop gracefully once this file exists (checked after each request).
+        #[arg(long)]
+        stop_file: Option<PathBuf>,
     },
     /// Deposit: a transfer to the vault's address whose `rseed` commits to a fresh authorization key.
     Deposit {
@@ -1106,6 +1121,7 @@ pub fn run(ctx: &Ctx, cmd: FeeVaultCmd) -> Result<()> {
             max_checks_per_minute,
             sync_interval,
             max_requests,
+            stop_file,
         } => {
             let (idx, store) = ctx.indexer()?;
             let chain = ctx.chain_source()?;
@@ -1138,7 +1154,7 @@ pub fn run(ctx: &Ctx, cmd: FeeVaultCmd) -> Result<()> {
                 v.r.wallet.default_address().encode(ctx.deployment.network)
             );
             std::io::Write::flush(&mut std::io::stdout())?;
-            v.serve(listener, max_requests)?;
+            v.serve(listener, max_requests, stop_file.as_deref())?;
         }
         FeeVaultCmd::Deposit {
             name,
@@ -1168,7 +1184,7 @@ pub fn run(ctx: &Ctx, cmd: FeeVaultCmd) -> Result<()> {
                 .state
                 .last_height()
                 .ok_or_else(|| anyhow!("run `sb sync` first"))?;
-            let h_anchor = anchor_for(tip, K_WALLET);
+            let h_anchor = anchor_for(tip, ctx.deployment.anchor_depth);
             let size = idx
                 .state
                 .size_at(h_anchor)

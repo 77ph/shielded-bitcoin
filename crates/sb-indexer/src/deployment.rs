@@ -47,6 +47,13 @@ pub struct SwapDeployment {
     pub setup: Setup,
 }
 
+fn default_anchor_depth() -> u32 {
+    DEFAULT_ANCHOR_DEPTH
+}
+
+/// The anchor depth wallets used before the field existed.
+pub const DEFAULT_ANCHOR_DEPTH: u32 = 3;
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Deployment {
     /// `docs/PROFILE.md` version this deployment follows (must equal
@@ -65,6 +72,12 @@ pub struct Deployment {
     pub window_w: u32,
     /// `K_min` (profile §A.6).
     pub k_min: u32,
+    /// How many blocks before the next block every wallet of this
+    /// deployment anchors its transfers (`tip + 1 − anchor_depth`,
+    /// `docs/PUBLICATION.md` §3.3): shared, so that the anchor age does not
+    /// fingerprint a wallet.
+    #[serde(default = "default_anchor_depth")]
+    pub anchor_depth: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub boundary: Option<DevBoundary>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -226,6 +239,7 @@ mod tests {
             transfer_vk_sha256: [0u8; 32],
             setup: Setup::InsecureSeed { seed: [1u8; 32] },
             window_w: 100,
+            anchor_depth: 3,
             k_min: 1,
             boundary: None,
             swap: None,

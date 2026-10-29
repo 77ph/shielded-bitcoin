@@ -29,6 +29,7 @@ fn pg_store_round_trip_and_rollback() {
         transfer_vk_sha256: vk_sha256(params.vk()),
         setup: Setup::InsecureSeed { seed: [0u8; 32] },
         window_w: 100,
+        anchor_depth: 3,
         k_min: 1,
         boundary: None,
         swap: None,

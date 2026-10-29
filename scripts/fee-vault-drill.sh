@@ -37,7 +37,7 @@ VAULT_PID=""
 stop_vault() { if [ -n "$VAULT_PID" ]; then kill "$VAULT_PID" 2>/dev/null || true; wait "$VAULT_PID" 2>/dev/null || true; VAULT_PID=""; fi; }
 start_vault() {
   "$SB" --profile "$PROFILE" --data-dir "$WORK/v" --chain "$CHAIN" --passphrase-file "$WORK/pass" \
-    fee-vault serve --name vault --listen 127.0.0.1:0 --fee-rate 1 --margin 10 --sync-interval 2 \
+    fee-vault serve --name vault --listen 127.0.0.1:0 --fee-rate 1 --margin 10 --sync-interval 2 --max-checks-per-minute 1000 \
     > "$WORK/vault.out" 2>> "$WORK/vault.log" &
   VAULT_PID=$!
   for _ in $(seq 1 600); do

@@ -29,6 +29,7 @@ fn witness_and_op_return_deployments_see_only_their_own_carriers() {
         transfer_vk_sha256: vk_sha256(params.vk()),
         setup: Setup::InsecureSeed { seed: [0u8; 32] },
         window_w: 100,
+        anchor_depth: 3,
         k_min: 1,
         boundary: Some(DevBoundary {
             vault_script_hex: "51".into(),

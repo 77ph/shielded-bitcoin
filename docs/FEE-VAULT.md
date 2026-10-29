@@ -27,9 +27,9 @@ when the service is unavailable.
 
 Status: draft, implemented (`sb fee-vault serve | deposit | accounts |
 reclaim | status`, `--fee-vault` on `send`, `withdraw` and `publish`),
-run on the private signet (§11, `RUNS.md`). Reviewed on paper by the
-project's security reviewer (v0.1); the code review follows in
-`docs/REVIEW-FEE-VAULT.md` when it exists.
+run on the private signet (§11, `RUNS.md`). Reviewed by the project's
+security reviewer, on paper (v0.1) and then the code firsthand:
+`docs/REVIEW-FEE-VAULT-IMPL.md`.
 
 ## 1. Roles and flow
 

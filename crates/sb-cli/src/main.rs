@@ -34,7 +34,7 @@ use sb_indexer::chain::light::LightSource;
 use sb_indexer::chain::rpc::BitcoinCoreRpc;
 use sb_indexer::deployment::DevBoundary;
 use sb_indexer::{ChainSource, Deployment, Indexer, Setup};
-use sb_wallet::{K_WALLET, Wallet, anchor_for};
+use sb_wallet::{Wallet, anchor_for};
 
 #[derive(Parser)]
 #[command(
@@ -65,8 +65,37 @@ struct Cli {
         default_value = "esplora:https://mempool.space/signet/api"
     )]
     chain: String,
+    /// SOCKS5 proxy for every outbound connection, `socks5://host:port` (docs/PUBLICATION.md §2.1).
+    #[arg(long, global = true, env = "SB_PROXY")]
+    proxy: Option<String>,
+    /// Broadcast carriers through this chain spec instead of `--chain` (§2.2).
+    #[arg(long, global = true)]
+    publish_via: Option<String>,
+    /// Hold a carrier for a random number of seconds in `lo-hi` before broadcasting it (§2.3).
+    #[arg(long, global = true, value_parser = parse_delay)]
+    delay: Option<(u64, u64)>,
     #[command(subcommand)]
     cmd: Cmd,
+}
+
+/// `lo-hi` (seconds), or a single number.
+fn parse_delay(s: &str) -> Result<(u64, u64), String> {
+    let (lo, hi) = match s.split_once('-') {
+        Some((a, b)) => (a, b),
+        None => (s, s),
+    };
+    let lo: u64 = lo
+        .trim()
+        .parse()
+        .map_err(|_| format!("bad delay {s:?}: lo-hi seconds"))?;
+    let hi: u64 = hi
+        .trim()
+        .parse()
+        .map_err(|_| format!("bad delay {s:?}: lo-hi seconds"))?;
+    if hi < lo {
+        return Err(format!("bad delay {s:?}: hi below lo"));
+    }
+    Ok((lo, hi))
 }
 
 #[derive(Subcommand)]
@@ -107,6 +136,9 @@ enum Cmd {
         carrier: CarrierArg,
         #[arg(long, default_value = "100")]
         window: u32,
+        /// Anchor depth every wallet of the deployment uses (docs/PUBLICATION.md §3.3).
+        #[arg(long, default_value = "3")]
+        anchor_depth: u32,
     },
     /// Multi-party setup of the Groth16 parameters (docs/CEREMONY.md).
     Ceremony {
@@ -314,6 +346,10 @@ pub(crate) struct Ctx {
     pub(crate) deployment: Deployment,
     data_dir: PathBuf,
     chain: String,
+    /// Broadcast through this spec instead of `chain` (docs/PUBLICATION.md §2.2).
+    publish_via: Option<String>,
+    /// Hold carriers for a random `lo..=hi` seconds before broadcasting (§2.3).
+    delay: Option<(u64, u64)>,
 }
 
 impl Ctx {
@@ -387,14 +423,17 @@ impl Ctx {
     /// UTXO lookup and broadcast through the same backend as `--chain` (for
     /// `light:`, through its full source; a relayer needs none).
     pub(crate) fn publisher(&self) -> Result<Box<dyn funding::Publisher>> {
-        let spec = match self.chain.strip_prefix("light:") {
-            Some(rest) => match rest.split_once('|') {
-                Some((_, full)) => full,
-                None => bail!(
-                    "light:<url> has no publisher: add |<full source> or publish through --relay"
-                ),
+        let spec = match self.publish_via.as_deref() {
+            Some(s) => s,
+            None => match self.chain.strip_prefix("light:") {
+                Some(rest) => match rest.split_once('|') {
+                    Some((_, full)) => full,
+                    None => bail!(
+                        "light:<url> has no publisher: add |<full source>, --publish-via, or publish through --relay"
+                    ),
+                },
+                None => self.chain.as_str(),
             },
-            None => self.chain.as_str(),
         };
         if let Some(url) = spec.strip_prefix("esplora:") {
             return Ok(Box::new(funding::EsploraPublisher::new(url)));
@@ -652,6 +691,9 @@ impl Ctx {
             envelope.len(),
             json_path.display()
         );
+        if !matches!(mode, PublishMode::Outbox) {
+            self.hold_before_publishing(&envelope)?;
+        }
         let txid = match mode {
             PublishMode::Outbox if commit.is_some() => {
                 let (c, value) = commit.as_ref().expect("checked");
@@ -723,6 +765,32 @@ impl Ctx {
             }
         };
         Ok(txid)
+    }
+
+    /// `--delay lo-hi` (docs/PUBLICATION.md §2.3): hold the carrier for a
+    /// random time, then make sure its anchor is still inside the window
+    /// at the earliest block it can enter.
+    fn hold_before_publishing(&self, envelope: &[u8]) -> Result<()> {
+        let Some((lo, hi)) = self.delay else {
+            return Ok(());
+        };
+        let secs = if hi > lo {
+            lo + rand::random::<u64>() % (hi - lo + 1)
+        } else {
+            lo
+        };
+        println!("holding the carrier for {secs} s before publishing (--delay {lo}-{hi})");
+        std::thread::sleep(std::time::Duration::from_secs(secs));
+        if let Some(h_anchor) = envelope_anchor(envelope) {
+            let tip = self.chain_source()?.tip()?.height;
+            if (h_anchor + self.deployment.window_w) < tip + 1 {
+                bail!(
+                    "after the delay the anchor {h_anchor} is outside the window W={} at tip {tip}; rebuild the transfer",
+                    self.deployment.window_w
+                );
+            }
+        }
+        Ok(())
     }
 
     /// Commit and reveal from the wallet's fee coins (`docs/WITNESS-CARRIER.md` §3).
@@ -838,6 +906,15 @@ enum CarrierArg {
     Witness,
 }
 
+/// The anchor height a carrier's envelope names (`None` for a mint).
+fn envelope_anchor(envelope: &[u8]) -> Option<u32> {
+    match sb_core::envelope::parse_envelope(envelope).ok()? {
+        sb_core::envelope::Envelope::Transfer(e) => Some(e.body.h_anchor),
+        sb_core::envelope::Envelope::Swap(e) => Some(e.body.base.h_anchor),
+        sb_core::envelope::Envelope::Mint(_) => None,
+    }
+}
+
 /// How a built carrier leaves the wallet.
 pub(crate) enum PublishMode {
     /// Only the outbox: fund it elsewhere or `sb publish` it later.
@@ -947,6 +1024,8 @@ impl OutboxEntry {
 fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let cli = Cli::parse();
+    // before any connection: with a proxy set, nothing goes out directly
+    sb_indexer::net::set_proxy(cli.proxy.as_deref())?;
 
     if let Cmd::Ceremony { cmd } = cli.cmd {
         return ceremony::run(cmd);
@@ -965,6 +1044,7 @@ fn main() -> Result<()> {
         swap_pk,
         carrier,
         window,
+        anchor_depth,
     } = &cli.cmd
     {
         let base = cli
@@ -1063,6 +1143,7 @@ fn main() -> Result<()> {
             setup,
             window_w: *window,
             k_min: 1,
+            anchor_depth: *anchor_depth,
             boundary: vault_script.as_ref().map(|v| DevBoundary {
                 vault_script_hex: v.clone(),
                 operator_address: operator_address.clone(),
@@ -1092,6 +1173,8 @@ fn main() -> Result<()> {
         deployment,
         data_dir: cli.data_dir.clone(),
         chain: cli.chain.clone(),
+        publish_via: cli.publish_via.clone(),
+        delay: cli.delay,
     };
 
     match cli.cmd {
@@ -1292,7 +1375,7 @@ fn main() -> Result<()> {
                 .state
                 .last_height()
                 .ok_or_else(|| anyhow!("run `sb sync` first"))?;
-            let h_anchor = anchor_for(tip, K_WALLET);
+            let h_anchor = anchor_for(tip, ctx.deployment.anchor_depth);
             let size = idx
                 .state
                 .size_at(h_anchor)
@@ -1370,7 +1453,7 @@ fn main() -> Result<()> {
                 .state
                 .last_height()
                 .ok_or_else(|| anyhow!("run `sb sync` first"))?;
-            let h_anchor = anchor_for(tip, K_WALLET);
+            let h_anchor = anchor_for(tip, ctx.deployment.anchor_depth);
             let size = idx
                 .state
                 .size_at(h_anchor)

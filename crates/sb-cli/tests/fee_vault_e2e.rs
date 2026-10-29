@@ -155,7 +155,11 @@ impl Drop for KillOnDrop {
 }
 
 /// Start a vault on `cli`'s data directory; returns the process and its URL.
+/// `stop_vault` ends it gracefully (a killed process flushes nothing,
+/// neither its ledger writes in flight nor its coverage data).
 fn start_vault(cli: &Cli) -> (KillOnDrop, String) {
+    let stop = cli.data.join("vault.stop");
+    let _ = std::fs::remove_file(&stop);
     let server = cli
         .command(&[
             "fee-vault",
@@ -170,6 +174,11 @@ fn start_vault(cli: &Cli) -> (KillOnDrop, String) {
             "10",
             "--sync-interval",
             "0",
+            // a release build posts faster than the per-address limit
+            "--max-checks-per-minute",
+            "1000",
+            "--stop-file",
+            stop.to_str().unwrap(),
         ])
         .stdout(Stdio::piped())
         .spawn()
@@ -189,6 +198,16 @@ fn start_vault(cli: &Cli) -> (KillOnDrop, String) {
 
 fn get(url: &str) -> Value {
     ureq::get(url).call().unwrap().into_json().unwrap()
+}
+
+/// Ask the vault to stop (the stop file, then one request so that it
+/// looks) and wait for the process to exit on its own.
+fn stop_vault(cli: &Cli, mut server: KillOnDrop, url: &str) {
+    std::fs::write(cli.data.join("vault.stop"), b"stop").unwrap();
+    let _ = ureq::get(&format!("{url}/info")).call();
+    let status = server.0.wait().unwrap();
+    assert!(status.success(), "vault exited with {status}");
+    std::mem::forget(server);
 }
 
 fn post(url: &str, body: &Value) -> (u16, Value) {
@@ -517,7 +536,7 @@ fn fee_vault_end_to_end() {
     assert_eq!(left2, left1 - fee2);
     let wd_label = outbox_label(&wd);
     assert_eq!(shared.mempool.lock().unwrap().len(), 1);
-    drop(server);
+    stop_vault(&vault_cli, server, &url);
     let (server, url) = start_vault(&vault_cli);
     // the pending draw was re-broadcast (the node already had it) and is
     // still pending: the same envelope is not charged again
@@ -588,7 +607,7 @@ fn fee_vault_end_to_end() {
 
     // 6. the operator's backing guard (I2): the vault wallet holds the
     //    2500-sat deposit note, outstanding credit is what is left of it
-    drop(server);
+    stop_vault(&vault_cli, server, &url);
     let status = vault_cli.ok(&["fee-vault", "status", "--name", "vault"]);
     assert!(
         status.contains(&format!("outstanding credit (upper bound): {left_now} sat")),
@@ -704,7 +723,7 @@ fn fee_vault_end_to_end() {
     );
     let acc = cli.ok(&["fee-vault", "accounts", "--name", "alice", "--vault", &url]);
     assert!(acc.contains("credit 0"), "{acc}");
-    drop(server);
+    stop_vault(&vault_cli, server, &url);
     let status = vault_cli.ok(&["fee-vault", "status", "--name", "vault"]);
     assert!(
         status.contains("outstanding credit (upper bound): 0 sat"),
