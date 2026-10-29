@@ -285,10 +285,9 @@ fn a_block_of_two_proves_fragments_chain_and_tampering_fails() {
     let mut w = witness.clone();
     w.final_block = false;
     assert!(!satisfied(circuit(2, &statement, &w)).0, "final");
-}
 
-#[test]
-fn constraint_counts() {
+    // constraint counts for the document (in the same test, so that the
+    // setup above and the 2^22 system below never share the memory)
     for n in [1usize, 4, 16] {
         let cs = ConstraintSystem::new_ref();
         cs.set_mode(SynthesisMode::Setup);
