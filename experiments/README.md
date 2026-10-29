@@ -7,4 +7,5 @@ to every build. Each has its own `Cargo.toml`; run with
 
 | Directory | Backs | Prints |
 |---|---|---|
-| `twochain` | `docs/REPLAY-PROOF.md` §4.4 (one native recursion level on the BLS12-377 / BW6-761 two-chain) | the BW6-761 constraint count of verifying one BLS12-377 Groth16 proof with 17 public inputs in-circuit |
+| `twochain` | `docs/REPLAY-PROOF.md` §4.4, `docs/REMAINING.md` §2.3(b) (one native recursion level on a 2-chain) | the outer constraint count of verifying one Groth16 proof with 17 public inputs in-circuit, for BLS12-377 inside BW6-761 and for BLS12-381 inside BW6-767; with `--prove`, the outer setup, proving and verification times (the BW6-767 setup fails: its scalar field has 2-adicity 1) |
+| `cycle` | `docs/REMAINING.md` §2.3(a) (unbounded recursion on the MNT4-753 / MNT6-753 pairing cycle) | the outer constraint count in both directions of the cycle; with `--prove`, the outer setup and proof (killed at 9.4 GB on a 16 GB machine) |
