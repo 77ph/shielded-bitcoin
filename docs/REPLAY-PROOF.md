@@ -1,4 +1,4 @@
-# Succinct replay proofs (draft v0.6)
+# Succinct replay proofs (draft v0.7)
 
 The paper's §22.2 asks whether a light client can obtain a **succinct
 proof that `R[h]` is the correct deterministic replay** of the accepted
@@ -328,7 +328,25 @@ requires the resulting opening to be the one the proofs end in. For an
 **empty** block it advances the same way by itself and requires the
 indexer's claimed opening to agree. A reorganisation shows as the
 indexer's final digest for the client's last block differing from the
-client's own; the client rolls back block by block until they agree.
+client's own; the client rolls back block by block until they agree,
+at most 100 blocks, beyond which it refuses ("diverged"): a full
+replay or a fresh light state is needed. Two consequences of judging
+by digests rather than block hashes: a branch replaced by one with the
+same replay effect (empty blocks for empty blocks) needs no rollback
+at all, the client's digests agree and it carries on; and the client's
+recorded block hashes for such heights may name orphaned blocks, which
+nothing on the client depends on.
+
+On the indexer's side a reorganisation is handled by `sb prove-batches`
+and by the server. The prover, when not told `--from`, starts at the
+first height whose file is missing **or whose recorded block hash is
+not the replayed block's**, and proves again from there; files above
+the replayed tip (a shorter branch) are removed. The server serves a
+proven block only while its recorded hash is the chain source's active
+block at that height; between the indexer's reorganisation and the
+re-proving a client gets 404 for the orphaned heights, rolls back to
+the last agreeing block and waits, instead of being handed stale
+blocks it would roll back later anyway.
 
 So the client keeps the note tree (the wallet needs paths) and the root
 tree (it needs `H` to step over empty blocks: an append-only tree, 32
@@ -391,9 +409,21 @@ replay, with no envelope bytes kept.
   10.7 s, verification 12.6 ms, 2.2 GB peak. The same for BLS12-381
   inside BW6-767: 169 580 constraints (74 741), satisfied, and no
   Groth16 setup possible (`PolynomialDegreeTooLarge`, 2-adicity 1).
-* **Not yet exercised end to end:** a reorganisation on the client's
-  side (the rollback through the digest history is implemented and
-  reviewed as logic only).
+* **Reorganisations end to end** (`crates/sb-cli/tests/proof_e2e.rs`,
+  v0.7, on the in-process fake chain, the only place a reorganisation
+  can be forced): a longer branch orphans the block with the light
+  client's payment; the indexer rolls back and replays; before it
+  re-proves, the server refuses the orphaned proven blocks and the
+  client rolls back three blocks to the fork and syncs nothing; the
+  prover re-proves from the fork and removes nothing; the client syncs
+  the four new blocks, the payment is gone from both wallets; the
+  payment is published again on the new branch and seen by both; a
+  shorter branch orphans it again, the prover removes the file above
+  the new tip, the client rolls back two blocks and syncs one; a
+  101-block branch of empty blocks replaced by 102 empty blocks needs no
+  rollback (same replay effect); a 101-block branch carrying a transfer,
+  replaced, is refused as a reorganisation deeper than the client
+  re-checks.
 * **End to end** (`crates/sb-cli/tests/proof_e2e.rs`): an indexer
   proves a history of a mint and two transfers to the light client's
   wallet (and the empty blocks between), the client syncs from the
@@ -409,6 +439,11 @@ replay, with no envelope bytes kept.
 
 ## 7. Changelog
 
+* **v0.7** — reorganisations on the proof client's side exercised end
+  to end: the prover re-proves from the first block whose hash
+  changed and removes files above the tip, the server serves a proven
+  block only while it is the active block, the client's depth limit and
+  the equal-replay-effect case stated (§4.5, §6).
 * **v0.6** — the BLS12-381 / BW6-767 measurement in §4.4 and §6 (one
   native level exists for this profile's curve, with no FFT-friendly
   prover); `REMAINING.md` linked.

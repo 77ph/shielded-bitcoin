@@ -1,4 +1,4 @@
-# What remains of §22, and why not now (draft v0.2)
+# What remains of §22, and why not now (draft v0.3)
 
 Status: a closing document for the paper's §22, the companion of the
 roadmap. Every item of §22 now ends in one of two ways: as an
@@ -447,10 +447,11 @@ and the withdraw flow are the specification to enforce.
 | §22.4 certified-recipient lineage | demonstration with numbers | this file, §2 |
 | §22.5 extensions via `h_aux` (atomic swap) | implementation, signet | `SWAP.md` |
 
-Two obligations stay recorded for whoever un-parks the project: a
-client-side reorganisation of the proof light client has not been run
-end to end (`REPLAY-PROOF.md` §6), and `REPLAY-PROOF.md` §4.4 should be
-read with §2.3(b) of this file (BW6-767 exists; it has no prover).
+One note stays recorded for whoever un-parks the project:
+`REPLAY-PROOF.md` §4.4 should be read with §2.3(b) of this file
+(BW6-767 exists; it has no prover). The client-side reorganisation of
+the proof light client, open when v0.1 of this file was written, has
+since been run end to end (`REPLAY-PROOF.md` §6, v0.7).
 
 ## 5. Sources
 
@@ -497,6 +498,8 @@ Measurements: `experiments/twochain` (both 2-chains, `--prove`) and
 
 ## 6. Changelog
 
+* **v0.3** (29 October 2026) — the reorganisation obligation of §4
+  closed (`REPLAY-PROOF.md` v0.7).
 * **v0.2** (29 October 2026) — after the paper review (PASS, no
   findings): the TiB/TB convention stated in §3.3, the Nova row of §2.4
   given as the cited band; review linked.
