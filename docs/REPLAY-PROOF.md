@@ -1,0 +1,249 @@
+# Succinct replay proofs (draft v0.1)
+
+The paper's §22.2 asks whether a light client can obtain a **succinct
+proof that `R[h]` is the correct deterministic replay** of the accepted
+envelopes up to height `h`, verifiable without re-executing replay, "for
+example a recursive or proof-carrying construction over the replay
+function", and names its proving cost, update frequency and proof size
+as open. This document is this implementation's answer: the replay
+function written as a relation, the three questions hidden in the one
+sentence, which of them a proof can close on this stack and at what
+cost, which it cannot and why, and the construction that is built and
+measured. Numbers marked *estimate* become measurements in §6.
+
+Nothing in the transfer layer changes. The transfer circuit, the
+envelope, the acceptance rules and replay are those of `PROFILE.md`; a
+replay proof is a statement *about* replay, produced by an indexer and
+checked by a client, and a client that does not want it replays as
+before.
+
+Status: draft, not yet implemented; §6 to be measured.
+
+## 1. Replay as a relation
+
+Replay state after block `h` (profile §11, §A.5–A.7):
+
+```
+S_h = ( R_h,  the note tree root (Poseidon Merkle tree, depth 32)
+        N_h,  the nullifier set
+        H_h,  the root history { h' ↦ R_h' } for h' ≤ h
+        h )
+```
+
+For block `h` with carrier candidates in block order, the acceptance
+order yields the list of **accepted** envelopes `e_1 … e_n` and, for
+each, its statement `st_i` (the public inputs of its proof: `const_salt`,
+`r_anchor`, the nullifiers, `pk_eph` and `ct_note` per output, `h_body`;
+plus `h_anchor` from the body, and `h_aux` per output for a swap). The
+step is
+
+```
+S_h = Step(S_{h−1}, [e_1 … e_n])
+```
+
+where, for each `e_i` in order: `r_anchor = H[h_anchor]` with
+`h_anchor + W ≥ h ≥ h_anchor + K_min`; the nullifiers are not in `N`
+and distinct within the block; the proof verifies against `st_i`; the
+output leaves `leaf_j = PH(T_LEAF, const_salt, h_body, j, pk_eph_j,
+ct_j, h_aux_j)` are appended to the tree; the nullifiers are added to
+`N`. Then `H[h] = R_h`. An envelope that fails any check leaves the
+state untouched.
+
+## 2. Three questions in one sentence
+
+* **Q1, correctness.** Given the list of accepted envelopes (their
+  statements), is `S_h` the state that `Step` produces from `S_{h−1}`?
+* **Q2, completeness.** Is that list exactly what the carrier rule and
+  the acceptance order yield on the Bitcoin block `h`: nothing omitted,
+  nothing added, every rejection justified?
+* **Q3, succinctness over history.** Is there one proof for all heights
+  up to `h`, or one per step?
+
+A proof of Q1 is a statement about field elements and Poseidon hashes;
+a proof of Q2 is a statement about megabytes of Bitcoin transactions;
+Q3 is about recursion. They have different answers.
+
+## 3. Q2: what Bitcoin does not commit to
+
+To prove that a list of envelopes is complete for block `h`, a prover
+must show, for **every** transaction of the block, that it is either in
+the list or not a carrier. That needs every raw transaction inside the
+circuit (its outputs scanned for the OP_RETURN magic, or its witnesses
+for the tapscript shape of `WITNESS-CARRIER.md`) and the SHA-256d
+Merkle tree from those transactions to the header's root, since the
+header is all a light client holds. One SHA-256 block costs about
+40 000 R1CS constraints in this stack (the swap circuit measured 39 482
+for a one-block input, `SWAP.md` §13). A 1.5 MB block is ≈ 25 000
+compression blocks for the txids and ≈ 2 × 3 000 for the Merkle tree:
+≈ 1.2 · 10⁹ constraints (*estimate*), four orders of magnitude above
+the 2¹⁷ constraints this implementation proves in 1.5 s and far beyond
+any single Groth16 prover. Splitting the block across many proofs does
+not change the total.
+
+There is no cheaper commitment to prove against: Bitcoin commits to
+transactions only through the txid Merkle root. Compact block filters
+(BIP 158) would be the right object, but they are not committed in
+headers; a deployment could run its own filter commitment, which is an
+indexer again. So:
+
+> A succinct replay proof removes the **state computation** from what a
+> light client trusts an indexer for. It cannot remove the **carrier
+> enumeration**: the client either downloads full blocks (and is then a
+> replayer that skips the proof verification) or accepts an indexer's
+> list, with omissions detectable only as a divergence between indexers
+> or against a full replay, exactly as the verified sync of `light:`
+> today (`README.md`, "Verified sync").
+
+This is the first result of this document, and it holds for every
+proof system: it is a property of what Bitcoin commits to.
+
+## 4. Q1: the construction
+
+### 4.1 Authenticated state
+
+Replay keeps `N` as a hash set and `H` as a map; a proof needs both as
+commitments with membership and non-membership proofs.
+
+* **Nullifier set: an indexed Merkle tree** (sorted leaves, each
+  `(value, next_value)`, depth 32, Poseidon nodes). Non-membership of
+  `x` is one leaf `(low, next)` with `low < x < next` and its path;
+  insertion updates that leaf's `next` and appends `(x, next)`: three
+  paths of 32 hashes. A sparse Merkle tree over the 255-bit key would
+  need 255 hashes per path; the indexed tree needs 32 and fixes the set
+  at 2³² nullifiers, which is a deployment parameter like the note
+  tree's depth. Its root is `N_h`.
+* **Root history: an append-only Merkle tree of roots** by height
+  offset from activation (depth 32), root `H_h`; the anchor check is a
+  membership path.
+* **Note tree:** as today (depth 32, `tree.rs`); appends are paths from
+  the current frontier.
+* **State digest:** `PH(T_STATE, R, N, H, h)`.
+
+### 4.2 The batch circuit `T`
+
+Groth16 over BLS12-381 with the stack's Poseidon, like the transfer
+circuit; one trusted setup per batch size `n` (the ceremony tooling of
+`CEREMONY.md` applies). Public inputs: `digest(S_prev)`,
+`digest(S_next)`, and `D = PH(T_BATCH, st_1 … st_n)` over the `n`
+statements (a statement is 18 field elements with `h_anchor` and the
+two `h_aux`; a slot left empty is a zero statement that the circuit
+skips). Witness: the statements and every path. Constraints per
+transfer (*estimates*; Poseidon with two inputs ≈ 250 constraints):
+
+| Check | Hashes |
+|---|---|
+| anchor: `r_anchor` at `h_anchor` in the root tree, window and `K_min` range | 32 + range |
+| two nullifiers: non-membership, distinct, insert | 2 × 3 × 32 |
+| two leaves: `leaf_j` from the statement, append | 2 × (1 + 32) |
+| statement into `D` | 1 sponge |
+| ≈ 300 hashes ≈ 75 000 constraints per transfer (*estimate*) | |
+
+So `n = 16` is ≈ 1.2 · 10⁶ constraints (2²¹), `n = 64` ≈ 5 · 10⁶
+(2²³): minutes of proving and gigabytes of proving key on a laptop,
+which decides the batch size an indexer can afford and therefore the
+update frequency the paper asks about (§6).
+
+What `T` does **not** do: verify the `n` transfer proofs, or parse
+envelopes. It proves that the state transition is the one `Step`
+prescribes **for valid statements**; the validity of the statements is
+the next layer.
+
+### 4.3 The `n` transfer proofs
+
+Three ways for a client to be sure the `n` statements carry valid
+proofs, in increasing strength:
+
+1. **Verify them one by one.** `n` pairings (≈ 4 ms each here). This is
+   what replay does; the client saves the envelopes, the hashing and
+   the state, not the pairings.
+2. **Batch-verify them.** Groth16 proofs under one verifying key
+   batch-verify with random scalars into one multi-pairing of size
+   ≈ `n + 3`: the proof bytes stay `n × 192`, the time drops several
+   times. Standard, no new assumptions, no new setup.
+3. **Aggregate them** (SnarkPack, Gailly–Maller–Nitulescu 2021): `n`
+   Groth16 proofs under one key into one proof of `O(log n)` size,
+   verified in `O(log n)` pairings, from a structured reference string
+   that a powers-of-tau transcript provides (the phase-1 output of
+   `CEREMONY.md` has the powers in both groups). This is the only
+   option that makes the per-batch proof *succinct in n*; it is also a
+   serious piece of cryptography to implement (inner pairing products
+   with KZG commitments in both groups) that arkworks does not ship.
+
+Plan: 2 now, measured next to 1; 3 as a second slice if the measured
+batch sizes make it matter, else documented as the frontier.
+
+### 4.4 Q3: recursion, and why it stops
+
+One proof for the whole history needs the verifier of `T` inside `T`.
+On BLS12-381 alone that is non-native arithmetic (pairings over the
+base field expressed in the scalar field): tens of millions of
+constraints per verification (*estimate*), measurable, not practical.
+On a two-chain the first level is native: a BLS12-377 proof verifies
+natively inside a BW6-761 circuit, which is why that pair exists; but a
+BW6-761 proof does not verify natively inside BLS12-377, so the chain
+has exactly one level. Unbounded recursion needs a pairing cycle
+(MNT4/MNT6-753: pairings an order of magnitude slower, keys to match)
+or an accumulation scheme over a cycle of non-pairing curves
+(Pasta-style folding), which would replace Groth16 for `T` and leave
+the transfer proofs on a different curve, verified non-natively again.
+
+So, within this profile, succinctness is **per batch**: a client
+verifies a chain of batch proofs from the activation state, each of
+constant size (`T`) plus the layer of §4.3; the cost is linear in the
+number of batches and independent of the transfers inside a batch up
+to that layer. The appendix experiment of §5 puts a number on the one
+native level a two-chain would buy, so that the paper can say what
+moving the transfer circuit to BLS12-377 would and would not give.
+
+### 4.5 The protocol
+
+The indexer (`sb serve`) closes batches of `B` blocks and publishes, per
+batch: the two state digests, the `n` statements, the `T` proof, and
+the transfer proofs (for batched verification) or their aggregate. A
+client with `--chain proof:<url>` holds the activation state, fetches
+batches in order, verifies `T` and the transfer proofs, recomputes `D`
+from the statements, and advances its digests. It keeps **no nullifier
+set and no root history** (their roots are in the digest) and rebuilds
+only what a wallet needs from the statements: the note tree's leaves
+for its own notes' paths (the leaves are a function of the statements).
+What it downloads per batch is `n × 576` bytes of statements plus the
+proofs, instead of `n × 700` bytes of envelopes plus partial Merkle
+trees plus the full nullifier set over time.
+
+### 4.6 What stays open or trusted
+
+* Q2 (§3): the list's completeness, trusted to the indexer or checked
+  against full blocks.
+* Batch boundaries and the batch size are the indexer's; a client that
+  wants a proof for an arbitrary height needs the indexer to close a
+  batch there.
+* `T` needs its own trusted setup per batch size; `CEREMONY.md`'s tooling
+  covers it, with the same conditions as the transfer circuit's.
+* Proving cost sits on the indexer and sets the update frequency;
+  measured in §6.
+* Succinctness over history is per batch (§4.4).
+
+## 5. Slices
+
+1. Indexed Merkle tree for nullifiers and the root tree, native, with
+   proofs, in `sb-core`; replay keeps both alongside its sets and
+   checks that the roots agree.
+2. The batch circuit `T` in `sb-circuit`, with measurements: constraints
+   per transfer, proving time and key size for `n = 4, 16, 64`.
+3. Batched Groth16 verification; `sb serve` producing batches;
+   `--chain proof:<url>`; the end-to-end test; a signet run.
+4. Appendix experiment: the constraint count of one in-circuit Groth16
+   verification of a BLS12-377 proof with 18 public inputs inside a
+   BW6-761 circuit, with arkworks' pairing gadgets, to measure the one
+   native recursion level of §4.4.
+5. (If the numbers call for it) SnarkPack aggregation.
+
+## 6. Measured
+
+To be filled.
+
+## 7. Changelog
+
+* **v0.1** — initial draft: replay as a relation, the three questions,
+  the completeness result (§3), the batch construction, the recursion
+  frontier, the protocol, the slices.

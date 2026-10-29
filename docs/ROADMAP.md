@@ -44,7 +44,25 @@ in `RUNS.md`.
 
 ## Next
 
-To be chosen from "Later" below.
+The aim now is to exhaust the paper's §22: every item ends either as an
+implementation run on a test network, or as a demonstration, with
+numbers, that it cannot be implemented at present (or that nobody knows
+how). The intended output is an article in academic form, a
+continuation of the original devoted to its §22. The owner's
+post-quantum thread comes after that.
+
+### 5. Succinct replay proofs (§22.2)
+
+`REPLAY-PROOF.md`: replay written as a relation; the three questions
+inside the paper's one (correctness of the state transition,
+completeness of the envelope list against the Bitcoin block,
+succinctness over history); the completeness result (Bitcoin commits to
+nothing a proof could be made against short of every raw transaction,
+so an indexer's enumeration stays trusted or full blocks are needed);
+a batch circuit over an indexed nullifier tree and a root tree with
+batched verification of the transfer proofs, measured; the recursion
+frontier (one native level on a two-chain, none beyond without a cycle
+or folding), with an experiment to put a number on it.
 
 ## Completed directions, as planned
 
