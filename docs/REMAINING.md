@@ -1,10 +1,11 @@
-# What remains of §22, and why not now (draft v0.1)
+# What remains of §22, and why not now (draft v0.2)
 
 Status: a closing document for the paper's §22, the companion of the
 roadmap. Every item of §22 now ends in one of two ways: as an
 implementation run on a test network, documented in its own file, or
 here, as a demonstration with numbers that it cannot be implemented on
-this stack now, with the conditions under which it could be. This file
+this stack now, with the conditions under which it could be. Reviewed:
+`REVIEW-REMAINING.md` (paper pass, PASS, arithmetic re-derived). This file
 covers the three items that end the second way: smaller proof systems
 (§22.1), certified-recipient lineage (§22.4, Appendix D) and the
 PIPE-based boundary (§20.4, §22.3). It is written for a reader who will
@@ -285,7 +286,7 @@ twist degree.
 | Groth16 on MNT4-753 | 95 + 190 + 95 = 380 B | 856 B | ≈ 1 681 vB (×2.0) | ≈ 661 vB (×1.5) |
 | Groth16 on MNT6-753 | 95 + 285 + 95 = 475 B | 1 046 B | ≈ 1 871 vB (×2.3) | ≈ 709 vB (×1.6) |
 | Groth16 on BW6-761/767 (one level only) | 96 + 96 + 96 = 288 B | 672 B | ≈ 1 497 vB (×1.8) | ≈ 615 vB (×1.4) |
-| Nova compressed (not ZK as IVC) | 8–9 KB [cited] | ≈ 17 KB | ≈ 18 000 vB (×22) | ≈ 4 800 vB (×10.8) |
+| Nova compressed (not ZK as IVC) | 8–9 KB [cited] | ≈ 16–18 KB | ≈ 17 000–19 000 vB (×21–23) | ≈ 4 500–5 100 vB (×10–11) |
 
 Every ordinary transfer pays the same, because Appendix D requires the
 dummy payload on every non-lineage output "so the branches are not
@@ -368,9 +369,10 @@ pairing equation is 8 212 / 8 307, and the ciphertext size is
 v (2g + 1)² |F|. With |F| = 32 bytes:
 
     14 083 × (2 × 14 371 + 1)² × 32 B = 14 083 × 826 160 049 × 32 B
-                                      = 3.72 × 10¹⁴ B = 338 TiB   [computed]
+                                      = 3.72 × 10¹⁴ B = 338 TiB = 372 TB   [computed]
 
-matching the papers' "≈ 338 TB". The authors add: "These numbers should
+matching the papers' "≈ 338 TB" when their TB is read as the binary
+unit (2⁴⁰ bytes); in decimal terabytes the same ciphertext is 372 TB. The authors add: "These numbers should
 not be fully trusted - after all, we do not have a full implementation
 and only a modeling script which could very well miss some important
 subroutine completely" (2026/175 §4.10); the PIPEs paper: "based on a
@@ -495,5 +497,8 @@ Measurements: `experiments/twochain` (both 2-chains, `--prove`) and
 
 ## 6. Changelog
 
+* **v0.2** (29 October 2026) — after the paper review (PASS, no
+  findings): the TiB/TB convention stated in §3.3, the Nova row of §2.4
+  given as the cited band; review linked.
 * **v0.1** (29 October 2026) — first version: the three items, the
   2-chain measurement on BLS12-381/BW6-767, the §22 table.

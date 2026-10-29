@@ -167,7 +167,7 @@ the fee-funding models reused, a deployment on signet alongside the
 OP_RETURN one, and measurements of weight, fees and confirmation
 behaviour side by side, recorded in `RUNS.md`.
 
-### Closed without implementation, with numbers (`REMAINING.md`)
+### Closed without implementation, with numbers (`REMAINING.md`, reviewed: `REVIEW-REMAINING.md`)
 
 * Peg-in and peg-out through PIPEs v2 (§20.4, §22.3; ePrint 2026/186):
   the only WE instantiation its authors consider implementable needs
