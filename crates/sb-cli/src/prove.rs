@@ -6,7 +6,7 @@
 //! `GET /batches/<height>`. An empty block is written without a proof:
 //! the client steps over it by itself.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use anyhow::{Context, Result, anyhow};
@@ -46,13 +46,38 @@ pub(crate) fn run(ctx: &Ctx, from: Option<u32>, dry_run: bool) -> Result<usize> 
     let first = match from {
         Some(h) => h,
         None => {
+            // the first height without a file, or whose file describes a
+            // block replay no longer has (a reorganisation): everything
+            // from there is proven again
             let mut h = ctx.deployment.activation_height;
-            while h <= tip && batch_path(ctx, h).exists() {
-                h += 1;
+            while h <= tip {
+                match stored_hash(&batch_path(ctx, h)) {
+                    Some(stored) if replayed_hash(state, h).as_deref() == Some(stored.as_str()) => {
+                        h += 1
+                    }
+                    Some(_) => {
+                        println!(
+                            "block {h}: the proven block is not the replayed one (reorganised); proving again from {h}"
+                        );
+                        break;
+                    }
+                    None => break,
+                }
             }
             h
         }
     };
+    // files above the tip describe orphaned blocks: never serve them
+    let mut stale = 0;
+    let mut above = tip + 1;
+    while batch_path(ctx, above).exists() {
+        std::fs::remove_file(batch_path(ctx, above))?;
+        stale += 1;
+        above += 1;
+    }
+    if stale > 0 {
+        println!("{stale} proven block(s) above the tip {tip} removed (orphaned)");
+    }
     if first > tip {
         println!("every block up to {tip} is proven");
         return Ok(0);
@@ -73,12 +98,8 @@ pub(crate) fn run(ctx: &Ctx, from: Option<u32>, dry_run: bool) -> Result<usize> 
             ctx.deployment.activation_height,
             &salt,
         )?;
-        let hash = state
-            .blocks
-            .iter()
-            .find(|b| b.height == height)
-            .map(|b| b.hash.to_string())
-            .ok_or_else(|| anyhow!("block {height} not replayed"))?;
+        let hash =
+            replayed_hash(state, height).ok_or_else(|| anyhow!("block {height} not replayed"))?;
         let empty = fragments.len() == 1 && fragments[0].slots.iter().all(|s| s.is_none());
         let last_next = fragments.last().expect("one fragment at least").next;
         let mut out = ProvenBlockJson {
@@ -155,6 +176,22 @@ pub(crate) fn run(ctx: &Ctx, from: Option<u32>, dry_run: bool) -> Result<usize> 
     }
     println!("{written} block(s) written to {}", dir.display());
     Ok(written)
+}
+
+/// The block hash a proven-block file was written for.
+fn stored_hash(path: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&text).ok()?;
+    v.get("hash")?.as_str().map(str::to_string)
+}
+
+/// The hash of the replayed block at `height`.
+fn replayed_hash(state: &ReplayState, height: u32) -> Option<String> {
+    state
+        .blocks
+        .iter()
+        .find(|b| b.height == height)
+        .map(|b| b.hash.to_string())
 }
 
 /// The envelope's proof: its last `PROOF_LEN` bytes.

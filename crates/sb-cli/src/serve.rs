@@ -57,7 +57,11 @@ impl Server {
         }
     }
 
-    /// A proven block, as `sb prove-batches` wrote it.
+    /// A proven block, as `sb prove-batches` wrote it, and only while it
+    /// is the active block at that height: after a reorganisation the
+    /// file describes an orphaned block until the prover rewrites it, and
+    /// a client must not see it (it would roll back on its own, but
+    /// there is no reason to hand it stale data first).
     fn batch(&self, which: &str) -> (u16, Value) {
         let Ok(height) = which.parse::<u32>() else {
             return (400, json!({"error": "height expected"}));
@@ -65,12 +69,24 @@ impl Server {
         let Some(dir) = &self.batches else {
             return (404, json!({"error": "no proven blocks"}));
         };
-        match std::fs::read_to_string(dir.join(format!("{height}.json"))) {
+        let v = match std::fs::read_to_string(dir.join(format!("{height}.json"))) {
             Ok(text) => match serde_json::from_str::<Value>(&text) {
-                Ok(v) => (200, v),
-                Err(e) => (500, json!({"error": format!("proven block {height}: {e}")})),
+                Ok(v) => v,
+                Err(e) => return (500, json!({"error": format!("proven block {height}: {e}")})),
             },
-            Err(_) => (404, json!({"error": "not proven"})),
+            Err(_) => return (404, json!({"error": "not proven"})),
+        };
+        let active = match self.chain.block_hash(height) {
+            Ok(h) => h.map(|h| h.to_string()),
+            Err(e) => return (500, json!({"error": format!("chain: {e}")})),
+        };
+        match (active, v.get("hash").and_then(Value::as_str)) {
+            (Some(a), Some(f)) if a == f => (200, v),
+            (None, _) => (404, json!({"error": "above the chain tip"})),
+            _ => (
+                404,
+                json!({"error": format!("proven block {height} is not the active block (reorganised, not yet re-proven)")}),
+            ),
         }
     }
 

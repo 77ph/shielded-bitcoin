@@ -339,6 +339,118 @@ fn light_client_syncs_from_proofs() {
     std::fs::write(&path, &original).unwrap();
     let synced = fresh.ok(&["sync"]);
     assert!(synced.contains("accepted: 4"), "{synced}");
+
+    // reorganisation: the block with bob's payment to the operator and the
+    // two after it are orphaned by a longer branch of empty blocks
+    let tip = shared.chain.lock().unwrap().height().unwrap();
+    let fork = tip - 3;
+    shared.chain.lock().unwrap().reorg_to(fork);
+    mine(4);
+    let synced = indexer.ok(&["sync"]);
+    assert!(
+        synced.contains(&format!("rolled_back_to: Some({fork})")),
+        "{synced}"
+    );
+    // until the indexer proves the new branch, the server refuses the
+    // orphaned proven blocks; the client rolls back to the fork and waits
+    let synced = light.ok(&["sync"]);
+    assert!(
+        synced.contains(&format!("rolled_back_to: Some({fork})")),
+        "{synced}"
+    );
+    assert!(synced.contains("blocks: 0"), "{synced}");
+    assert_eq!(balance(&light.ok(&["scan", "--name", "bob"])), 1500);
+    let proven = indexer.ok(&["prove-batches"]);
+    assert!(proven.contains("reorganised"), "{proven}");
+    assert!(proven.contains("4 block(s) written"), "{proven}");
+    let synced = light.ok(&["sync"]);
+    assert!(synced.contains("rolled_back_to: None"), "{synced}");
+    assert!(synced.contains("blocks: 4"), "{synced}");
+    assert!(synced.contains("accepted: 0"), "{synced}");
+    assert_eq!(balance(&light.ok(&["scan", "--name", "bob"])), 1500);
+    assert_eq!(balance(&indexer.ok(&["scan", "--name", "operator"])), 0);
+    // bob's payment comes back on the new branch: the client replays it
+    // (the light state is byte-compatible with the full one at every step)
+    light.ok(&["unlock", "--name", "bob"]);
+    publishing.global = vec!["--publish-via".into(), esplora.clone()];
+    publishing.ok(&[
+        "send",
+        "--name",
+        "bob",
+        "--to",
+        &op_shielded,
+        "--amount",
+        "700",
+        "--fee-rate",
+        "1",
+    ]);
+    mine(2);
+    assert!(indexer.ok(&["sync"]).contains("accepted: 1"));
+    indexer.ok(&["prove-batches"]);
+    let synced = light.ok(&["sync"]);
+    assert!(synced.contains("accepted: 1"), "{synced}");
+    assert_eq!(balance(&light.ok(&["scan", "--name", "bob"])), 800);
+    assert_eq!(balance(&indexer.ok(&["scan", "--name", "operator"])), 700);
+
+    // a shorter branch orphans the payment again: the proven block above
+    // the new tip is removed, the client rolls back two blocks and syncs
+    // the one new block
+    let tip = shared.chain.lock().unwrap().height().unwrap();
+    shared.chain.lock().unwrap().reorg_to(tip - 2);
+    mine(1);
+    indexer.ok(&["sync"]);
+    let proven = indexer.ok(&["prove-batches"]);
+    assert!(proven.contains("above the tip"), "{proven}");
+    let synced = light.ok(&["sync"]);
+    assert!(
+        synced.contains(&format!("rolled_back_to: Some({})", tip - 2)),
+        "{synced}"
+    );
+    assert!(synced.contains("blocks: 1"), "{synced}");
+    assert_eq!(balance(&light.ok(&["scan", "--name", "bob"])), 1500);
+    assert_eq!(balance(&indexer.ok(&["scan", "--name", "operator"])), 0);
+
+    // a reorganisation deeper than the client re-checks (100 blocks) is
+    // refused: a full replay, or a fresh light state, is needed. The
+    // orphaned branch must change the state for the digests to differ:
+    // a branch of empty blocks replaced by another needs no rollback at
+    // all, the client's digests agree and it carries on
+    mine(101);
+    indexer.ok(&["sync"]);
+    indexer.ok(&["prove-batches"]);
+    let synced = light.ok(&["sync"]);
+    assert!(synced.contains("blocks: 101"), "{synced}");
+    let tip = shared.chain.lock().unwrap().height().unwrap();
+    shared.chain.lock().unwrap().reorg_to(tip - 101);
+    mine(102);
+    indexer.ok(&["sync"]);
+    indexer.ok(&["prove-batches"]);
+    let synced = light.ok(&["sync"]);
+    assert!(synced.contains("rolled_back_to: None"), "{synced}");
+    assert!(synced.contains("blocks: 1"), "{synced}");
+    indexer.ok(&[
+        "send",
+        "--name",
+        "alice",
+        "--to",
+        &bob_shielded,
+        "--amount",
+        "100",
+        "--fee-rate",
+        "1",
+    ]);
+    mine(101);
+    indexer.ok(&["sync"]);
+    indexer.ok(&["prove-batches"]);
+    let synced = light.ok(&["sync"]);
+    assert!(synced.contains("accepted: 1"), "{synced}");
+    assert_eq!(balance(&light.ok(&["scan", "--name", "bob"])), 1600);
+    let tip = shared.chain.lock().unwrap().height().unwrap();
+    shared.chain.lock().unwrap().reorg_to(tip - 101);
+    mine(102);
+    indexer.ok(&["sync"]);
+    indexer.ok(&["prove-batches"]);
+    light.fails(&["sync"], "diverged");
     drop(server);
     let _ = std::fs::remove_dir_all(&dir);
 }
