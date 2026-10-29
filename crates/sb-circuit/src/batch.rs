@@ -54,8 +54,8 @@ fn lt_var(a: &Var, b: &Var) -> Result<Bit, SynthesisError> {
     let mut eq = Bit::TRUE;
     for (x, y) in ba.iter().rev().zip(bb.iter().rev()) {
         let here = (!x) & y;
-        lt = lt | (&eq & &here);
-        eq = eq & !(x ^ y);
+        lt |= &eq & &here;
+        eq &= !(x ^ y);
     }
     Ok(lt)
 }
@@ -142,8 +142,8 @@ impl ConstraintSynthesizer<Fr> for BatchCircuit {
                 .map(|s| s.statement.to_elements())
                 .unwrap_or([Fr::zero(); SLOT_ELEMENTS]);
             let mut elems = Vec::with_capacity(SLOT_ELEMENTS);
-            for k in 0..SLOT_ELEMENTS {
-                let v = Var::new_witness(cs.clone(), || Ok(elems_native[k]))?;
+            for native in &elems_native {
+                let v = Var::new_witness(cs.clone(), || Ok(*native))?;
                 // an empty slot is all zeros, so that `D` is canonical
                 v.conditional_enforce_equal(&Var::zero(), &!active.clone())?;
                 elems.push(v);
