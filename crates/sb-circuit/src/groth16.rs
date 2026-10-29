@@ -337,3 +337,51 @@ impl BatchVerifier {
             .unwrap_or(false)
     }
 }
+
+/// Batched verification of Groth16 proofs under one verifying key
+/// (`docs/REPLAY-PROOF.md` §4.3, option 2): one multi-pairing instead of
+/// one pairing check per proof, with random scalars so that no proof can
+/// compensate for another. `None` scalars (a deterministic check) would
+/// let a pair of invalid proofs cancel; the scalars come from `rng`.
+pub fn verify_batch<R: RngCore + CryptoRng>(
+    vk: &VerifyingKey<Bls12_381>,
+    items: &[(Vec<Fr>, [u8; PROOF_LEN])],
+    rng: &mut R,
+) -> bool {
+    use ark_ec::pairing::Pairing;
+    use ark_ec::{AffineRepr, CurveGroup, VariableBaseMSM};
+    use ark_ff::UniformRand;
+    if items.is_empty() {
+        return true;
+    }
+    let mut g1 = Vec::with_capacity(items.len() * 3 + 1);
+    let mut g2 = Vec::with_capacity(items.len() * 3 + 1);
+    let mut r_sum = Fr::from(0u64);
+    for (inputs, bytes) in items {
+        let Ok(proof) = proof_from_bytes(bytes) else {
+            return false;
+        };
+        if inputs.len() + 1 != vk.gamma_abc_g1.len() {
+            return false;
+        }
+        // the public-input combination L = gamma_abc[0] + Σ x_i gamma_abc[i]
+        let l = vk.gamma_abc_g1[0].into_group()
+            + <ark_bls12_381::G1Projective as VariableBaseMSM>::msm_unchecked(
+                &vk.gamma_abc_g1[1..],
+                inputs,
+            );
+        let r = Fr::rand(rng);
+        r_sum += r;
+        // e(rA, B) · e(−rL, γ) · e(−rC, δ) per proof, · e(−Σr α, β) once == 1
+        g1.push((proof.a.into_group() * r).into_affine());
+        g2.push(proof.b);
+        g1.push((-(l * r)).into_affine());
+        g2.push(vk.gamma_g2);
+        g1.push((-(proof.c.into_group() * r)).into_affine());
+        g2.push(vk.delta_g2);
+    }
+    g1.push((-(vk.alpha_g1.into_group() * r_sum)).into_affine());
+    g2.push(vk.beta_g2);
+    let out = Bls12_381::multi_pairing(g1, g2);
+    out.0 == <Bls12_381 as Pairing>::TargetField::from(1u64)
+}

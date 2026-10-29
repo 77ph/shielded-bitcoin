@@ -6,7 +6,7 @@
 use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystem, SynthesisMode};
 use ark_std::rand::{SeedableRng, rngs::StdRng};
 
-use sb_circuit::groth16::BatchShape;
+use sb_circuit::groth16::{BatchShape, verify_batch};
 use sb_circuit::{BatchCircuit, BatchParams};
 use sb_core::batch::{
     BatchStatement, BatchWitness, N_OUT, NullifierInsert, SlotStatement, SlotWitness, StateOpening,
@@ -47,10 +47,12 @@ struct Sim {
 }
 
 impl Sim {
-    /// Three empty blocks replayed: roots for `ACT..ACT+3`, next block `ACT+3`.
+    /// Three empty blocks replayed: leaf 0 the root before activation, then
+    /// roots for `ACT..ACT+3`; next block `ACT+3`.
     fn new() -> Self {
         let tree = NoteTree::new();
         let mut roots = NoteTree::new();
+        roots.append(sb_core::tree::EMPTY_ROOTS[sb_core::tree::DEPTH]);
         for _ in 0..3 {
             roots.append(tree.root());
         }
@@ -78,7 +80,9 @@ impl Sim {
     /// Apply one synthetic accepted transfer anchored at `h_anchor`.
     fn slot(&mut self, h_anchor: u32, seed: u64) -> SlotWitness {
         let f = |k: u64| hash(t_batch(), &[Fr::from(seed), Fr::from(k)]);
-        let pos = (h_anchor - ACT) as u64;
+        // an anchor below ACT is the initial root by definition
+        let pre = h_anchor < ACT;
+        let pos = if pre { 0 } else { (h_anchor - ACT + 1) as u64 };
         let statement = SlotStatement {
             h_anchor,
             r_anchor: self.roots.leaves()[pos as usize],
@@ -100,7 +104,11 @@ impl Sim {
             h_aux: [Fr::from(0u64); N_OUT],
             mint: false,
         };
-        let anchor_siblings = self.roots.path_at(pos, self.roots.size()).unwrap().siblings;
+        let anchor_siblings = if pre {
+            [Fr::from(0u64); sb_core::tree::DEPTH]
+        } else {
+            self.roots.path_at(pos, self.roots.size()).unwrap().siblings
+        };
         let nullifiers = [
             NullifierInsert::from(&self.nf.insert(statement.nullifiers[0]).unwrap()),
             NullifierInsert::from(&self.nf.insert(statement.nullifiers[1]).unwrap()),
@@ -237,6 +245,22 @@ fn a_block_of_two_proves_fragments_chain_and_tampering_fails() {
     let mut rng = StdRng::seed_from_u64(1);
     let proof = params.prove(&statement, &witness, &mut rng).unwrap();
     assert!(params.verify(&statement, &proof));
+    // batched verification (REPLAY-PROOF.md §4.3 option 2): two proofs
+    // under one key in one multi-pairing; a wrong one spoils the batch
+    let proof2 = params.prove(&statement, &witness, &mut rng).unwrap();
+    assert_ne!(proof, proof2, "re-randomised");
+    let items = vec![
+        (statement.to_field_elements(), proof),
+        (statement.to_field_elements(), proof2),
+    ];
+    assert!(verify_batch(params.vk(), &items, &mut rng));
+    let mut tampered = items.clone();
+    tampered[1].0[2] += Fr::from(1u64);
+    assert!(!verify_batch(params.vk(), &tampered, &mut rng));
+    let mut tampered = items.clone();
+    tampered[0].1[0] ^= 1;
+    assert!(!verify_batch(params.vk(), &tampered, &mut rng));
+    assert!(verify_batch(params.vk(), &[], &mut rng));
     let mut bad = statement;
     bad.s_next += Fr::from(1u64);
     assert!(!params.verify(&bad, &proof));
@@ -299,12 +323,13 @@ fn a_block_of_two_proves_fragments_chain_and_tampering_fails() {
     };
     assert!(satisfied(circuit(2, &st3, &w3)).0);
 
-    // a block with a mint and a transfer: the mint appends one leaf and
+    // a block with a mint and a transfer anchored before activation (the
+    // initial root, no tree membership): the mint appends one leaf and
     // touches neither the anchor nor the nullifier tree
     let mut sim4 = Sim::new();
     let m0 = sim4.opening();
     let mint = sim4.mint_slot(5);
-    let tx = sim4.slot(ACT + 1, 6);
+    let tx = sim4.slot(ACT - 1, 6);
     let ra4 = sim4.finish_block();
     let m1 = sim4.opening();
     assert_eq!(m1.size, m0.size + 3);
@@ -334,6 +359,20 @@ fn a_block_of_two_proves_fragments_chain_and_tampering_fails() {
     assert!(
         !satisfied(circuit(2, &st, &w)).0,
         "a mint presented as a transfer"
+    );
+    // a pre-activation anchor must open to the initial root, nothing else
+    let mut w = w4.clone();
+    w.slots[1].as_mut().unwrap().statement.r_anchor += Fr::from(1u64);
+    let st = BatchStatement {
+        d: batch_digest(&[
+            Some(mint.statement),
+            Some(w.slots[1].as_ref().unwrap().statement),
+        ]),
+        ..st4
+    };
+    assert!(
+        !satisfied(circuit(2, &st, &w)).0,
+        "pre-activation anchor root"
     );
 
     // ---- tampering: each leaves the constraints unsatisfied ----
