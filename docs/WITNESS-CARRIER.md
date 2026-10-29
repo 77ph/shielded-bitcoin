@@ -78,11 +78,15 @@ The publisher computes it from the reveal's size at the chosen fee rate.
 
 For a transaction `tx`, in block order:
 
-1. For each input, if its witness has at least two items, take the
-   second-to-last item as a script (a script-path spend without annex is
-   `…signatures…, script, control block`). If the script has the shape of
-   §2 and its concatenated chunks start with the magic `"btc" 0x01`, the
-   input **reveals an envelope**.
+1. For each input, take the script of its script-path witness: the
+   second-to-last item (`…signatures…, script, control block`), or the
+   third-to-last when the last item is a BIP 341 annex (it starts with
+   `0x50`: `…, script, control block, annex`); a witness too short for
+   that reveals nothing. If the script has the shape of §2 and its
+   concatenated chunks start with the magic `"btc" 0x01`, the input
+   **reveals an envelope**. (The publisher never adds an annex; the rule
+   reads one so that a valid reveal is never a spent commit the indexer
+   ignores, and so that every implementation agrees on the same inputs.)
 2. If exactly one input reveals an envelope, `tx` is a candidate with
    those bytes. If more than one does, `tx` is **rejected and logged**
    (never "the first one"). If a script has the magic inside but breaks
@@ -142,7 +146,10 @@ Standardness: a reveal of this shape is the same construction as an
 inscription (`OP_FALSE OP_IF` data in a tapscript), relayed and mined
 under Bitcoin Core's **default** policy on every version since Taproot,
 and it does not depend on the `datacarriersize` setting that an OP_RETURN
-envelope above 83 bytes does. The limits that apply are script's 520
+envelope above 83 bytes does. That is a statement about the default: node
+operators and miners can and some do run policies that filter such
+witness data, so relay is a property of the network a deployment
+publishes to, to be measured there, not a guarantee. The limits that apply are script's 520
 bytes per push (hence the chunks), the standard transaction weight
 (400 000 WU, far above a reveal), and whatever policy a future node
 version may add for witness data; like any standardness property it is a

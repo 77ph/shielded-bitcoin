@@ -112,18 +112,35 @@ fn tapscript_payload(script: &ScriptBuf) -> Result<Option<Vec<u8>>, CarrierError
     Ok(Some(payload))
 }
 
+/// The script of a taproot script-path spend: the second-to-last witness
+/// item, or the third-to-last when a BIP 341 annex (a last item starting
+/// with `0x50`) is present.
+pub fn tapscript_of(witness: &bitcoin::Witness) -> Option<ScriptBuf> {
+    let n = witness.len();
+    let has_annex = n >= 2 && witness[n - 1].first() == Some(&0x50);
+    let index = if has_annex {
+        if n < 3 {
+            return None;
+        }
+        n - 3
+    } else {
+        if n < 2 {
+            return None;
+        }
+        n - 2
+    };
+    Some(ScriptBuf::from_bytes(witness[index].to_vec()))
+}
+
 /// The witness-carrier rule: exactly one input whose script-path witness
-/// (`…, script, control block`) reveals an envelope tapscript whose
-/// payload starts with the magic. Memos stay in OP_RETURN outputs.
+/// (`…, script, control block[, annex]`) reveals an envelope tapscript
+/// whose payload starts with the magic. Memos stay in OP_RETURN outputs.
 pub fn extract_envelope_witness(tx: &Transaction) -> Option<Result<Candidate, CarrierError>> {
     let mut found: Option<Vec<u8>> = None;
     for input in &tx.input {
-        let w = &input.witness;
-        // a script-path spend without annex has at least [sig…, script, control]
-        if w.len() < 2 {
+        let Some(script) = tapscript_of(&input.witness) else {
             continue;
-        }
-        let script = ScriptBuf::from_bytes(w[w.len() - 2].to_vec());
+        };
         match tapscript_payload(&script) {
             Ok(Some(payload)) if is_candidate(&payload) => {
                 if found.is_some() {
@@ -472,6 +489,22 @@ mod tests {
             CarrierMode::Witness.extract(&tx(vec![reveal_input(&empty)], vec![])),
             Some(Err(CarrierError::MalformedTapscript))
         ));
+        // a reveal with a BIP 341 annex: the script is the third-to-last item
+        let mut with_annex = reveal_input(&script);
+        with_annex.witness.push([0x50u8, 1, 2, 3]);
+        assert_eq!(
+            CarrierMode::Witness
+                .extract(&tx(vec![with_annex], vec![]))
+                .unwrap()
+                .unwrap()
+                .envelope,
+            env
+        );
+        // an annex on a two-item witness leaves no script to read
+        let mut w = Witness::new();
+        w.push(script.as_bytes());
+        w.push([0x50u8]);
+        assert!(tapscript_of(&w).is_none());
         // a small envelope fits one push
         let mut small = vec![0u8; 89];
         small[..4].copy_from_slice(&CANDIDATE_PREFIX);
