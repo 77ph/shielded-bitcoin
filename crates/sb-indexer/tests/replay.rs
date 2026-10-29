@@ -35,6 +35,7 @@ impl World {
             transfer_vk_sha256: vk_sha256(params.vk()),
             setup: Setup::InsecureSeed { seed: [0u8; 32] },
             window_w: 5,
+            anchor_depth: 3,
             k_min: 1,
             boundary: None,
             swap: None,
@@ -183,7 +184,8 @@ fn accept_spend_reject_and_reorg() {
     assert_eq!(idx.state.tree.size(), 4);
     let bob_notes = scan_incoming(&w.bob.ivk, &salt, &idx.state.events[1]);
     assert_eq!(bob_notes.len(), 1);
-    assert_eq!(bob_notes[0].pos, 2);
+    // the builder places the outputs in a random order (PUBLICATION.md §3.2)
+    assert_eq!(bob_notes[0].pos, 2 + bob_notes[0].output_index);
 
     // Block 1002: t2 republished (double spend) plus a fresh anchor-999 transfer
     // (still inside the window W = 5).

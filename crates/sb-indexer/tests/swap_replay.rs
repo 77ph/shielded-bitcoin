@@ -44,6 +44,7 @@ fn world() -> World {
         transfer_vk_sha256: vk_sha256(params.vk()),
         setup: Setup::InsecureSeed { seed: [0u8; 32] },
         window_w: 100,
+        anchor_depth: 3,
         k_min: 1,
         boundary: Some(DevBoundary {
             vault_script_hex: "51".into(),
@@ -246,10 +247,12 @@ fn lock_claim_refund_and_rejections() {
         good.statement.base.nullifiers[0],
         nullifier_locked(&ys[0].0.note.rho(), ys[0].0.pos)
     );
-    // a claim with a wrong preimage proves nothing valid
-    let mut wrong = secret;
-    wrong.0[0] ^= 1;
-    let bad = claim(wrong, ACT + 3);
+    // an envelope whose proof does not fit its statement is rejected as an
+    // invalid proof (here the anchor field is moved; that a wrong preimage
+    // cannot be proven at all is the circuit's test, sb-circuit tests/swap.rs:
+    // the prover is never asked for an unsatisfiable witness here)
+    let mut bad = good.clone();
+    bad.envelope.body.base.h_anchor = ACT + 2;
     let mut chain2 = chain.clone();
     chain2.push_block(vec![carrier_tx(&bad.envelope.to_bytes(), 8)]);
     let mut idx2 = indexer(&w, true);
@@ -353,11 +356,13 @@ fn lock_claim_refund_and_rejections() {
         )
         .unwrap()
     };
-    // the early refund is an unsatisfiable witness: in a debug build the
-    // prover's debug_assert panics on it, so this test needs --release
-    // (as CI runs it); in release the proof is produced and fails to verify
-    let early = refund_at(T_REFUND - 1);
+    // an "early" refund: the on-time envelope with its anchor field moved
+    // one block back, so that the published statement claims a height
+    // the proof was not made for (the prover is never asked for an
+    // unsatisfiable witness; what replay must reject is the envelope)
     let on_time = refund_at(T_REFUND);
+    let mut early = on_time.clone();
+    early.envelope.body.base.h_anchor = T_REFUND - 1;
     chain.push_block(vec![
         carrier_tx(&early.envelope.to_bytes(), 10),
         carrier_tx(&on_time.envelope.to_bytes(), 11),

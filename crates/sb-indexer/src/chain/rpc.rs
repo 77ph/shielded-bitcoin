@@ -35,7 +35,8 @@ impl BitcoinCoreRpc {
 
     pub fn call(&self, method: &str, params: Value) -> Result<Value, ChainError> {
         let body = json!({ "jsonrpc": "1.0", "id": "sb", "method": method, "params": params });
-        let resp: Value = match ureq::post(&self.url)
+        let resp: Value = match crate::net::agent()
+            .post(&self.url)
             .set("Authorization", &self.auth)
             .set("Content-Type", "application/json")
             .send_json(body)

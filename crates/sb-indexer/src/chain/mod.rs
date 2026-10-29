@@ -25,13 +25,13 @@ pub enum ChainError {
 
 impl From<ureq::Error> for ChainError {
     fn from(e: ureq::Error) -> Self {
-        ChainError::Http(e.to_string())
+        ChainError::Http(format!("{e}{}", crate::net::route()))
     }
 }
 
 impl From<std::io::Error> for ChainError {
     fn from(e: std::io::Error) -> Self {
-        ChainError::Http(e.to_string())
+        ChainError::Http(format!("{e}{}", crate::net::route()))
     }
 }
 

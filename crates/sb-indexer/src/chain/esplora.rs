@@ -21,7 +21,10 @@ impl Esplora {
     }
 
     fn get_text(&self, path: &str) -> Result<Option<String>, ChainError> {
-        match ureq::get(&format!("{}{}", self.base, path)).call() {
+        match crate::net::agent()
+            .get(&format!("{}{}", self.base, path))
+            .call()
+        {
             Ok(r) => Ok(Some(r.into_string()?)),
             Err(ureq::Error::Status(404, _)) => Ok(None),
             Err(e) => Err(e.into()),
@@ -58,7 +61,9 @@ impl ChainSource for Esplora {
     }
 
     fn block(&self, hash: &BlockHash) -> Result<Block, ChainError> {
-        let resp = ureq::get(&format!("{}/block/{hash}/raw", self.base)).call()?;
+        let resp = crate::net::agent()
+            .get(&format!("{}/block/{hash}/raw", self.base))
+            .call()?;
         let mut bytes = Vec::new();
         resp.into_reader().take(64 << 20).read_to_end(&mut bytes)?;
         deserialize(&bytes).map_err(|e| ChainError::Decode(e.to_string()))

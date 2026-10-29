@@ -323,3 +323,32 @@ it published plus the margin, never more than the credit; the one draw a
 restart found pending was neither lost nor charged twice; the credit
 that remained was returned by the same key; and the operator's wallet
 refused to spend below what it still owed.
+
+## Public signet, 29 October 2026: a transfer published through a proxy, with a delay
+
+Deployment `signet-dev-2` (anchor depth 3, the default), mempool.space
+Esplora as the chain source, every connection through an SSH dynamic
+forward to the project's Hetzner server (`ssh -D 127.0.0.1:1080`), given
+to `sb` as `--proxy socks5://127.0.0.1:1080` (`docs/PUBLICATION.md` §2.1).
+
+**The route.** From the laptop, `ifconfig.me` answered `84.43.158.231`
+directly and `2a01:4f8:c013:eb87::1` (the server's address) through the
+forward. The sync (`sb sync`, two blocks of catch-up) and the scans
+of both wallets ran through the same forward; nothing left the laptop
+directly.
+
+**The transfer.** Alice paid Bob 300 sat (`sb --proxy … --delay 60-180
+send`): proving at anchor 328 524 (tip 328 526 at the time, depth 3
+before the next block),
+then `holding the carrier for 156 s before publishing (--delay 60-180)`,
+then the broadcast of `6d062107…` (825 vB, 1 sat/vB) at 15:00:25 UTC.
+The anchor was re-checked against the tip when the hold ended (window
+`W` 100). The carrier was in block **328 527**, 43 seconds after the
+broadcast; replay accepted it as the first transfer of that block seen by
+this deployment (`accepted: 1`). Anchor age at acceptance: 3 blocks, the
+deployment's depth plus nothing, because no block came in during the
+156-second hold.
+
+Bob's balance 200 → 500 sat, Alice's 600 → 300. What mempool.space saw of
+the submission was the server's address; what the chain shows is an
+825-vB carrier with anchor age 3, like every carrier of this deployment.

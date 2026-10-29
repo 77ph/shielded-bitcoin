@@ -57,7 +57,7 @@ zeroize = { version = "1", features = ["derive"] }
 subtle = "2"
 
 # http
-ureq = { version = "2", features = ["json"] }
+ureq = { version = "2", features = ["json", "socks-proxy"] }
 base64 = "0.22"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 webpki-roots = "0.26"
@@ -74,7 +74,7 @@ serde_json = "1"
 hex = { version = "0.4", features = ["serde"] }
 log = "0.4"
 env_logger = "0.11"
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 proptest = "1"
 
 [profile.release]

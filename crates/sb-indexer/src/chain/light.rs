@@ -209,7 +209,10 @@ impl LightSource {
     }
 
     fn get(&self, path: &str) -> Result<Option<serde_json::Value>, ChainError> {
-        match ureq::get(&format!("{}{}", self.base, path)).call() {
+        match crate::net::agent()
+            .get(&format!("{}{}", self.base, path))
+            .call()
+        {
             Ok(r) => {
                 Ok(Some(r.into_json().map_err(|e| {
                     ChainError::Decode(format!("indexer {path}: {e}"))

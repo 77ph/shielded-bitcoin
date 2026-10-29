@@ -710,3 +710,86 @@ fn electrum_one(s: &Shared, req: &Value) -> Value {
         _ => err("unknown method"),
     }
 }
+
+/// An in-process SOCKS5 proxy (RFC 1928, no authentication, CONNECT by
+/// name or address) that records every target it was asked to reach:
+/// the test double for `crate::net` and `--proxy`.
+pub struct FakeSocks {
+    pub addr: SocketAddr,
+    pub targets: Arc<Mutex<Vec<String>>>,
+}
+
+impl FakeSocks {
+    pub fn start() -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let targets = Arc::new(Mutex::new(Vec::new()));
+        let t = targets.clone();
+        std::thread::spawn(move || {
+            for conn in listener.incoming() {
+                let Ok(mut c) = conn else { continue };
+                let t = t.clone();
+                std::thread::spawn(move || {
+                    let _ = serve_socks(&mut c, &t);
+                });
+            }
+        });
+        FakeSocks { addr, targets }
+    }
+
+    pub fn url(&self) -> String {
+        format!("socks5://{}", self.addr)
+    }
+}
+
+fn serve_socks(c: &mut TcpStream, targets: &Mutex<Vec<String>>) -> std::io::Result<()> {
+    let mut greeting = [0u8; 2];
+    c.read_exact(&mut greeting)?;
+    let mut methods = vec![0u8; greeting[1] as usize];
+    c.read_exact(&mut methods)?;
+    c.write_all(&[5, 0])?;
+    let mut head = [0u8; 4];
+    c.read_exact(&mut head)?;
+    let host = match head[3] {
+        1 => {
+            let mut a = [0u8; 4];
+            c.read_exact(&mut a)?;
+            std::net::Ipv4Addr::from(a).to_string()
+        }
+        3 => {
+            let mut l = [0u8; 1];
+            c.read_exact(&mut l)?;
+            let mut n = vec![0u8; l[0] as usize];
+            c.read_exact(&mut n)?;
+            String::from_utf8_lossy(&n).to_string()
+        }
+        4 => {
+            let mut a = [0u8; 16];
+            c.read_exact(&mut a)?;
+            std::net::Ipv6Addr::from(a).to_string()
+        }
+        _ => return Ok(()),
+    };
+    let mut p = [0u8; 2];
+    c.read_exact(&mut p)?;
+    let port = u16::from_be_bytes(p);
+    targets.lock().unwrap().push(format!("{host}:{port}"));
+    let mut up = match TcpStream::connect((host.as_str(), port)) {
+        Ok(s) => s,
+        Err(_) => {
+            c.write_all(&[5, 5, 0, 1, 0, 0, 0, 0, 0, 0])?;
+            return Ok(());
+        }
+    };
+    c.write_all(&[5, 0, 0, 1, 0, 0, 0, 0, 0, 0])?;
+    let mut c2 = c.try_clone()?;
+    let mut up2 = up.try_clone()?;
+    let pump = std::thread::spawn(move || {
+        let _ = std::io::copy(&mut c2, &mut up2);
+        let _ = up2.shutdown(std::net::Shutdown::Write);
+    });
+    let _ = std::io::copy(&mut up, c);
+    let _ = c.shutdown(std::net::Shutdown::Write);
+    let _ = pump.join();
+    Ok(())
+}

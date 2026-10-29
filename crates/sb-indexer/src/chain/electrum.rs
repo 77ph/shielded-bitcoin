@@ -13,7 +13,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{TcpStream, ToSocketAddrs};
+use std::net::TcpStream;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -208,25 +208,14 @@ impl Electrum {
         })
     }
 
-    /// Connect to the first reachable address (hosts often publish an IPv6
-    /// address that the client cannot route).
+    /// Connect: through the proxy when one is set (`crate::net`), else to
+    /// the first reachable address (hosts often publish an IPv6 address
+    /// that the client cannot route).
     fn tcp(&self) -> Result<TcpStream, ChainError> {
-        let addrs: Vec<_> = (self.host.as_str(), self.port).to_socket_addrs()?.collect();
-        if addrs.is_empty() {
-            return Err(ChainError::Rpc(format!("cannot resolve {}", self.host)));
-        }
-        let mut last = None;
-        for addr in addrs {
-            match TcpStream::connect_timeout(&addr, Duration::from_secs(10)) {
-                Ok(tcp) => {
-                    tcp.set_read_timeout(Some(Duration::from_secs(60)))?;
-                    tcp.set_write_timeout(Some(Duration::from_secs(30)))?;
-                    return Ok(tcp);
-                }
-                Err(e) => last = Some(e),
-            }
-        }
-        Err(last.unwrap().into())
+        let tcp = crate::net::connect_tcp(&self.host, self.port, Duration::from_secs(10))?;
+        tcp.set_read_timeout(Some(Duration::from_secs(60)))?;
+        tcp.set_write_timeout(Some(Duration::from_secs(30)))?;
+        Ok(tcp)
     }
 
     fn tls_builder() -> Result<
