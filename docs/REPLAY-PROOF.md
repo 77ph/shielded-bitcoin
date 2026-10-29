@@ -1,4 +1,4 @@
-# Succinct replay proofs (draft v0.1)
+# Succinct replay proofs (draft v0.2)
 
 The paper's §22.2 asks whether a light client can obtain a **succinct
 proof that `R[h]` is the correct deterministic replay** of the accepted
@@ -17,7 +17,10 @@ replay proof is a statement *about* replay, produced by an indexer and
 checked by a client, and a client that does not want it replays as
 before.
 
-Status: draft, not yet implemented; §6 to be measured.
+Status: draft; slice 1 of §5 implemented (the nullifier and root
+commitments kept by replay, with the state digest); §6 to be measured.
+Reviewed on paper by the project's security reviewer (v0.1); v0.2 folds
+in the rigour notes.
 
 ## 1. Replay as a relation
 
@@ -80,11 +83,20 @@ the 2¹⁷ constraints this implementation proves in 1.5 s and far beyond
 any single Groth16 prover. Splitting the block across many proofs does
 not change the total.
 
-There is no cheaper commitment to prove against: Bitcoin commits to
-transactions only through the txid Merkle root. Compact block filters
-(BIP 158) would be the right object, but they are not committed in
-headers; a deployment could run its own filter commitment, which is an
-indexer again. So:
+There is no cheaper commitment to prove against. Bitcoin commits to
+transactions through the txid Merkle root in the header and, for
+witness data, through the witness commitment (the wtxid Merkle root)
+in the coinbase transaction: an OP_RETURN carrier is visible in the
+txid tree, a witness carrier (`WITNESS-CARRIER.md`) only in the wtxid
+tree, so proving completeness for a witness deployment needs the
+coinbase and a second tree on top of the above. The txid tree itself
+has the leaf-count malleability of CVE-2012-2459 (one root for trees
+whose last leaf is duplicated), which is why the verified sync of
+`light:` checks the transaction count against the header's claim
+before trusting a partial tree, and why a completeness statement has to
+fix the count too. Compact block filters (BIP 158) would be the right
+object, but they are not committed anywhere; a deployment could run its
+own filter commitment, which is an indexer again. So:
 
 > A succinct replay proof removes the **state computation** from what a
 > light client trusts an indexer for. It cannot remove the **carrier
@@ -143,10 +155,33 @@ So `n = 16` is ≈ 1.2 · 10⁶ constraints (2²¹), `n = 64` ≈ 5 · 10⁶
 which decides the batch size an indexer can afford and therefore the
 update frequency the paper asks about (§6).
 
+`T` applies the statements **in order**, threading the nullifier tree
+and the note tree through the `n` slots: the non-membership proof of a
+later slot is against the tree as the earlier slots left it, so a
+double spend inside one batch fails at the second insertion, exactly as
+replay rejects it. The digest `D` is a sponge over the statements in
+that order, so it commits to the order, which is semantically
+significant (positions, roots). An empty slot is the all-zero
+statement; a real statement is never all zero (its nullifiers and
+`h_body` are Poseidon outputs), so a skipped slot cannot hide a
+transfer and a transfer cannot pass as a skipped slot.
+
 What `T` does **not** do: verify the `n` transfer proofs, or parse
 envelopes. It proves that the state transition is the one `Step`
-prescribes **for valid statements**; the validity of the statements is
-the next layer.
+prescribes **for the given statements**, valid or not; the validity of
+the statements is the next layer. Stated as the theorem a client
+relies on, soundness is a conjunction:
+
+> A client that accepts a batch is right about `S_next` if (1) `T` is
+> sound, (2) Poseidon is collision-resistant (the digests `D` and
+> `digest(S)` bind what they hash), (3) every statement in the batch
+> carries a valid transfer proof, checked by the client as §4.3
+> describes, and (4) the batch's list of statements is the list replay
+> would have produced from the Bitcoin block (§3, trusted or checked
+> against full blocks).
+
+None of the four implies another; `T` alone proves the correct
+application of possibly invalid statements.
 
 ### 4.3 The `n` transfer proofs
 
@@ -159,15 +194,19 @@ proofs, in increasing strength:
 2. **Batch-verify them.** Groth16 proofs under one verifying key
    batch-verify with random scalars into one multi-pairing of size
    ≈ `n + 3`: the proof bytes stay `n × 192`, the time drops several
-   times. Standard, no new assumptions, no new setup.
+   times. Standard, no new assumptions, no new setup. A batch that
+   mixes transfers and swaps holds proofs under **two** verifying keys
+   (the base and the extension circuit, `SWAP.md`), so it batch-verifies
+   as two groups, one multi-pairing each.
 3. **Aggregate them** (SnarkPack, Gailly–Maller–Nitulescu 2021): `n`
    Groth16 proofs under one key into one proof of `O(log n)` size,
    verified in `O(log n)` pairings, from a structured reference string
    that a powers-of-tau transcript provides (the phase-1 output of
-   `CEREMONY.md` has the powers in both groups). This is the only
-   option that makes the per-batch proof *succinct in n*; it is also a
-   serious piece of cryptography to implement (inner pairing products
-   with KZG commitments in both groups) that arkworks does not ship.
+   `CEREMONY.md` has the powers in both groups); again one aggregate per
+   verifying key. This is the only option that makes the per-batch
+   proof *succinct in n*; it is also a serious piece of cryptography to
+   implement (inner pairing products with KZG commitments in both
+   groups) that arkworks does not ship.
 
 Plan: 2 now, measured next to 1; 3 as a second slice if the measured
 batch sizes make it matter, else documented as the frontier.
@@ -179,9 +218,11 @@ On BLS12-381 alone that is non-native arithmetic (pairings over the
 base field expressed in the scalar field): tens of millions of
 constraints per verification (*estimate*), measurable, not practical.
 On a two-chain the first level is native: a BLS12-377 proof verifies
-natively inside a BW6-761 circuit, which is why that pair exists; but a
-BW6-761 proof does not verify natively inside BLS12-377, so the chain
-has exactly one level. Unbounded recursion needs a pairing cycle
+natively inside a BW6-761 circuit, because BW6-761's scalar field is
+BLS12-377's base field, the field the pairing of a BLS12-377 proof is
+computed in; but the converse fails (BLS12-377's scalar field is not
+BW6-761's base field, which is far larger), so a BW6-761 proof does not
+verify natively inside BLS12-377 and the chain has exactly one level. Unbounded recursion needs a pairing cycle
 (MNT4/MNT6-753: pairings an order of magnitude slower, keys to match)
 or an accumulation scheme over a cycle of non-pairing curves
 (Pasta-style folding), which would replace Groth16 for `T` and leave
@@ -217,8 +258,12 @@ trees plus the full nullifier set over time.
 * Batch boundaries and the batch size are the indexer's; a client that
   wants a proof for an arbitrary height needs the indexer to close a
   batch there.
-* `T` needs its own trusted setup per batch size; `CEREMONY.md`'s tooling
-  covers it, with the same conditions as the transfer circuit's.
+* The trust base is every trusted setup in play (the transfer and swap
+  circuits', `T`'s per batch size, and an aggregation SRS if §4.3's
+  option 3 is used; `CEREMONY.md`'s tooling covers the Groth16 ones with
+  the same conditions as the transfer circuit's) and the
+  collision-resistance of Poseidon, on which the digests and all three
+  trees stand.
 * Proving cost sits on the indexer and sets the update frequency;
   measured in §6.
 * Succinctness over history is per batch (§4.4).
@@ -244,6 +289,12 @@ To be filled.
 
 ## 7. Changelog
 
+* **v0.2** — after the paper review: the witness commitment and the
+  leaf-count malleability in §3; `T` threads the trees in order, `D`
+  binds the order, the all-zero skip slot is unambiguous, and the
+  client's soundness stated as a four-part conjunction in §4.2; per-key
+  groups in §4.3; the field-embedding reason in §4.4; the trust base in
+  §4.6; slice 1 marked implemented.
 * **v0.1** — initial draft: replay as a relation, the three questions,
   the completeness result (§3), the batch construction, the recursion
   frontier, the protocol, the slices.

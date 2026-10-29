@@ -37,6 +37,9 @@ tags! {
     t_aux = "sb/v1/aux";
     t_nflock = "sb/v1/nflock";
     t_feeauth = "sb/v1/feeauth";
+    t_imt = "sb/v1/imt";
+    t_state = "sb/v1/state";
+    t_batch = "sb/v1/batch";
 }
 
 #[cfg(test)]

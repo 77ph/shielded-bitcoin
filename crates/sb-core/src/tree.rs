@@ -93,6 +93,21 @@ impl NoteTree {
         let pos = self.levels[0].len();
         assert!(pos < (1usize << DEPTH), "note tree is full");
         self.levels[0].push(leaf);
+        self.recompute(pos);
+        pos as u64
+    }
+
+    /// Overwrite the leaf at `pos` (an indexed tree's low-leaf update,
+    /// `docs/REPLAY-PROOF.md` §4.1); the note tree itself never does this.
+    pub fn set(&mut self, pos: u64, leaf: Fr) {
+        let pos = pos as usize;
+        assert!(pos < self.levels[0].len(), "no leaf at {pos}");
+        self.levels[0][pos] = leaf;
+        self.recompute(pos);
+    }
+
+    /// Recompute the nodes above leaf `pos`.
+    fn recompute(&mut self, pos: usize) {
         let mut idx = pos;
         for k in 0..DEPTH {
             let parent = idx >> 1;
@@ -109,7 +124,6 @@ impl NoteTree {
             }
             idx = parent;
         }
-        pos as u64
     }
 
     /// Truncate to the first `size` leaves (reorganisation rollback).

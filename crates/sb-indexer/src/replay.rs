@@ -34,6 +34,8 @@ pub enum RejectReason {
     AnchorUnknown(u32),
     #[error("duplicate nullifier inside the envelope")]
     DuplicateNullifier,
+    #[error("nullifier is zero, the nullifier tree's sentinel")]
+    ZeroNullifier,
     #[error("nullifier already spent")]
     SpentNullifier,
     #[error("proof does not verify")]
@@ -175,6 +177,7 @@ impl Indexer {
         }
         let root = self.state.tree.root();
         self.state.roots.insert(id.height, root);
+        self.state.root_tree.append(root);
         self.state.blocks.push(cp);
         report
     }
@@ -311,6 +314,12 @@ impl Indexer {
         if body.nullifiers[0] == body.nullifiers[1] {
             return Err(RejectReason::DuplicateNullifier);
         }
+        // a nullifier is a Poseidon output, zero with negligible probability;
+        // the rule makes the commitment's sentinel (`docs/REPLAY-PROOF.md`
+        // §4.1) unreachable by construction rather than by chance
+        if body.nullifiers.iter().any(|nf| *nf == Fr::from(0u64)) {
+            return Err(RejectReason::ZeroNullifier);
+        }
         if body
             .nullifiers
             .iter()
@@ -348,6 +357,10 @@ impl Indexer {
         }
         for nf in &body.nullifiers {
             self.state.nullifiers.insert(*nf);
+            self.state
+                .nullifier_tree
+                .insert(*nf)
+                .expect("checked unspent and distinct in step 5");
         }
         Ok(AcceptedEvent::from_swap(
             height,
@@ -386,6 +399,10 @@ impl Indexer {
         }
         for nf in &body.nullifiers {
             self.state.nullifiers.insert(*nf);
+            self.state
+                .nullifier_tree
+                .insert(*nf)
+                .expect("checked unspent and distinct in step 5");
         }
         Ok(AcceptedEvent::from_transfer(
             height,
