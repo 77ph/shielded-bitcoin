@@ -31,6 +31,7 @@ fn deployment(vault: &bitcoin::ScriptBuf) -> (Deployment, TransferParams) {
             operator_address: None,
         }),
         swap: None,
+        carrier: Default::default(),
     };
     (d, params)
 }

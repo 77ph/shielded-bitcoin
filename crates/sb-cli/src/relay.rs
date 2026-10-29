@@ -48,6 +48,7 @@ pub struct Relayer {
     pub funding: FundingWallet,
     pub wallet: Wallet,
     pub wallet_path: PathBuf,
+    pub network: bitcoin::Network,
     pub fee_rate: u64,
     pub max_per_hour: u32,
     /// Nullifiers of transfers already paid for but not yet replayed, so the
@@ -73,6 +74,7 @@ impl Relayer {
         funding: FundingWallet,
         wallet: Wallet,
         wallet_path: PathBuf,
+        network: bitcoin::Network,
         fee_rate: u64,
         max_per_hour: u32,
     ) -> Self {
@@ -84,6 +86,7 @@ impl Relayer {
             funding,
             wallet,
             wallet_path,
+            network,
             fee_rate,
             max_per_hour,
             pending: HashSet::new(),
@@ -156,22 +159,45 @@ impl Relayer {
         if self.paid_at.len() as u32 >= self.max_per_hour {
             bail!("busy: hourly budget spent, try later");
         }
-        let mut outputs = vec![sb_indexer::carrier::carrier_output(envelope)];
-        if let Some(m) = memo {
-            outputs.push(sb_indexer::carrier::memo_output(m));
-        }
-        let (tx, next) = self.funding.pay(
-            self.publisher.as_ref(),
-            self.funding_state(),
-            outputs,
-            self.fee_rate,
-        )?;
-        // counters first: a crash after the broadcast must not reuse the
-        // change address (an unused index is the harmless outcome)
-        self.wallet.funding_receive = next.receive;
-        self.wallet.funding_change = next.change;
-        self.wallet.save(&self.wallet_path)?;
-        let txid = self.publisher.broadcast(&tx)?;
+        let txid = if self.indexer.deployment.carrier == sb_indexer::carrier::CarrierMode::Witness {
+            let key = self.funding.key(crate::funding::Chain::Receive, 0)?;
+            let (coins, st) = self
+                .funding
+                .coins(self.publisher.as_ref(), self.funding_state())?;
+            let p = crate::witness::build_pair(
+                &self.funding,
+                &key,
+                &coins,
+                st,
+                envelope,
+                vec![],
+                memo,
+                self.fee_rate,
+                self.network,
+            )?;
+            self.wallet.funding_receive = p.next.receive;
+            self.wallet.funding_change = p.next.change;
+            self.wallet.save(&self.wallet_path)?;
+            let (_, r) = crate::witness::broadcast(self.publisher.as_ref(), &p)?;
+            r
+        } else {
+            let mut outputs = vec![sb_indexer::carrier::carrier_output(envelope)];
+            if let Some(m) = memo {
+                outputs.push(sb_indexer::carrier::memo_output(m));
+            }
+            let (tx, next) = self.funding.pay(
+                self.publisher.as_ref(),
+                self.funding_state(),
+                outputs,
+                self.fee_rate,
+            )?;
+            // counters first: a crash after the broadcast must not reuse the
+            // change address (an unused index is the harmless outcome)
+            self.wallet.funding_receive = next.receive;
+            self.wallet.funding_change = next.change;
+            self.wallet.save(&self.wallet_path)?;
+            self.publisher.broadcast(&tx)?
+        };
         self.pending.extend(check.nullifiers);
         self.paid_at.push(Instant::now());
         log::info!(

@@ -38,6 +38,7 @@ impl World {
             k_min: 1,
             boundary: None,
             swap: None,
+            carrier: Default::default(),
         };
         World {
             deployment,

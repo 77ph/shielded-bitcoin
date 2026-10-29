@@ -69,6 +69,11 @@ pub struct Deployment {
     pub boundary: Option<DevBoundary>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub swap: Option<SwapDeployment>,
+    /// Where envelopes are published: the base profile's OP_RETURN output
+    /// (default) or the witness carrier of `docs/WITNESS-CARRIER.md`. A
+    /// different carrier is a different, non-interoperable deployment.
+    #[serde(default)]
+    pub carrier: crate::carrier::CarrierMode,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -224,6 +229,7 @@ mod tests {
             k_min: 1,
             boundary: None,
             swap: None,
+            carrier: Default::default(),
         };
         let json = d.to_json();
         assert!(json.contains("\"insecure-seed\""));

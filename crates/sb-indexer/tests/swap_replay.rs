@@ -53,6 +53,7 @@ fn world() -> World {
             vk_sha256: vk_sha256(swap_params.vk()),
             setup: Setup::InsecureSeed { seed: [0u8; 32] },
         }),
+        carrier: Default::default(),
     };
     World {
         params,

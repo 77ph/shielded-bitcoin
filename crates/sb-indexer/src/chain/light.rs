@@ -25,7 +25,7 @@ use bitcoin::{Block, BlockHash, Transaction, Txid};
 use serde::{Deserialize, Serialize};
 
 use super::{BlockId, ChainError, ChainSource};
-use crate::carrier::extract_envelope;
+use crate::carrier::CarrierMode;
 
 /// What an indexer serves for one block: the header, every transaction the
 /// carrier rule would look at, and one partial merkle tree proving their
@@ -54,16 +54,22 @@ pub struct CarrierView {
 }
 
 /// Does the carrier rule look at this transaction (candidate or probe)?
-pub fn is_carrier(tx: &Transaction) -> bool {
-    extract_envelope(tx).is_some()
+pub fn is_carrier(mode: CarrierMode, tx: &Transaction) -> bool {
+    mode.is_carrier(tx)
 }
 
 impl BlockView {
-    /// The view of a full block: every carrier candidate (including
-    /// malformed probes, so rejections replay the same way) with its proof.
-    pub fn from_block(height: u32, block: &Block, root_after: Option<String>) -> Self {
+    /// The view of a full block under a carrier rule: every candidate
+    /// (including malformed probes, so rejections replay the same way)
+    /// with its proof.
+    pub fn from_block(
+        mode: CarrierMode,
+        height: u32,
+        block: &Block,
+        root_after: Option<String>,
+    ) -> Self {
         let txids: Vec<Txid> = block.txdata.iter().map(|t| t.compute_txid()).collect();
-        let matches: Vec<bool> = block.txdata.iter().map(is_carrier).collect();
+        let matches: Vec<bool> = block.txdata.iter().map(|t| is_carrier(mode, t)).collect();
         let carriers = block
             .txdata
             .iter()
@@ -324,7 +330,7 @@ mod tests {
             (4, vec![]),
         ] {
             let block = block_with(n, &at);
-            let view = BlockView::from_block(9, &block, Some("rr".into()));
+            let view = BlockView::from_block(CarrierMode::OpReturn, 9, &block, Some("rr".into()));
             assert_eq!(view.carriers.len(), at.len());
             let json = serde_json::to_string(&view).unwrap();
             let back: BlockView = serde_json::from_str(&json).unwrap();
@@ -333,12 +339,12 @@ mod tests {
             assert_eq!(rebuilt.txdata.len(), block.txdata.len());
             // (the mock chain puts a coinbase first, so every position is +1)
             for (i, tx) in block.txdata.iter().enumerate() {
-                if extract_envelope(tx).is_some() {
+                if is_carrier(CarrierMode::OpReturn, tx) {
                     assert!(at.contains(&(i - 1)));
                     assert_eq!(&rebuilt.txdata[i], tx);
                 } else {
                     assert!(rebuilt.txdata[i].output.is_empty());
-                    assert!(extract_envelope(&rebuilt.txdata[i]).is_none());
+                    assert!(!is_carrier(CarrierMode::OpReturn, &rebuilt.txdata[i]));
                 }
             }
         }
@@ -348,7 +354,7 @@ mod tests {
     fn tampered_views_are_refused() {
         let block = block_with(6, &[1, 4]);
         let hash = block.block_hash();
-        let good = BlockView::from_block(1, &block, None);
+        let good = BlockView::from_block(CarrierMode::OpReturn, 1, &block, None);
         let err = |v: BlockView, h: &BlockHash| match v.clone().into_block(h) {
             Ok(_) => panic!(
                 "accepted: carriers {:?}, tx_count {}, header {}…, merkle {}…, expected {h}",
@@ -412,7 +418,8 @@ mod tests {
         assert!(err(v, &hash).contains("empty block"));
         // a merkle tree of a different block (same count, other transactions)
         let mut v = good.clone();
-        v.merkle = BlockView::from_block(1, &block_with(6, &[4]), None).merkle;
+        v.merkle =
+            BlockView::from_block(CarrierMode::OpReturn, 1, &block_with(6, &[4]), None).merkle;
         assert!(err(v, &hash).contains("merkle root does not match"));
     }
 }

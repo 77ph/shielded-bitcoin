@@ -15,7 +15,7 @@ use sb_core::note::{note_leaf, note_leaf_aux};
 use sb_core::recovery::N_OUT;
 use sb_primitives::Fr;
 
-use crate::carrier::{CarrierError, extract_envelope};
+use crate::carrier::CarrierError;
 use crate::chain::{BlockId, ChainError, ChainSource};
 use crate::deployment::Deployment;
 use crate::state::{BlockCheckpoint, Rejection, ReplayState};
@@ -140,7 +140,7 @@ impl Indexer {
         };
         let mut report = BlockReport::default();
         for (tx_index, tx) in block.txdata.iter().enumerate() {
-            let Some(candidate) = extract_envelope(tx) else {
+            let Some(candidate) = self.deployment.carrier.extract(tx) else {
                 continue;
             };
             let txid = tx.compute_txid().to_byte_array();
@@ -535,8 +535,8 @@ impl Indexer {
         &self.state.events[index.min(self.state.events.len())..]
     }
 
-    /// Is this transaction a carrier candidate?
-    pub fn is_carrier(tx: &Transaction) -> bool {
-        extract_envelope(tx).is_some()
+    /// Is this transaction a carrier candidate under this deployment's rule?
+    pub fn is_carrier(&self, tx: &Transaction) -> bool {
+        self.deployment.carrier.is_carrier(tx)
     }
 }

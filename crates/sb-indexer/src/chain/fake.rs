@@ -338,7 +338,12 @@ fn esplora(s: &Shared, path: &str) -> (u16, &'static str, Vec<u8>) {
                 );
             };
             let block = chain.block(&hash).unwrap();
-            let mut view = super::light::BlockView::from_block(height, &block, None);
+            let mut view = super::light::BlockView::from_block(
+                super::super::carrier::CarrierMode::OpReturn,
+                height,
+                &block,
+                None,
+            );
             if s.light_omit.load(Ordering::SeqCst) {
                 view = omit_last_carrier(&block, view);
             }
@@ -369,7 +374,10 @@ fn omit_last_carrier(
         .txdata
         .iter()
         .enumerate()
-        .map(|(i, t)| i as u32 != last.index && super::light::is_carrier(t))
+        .map(|(i, t)| {
+            i as u32 != last.index
+                && super::light::is_carrier(super::super::carrier::CarrierMode::OpReturn, t)
+        })
         .collect();
     view.merkle = if view.carriers.is_empty() {
         String::new()

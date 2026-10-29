@@ -33,6 +33,13 @@ built, tested, and run on signet.
 Runs: private signet, public signet, verified sync, ceremony drills, all
 in `RUNS.md`.
 
+## Done since (29 October 2026)
+
+| Direction | Paper | State |
+|---|---|---|
+| Atomic swap between a shielded note and transparent Bitcoin through `h_aux` and a P2WSH HTLC | §22.5 | `SWAP.md`, extension circuit (SHA-256 in circuit), kind `0x03`, `sb swap` / `sb htlc`, both endings run on the private signet under Bitcoin Core, reviewed (`REVIEW-SWAP.md`) |
+| Witness-carried envelopes, a separate deployment profile | §22.1, §A.4 | `WITNESS-CARRIER.md`, commit-and-reveal publisher through all three fee models, indexer rule, measured on the private signet |
+
 ## Next
 
 ### 1. Atomic swap between a shielded note and transparent Bitcoin (§22.5)

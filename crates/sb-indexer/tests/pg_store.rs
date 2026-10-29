@@ -32,6 +32,7 @@ fn pg_store_round_trip_and_rollback() {
         k_min: 1,
         boundary: None,
         swap: None,
+        carrier: Default::default(),
     };
     let alice = WalletKeys::from_seed(&Seed([1u8; 32]));
     let (_, addr) = alice.ivk.find_address(0);

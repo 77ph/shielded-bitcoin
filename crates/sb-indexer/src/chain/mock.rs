@@ -48,6 +48,33 @@ fn fake_input(nonce: u32) -> TxIn {
     }
 }
 
+/// A reveal transaction carrying `envelope` in its witness
+/// (`docs/WITNESS-CARRIER.md`), with a placeholder signature and control
+/// block: the mock chain validates nothing.
+pub fn carrier_tx_witness(envelope: &[u8], nonce: u32, outputs: Vec<TxOut>) -> Transaction {
+    use bitcoin::secp256k1::{Keypair, Secp256k1, SecretKey};
+    let key = Keypair::from_secret_key(
+        &Secp256k1::new(),
+        &SecretKey::from_slice(&[0x42u8; 32]).unwrap(),
+    )
+    .x_only_public_key()
+    .0;
+    let script = crate::carrier::envelope_tapscript(envelope, &key);
+    let mut w = Witness::new();
+    w.push([1u8; 64]);
+    w.push(script.as_bytes());
+    w.push([0xc0u8; 33]);
+    let mut input = fake_input(nonce);
+    input.script_sig = ScriptBuf::new();
+    input.witness = w;
+    Transaction {
+        version: Version::TWO,
+        lock_time: LockTime::ZERO,
+        input: vec![input],
+        output: outputs,
+    }
+}
+
 /// A transaction whose only output is the carrier for `envelope`; `nonce`
 /// makes repeated publications of the same envelope distinct transactions.
 pub fn carrier_tx(envelope: &[u8], nonce: u32) -> Transaction {

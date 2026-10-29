@@ -242,3 +242,23 @@ Every value-moving step of `docs/SWAP.md` §9 happened on chain and the
 two mixed endings were refused by the tools and would be rejected by
 replay (the refund of a claimed note) or by the node (an HTLC claim
 without the preimage).
+
+## Private signet, 29 October 2026: a witness-carrier deployment
+
+Deployment `localsignet-wit` (`--carrier witness`, activation 187) on the
+same node, Bitcoin Core 30.2 validating the taproot script-path spends.
+Every envelope went out as a commit-and-reveal pair; the indexer read it
+from the reveal's witness.
+
+| Step | Heights (commit, reveal) | Pair | Size |
+|---|---|---|---|
+| mint 20 000 to alice (89-byte envelope, vault paid by the reveal) | 187 | `b0aa7a9b…` + `6e05758b…` | 153 + 171 = 324 vB |
+| alice pays bob 7 000 shielded, change 13 000 (700-byte envelope) | 190 | `9743ed4a…` + `451238be…` | 153 + 294 = 447 vB |
+| bob withdraws 2 000 to alice's funding address (envelope + payout memo in an OP_RETURN output of the reveal) | 198 | `4f1485ee…` + `7e44f345…` | 153 + 339 = 492 vB |
+| operator pays 2 000 (`sb payouts`) | 199 | `8707c353…` | — |
+
+3 accepted events, 0 rejections; alice 13 000, bob 5 000 shielded. The
+same envelopes cost 242 / 825–892 / 839–870 vB in the OP_RETURN runs
+above. One operational note: the first withdraw attempt failed for want
+of fee coins in bob's wallet and left its input locked, as designed;
+`sb unlock` released it before the second attempt.

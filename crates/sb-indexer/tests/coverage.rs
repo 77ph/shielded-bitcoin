@@ -32,6 +32,7 @@ fn deployment(params: &TransferParams, name: &str) -> Deployment {
         k_min: 1,
         boundary: None,
         swap: None,
+        carrier: Default::default(),
     }
 }
 
@@ -125,7 +126,7 @@ fn rejection_classes_and_json_store() {
     );
     assert_eq!(idx.events_from(0).len(), 1);
     assert_eq!(idx.events_from(100).len(), 0);
-    assert!(Indexer::is_carrier(&carrier_tx(&t.to_bytes(), 9)));
+    assert!(sb_indexer::carrier::CarrierMode::OpReturn.is_carrier(&carrier_tx(&t.to_bytes(), 9)));
 
     // JSON store persisted the state; a reorg goes through the store too
     let loaded = JsonStore::new(dir.join("state.json")).load().unwrap();

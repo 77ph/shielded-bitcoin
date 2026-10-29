@@ -39,6 +39,7 @@ fn mint_pay_change_persist_reorg() {
             operator_address: None,
         }),
         swap: None,
+        carrier: Default::default(),
     };
     let salt = deployment.const_salt_fr();
     let mut idx = Indexer::new(

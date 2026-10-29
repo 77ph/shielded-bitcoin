@@ -36,6 +36,11 @@ impl FundingKey {
         self.pk
     }
 
+    /// The key pair, for Schnorr signatures of taproot script paths.
+    pub fn keypair(&self) -> bitcoin::secp256k1::Keypair {
+        bitcoin::secp256k1::Keypair::from_secret_key(&Secp256k1::new(), &self.sk)
+    }
+
     /// ECDSA over a BIP 143 sighash (for script-path spends such as the
     /// swap HTLC).
     pub fn sign(&self, sighash: [u8; 32]) -> bitcoin::ecdsa::Signature {

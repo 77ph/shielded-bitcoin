@@ -10,7 +10,8 @@ extension is a separate circuit with its own verifying key.
 
 Status: draft v0.1, implemented (`sb swap …`, `sb htlc …`) and run on the
 private signet with real HTLCs in both endings (`RUNS.md`); §13 carries
-measured numbers.
+measured numbers. The project's own review of the extension, with its
+findings and their status, is `docs/REVIEW-SWAP.md`.
 
 ## 0. Summary
 

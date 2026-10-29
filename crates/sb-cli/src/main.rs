@@ -11,6 +11,7 @@ mod http;
 mod relay;
 mod serve;
 mod swap;
+mod witness;
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -99,6 +100,9 @@ enum Cmd {
         swap_vk: Option<String>,
         #[arg(long, requires = "swap_vk")]
         swap_pk: Option<String>,
+        /// Where envelopes are published: `op-return` (profile §10) or `witness` (docs/WITNESS-CARRIER.md).
+        #[arg(long, value_enum, default_value = "op-return")]
+        carrier: CarrierArg,
         #[arg(long, default_value = "100")]
         window: u32,
     },
@@ -204,8 +208,11 @@ enum Cmd {
         #[arg(long, default_value = "2")]
         fee_rate: u64,
         /// Hand the envelope to a sponsored relayer (`http://host:port`) instead of paying the carrier.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "reveal")]
         relay: Option<String>,
+        /// Witness carrier: reveal an entry whose commit output was funded elsewhere.
+        #[arg(long)]
+        reveal: bool,
     },
     /// Serve the indexer API for verified-sync clients (`--chain light:<url>`).
     Serve {
@@ -571,17 +578,59 @@ impl Ctx {
         std::fs::create_dir_all(&outbox)?;
         let envelope = hex::decode(&entry.envelope)?;
         let outputs = entry.outputs()?;
+        let witness_mode = self.deployment.carrier == sb_indexer::carrier::CarrierMode::Witness;
         let json_path = outbox.join(format!("{label}.json"));
         std::fs::write(&json_path, serde_json::to_string_pretty(entry)?)?;
         std::fs::write(outbox.join(format!("{label}.hex")), hex::encode(&envelope))?;
         let tx_path = outbox.join(format!("{label}.tx"));
-        std::fs::write(&tx_path, unfunded_hex(&outputs))?;
+        // the unfunded template: the carrier outputs, or the commit output
+        let commit = match (witness_mode, &payer) {
+            (true, Some((w, _))) => {
+                let key = self.funding(w)?.key(funding::Chain::Receive, 0)?;
+                let c = witness::Commitment::new(
+                    &envelope,
+                    &key.keypair().x_only_public_key().0,
+                    self.btc_network(),
+                )?;
+                let value = c.required_value(
+                    &entry.extra_outputs()?,
+                    entry.memo_bytes()?.as_deref(),
+                    fee_rate,
+                );
+                Some((c, value))
+            }
+            _ => None,
+        };
+        match &commit {
+            Some((c, value)) => std::fs::write(
+                &tx_path,
+                unfunded_hex(&[bitcoin::TxOut {
+                    value: bitcoin::Amount::from_sat(*value),
+                    script_pubkey: c.script_pubkey(),
+                }]),
+            )?,
+            None => std::fs::write(&tx_path, unfunded_hex(&outputs))?,
+        }
         println!(
             "envelope ({} bytes) written to {}",
             envelope.len(),
             json_path.display()
         );
         let txid = match mode {
+            PublishMode::Outbox if commit.is_some() => {
+                let (c, value) = commit.as_ref().expect("checked");
+                println!(
+                    "witness carrier: commit output {} sat to {} (template in {})",
+                    value,
+                    c.address,
+                    tx_path.display()
+                );
+                println!(
+                    "fund that address with at least {value} sat from any wallet, then reveal from this one:"
+                );
+                println!("  sb publish {label} --name <this wallet> --reveal");
+                None
+            }
             PublishMode::Outbox => {
                 println!("unfunded carrier (no inputs) in {}", tx_path.display());
                 println!("publish it from any wallet, e.g. Bitcoin Core:");
@@ -608,6 +657,11 @@ impl Ctx {
                 println!("relayed by {url}: {txid}");
                 Some(txid)
             }
+            PublishMode::SelfFund if witness_mode => {
+                let (wallet, name) = payer.ok_or_else(|| anyhow!("no wallet to pay from"))?;
+                let reveal = self.publish_witness(wallet, name, &envelope, entry, fee_rate)?;
+                Some(reveal)
+            }
             PublishMode::SelfFund => {
                 let (wallet, name) = payer.ok_or_else(|| anyhow!("no wallet to pay from"))?;
                 let tx = self.pay(wallet, name, outputs, fee_rate)?;
@@ -615,6 +669,92 @@ impl Ctx {
                 Some(tx.compute_txid())
             }
         };
+        Ok(txid)
+    }
+
+    /// Commit and reveal from the wallet's fee coins (`docs/WITNESS-CARRIER.md` §3).
+    fn publish_witness(
+        &self,
+        wallet: &mut Wallet,
+        name: &str,
+        envelope: &[u8],
+        entry: &OutboxEntry,
+        fee_rate: u64,
+    ) -> Result<bitcoin::Txid> {
+        let publisher = self.publisher()?;
+        let fw = self.funding(wallet)?;
+        let key = fw.key(funding::Chain::Receive, 0)?;
+        let (coins, st) = fw.coins(publisher.as_ref(), Self::funding_state(wallet))?;
+        let memo = entry.memo_bytes()?;
+        let p = witness::build_pair(
+            &fw,
+            &key,
+            &coins,
+            st,
+            envelope,
+            entry.extra_outputs()?,
+            memo.as_deref(),
+            fee_rate,
+            self.btc_network(),
+        )?;
+        wallet.funding_receive = p.next.receive;
+        wallet.funding_change = p.next.change;
+        wallet.save(&self.wallet_path(name))?;
+        let (c, r) = witness::broadcast(publisher.as_ref(), &p)?;
+        println!(
+            "commit {c} ({} vB), reveal {r} ({} vB): {} vB for the pair",
+            p.commit.vsize(),
+            p.reveal.vsize(),
+            p.commit.vsize() + p.reveal.vsize()
+        );
+        Ok(r)
+    }
+
+    /// Reveal an outbox entry whose commit output someone else funded.
+    fn reveal_funded(
+        &self,
+        wallet: &mut Wallet,
+        name: &str,
+        label: &str,
+        entry: &OutboxEntry,
+        fee_rate: u64,
+    ) -> Result<bitcoin::Txid> {
+        let envelope = hex::decode(&entry.envelope)?;
+        let publisher = self.publisher()?;
+        let fw = self.funding(wallet)?;
+        let key = fw.key(funding::Chain::Receive, 0)?;
+        let c = witness::Commitment::new(
+            &envelope,
+            &key.keypair().x_only_public_key().0,
+            self.btc_network(),
+        )?;
+        let coins = publisher.utxos(&c.address)?;
+        let coin = coins.iter().max_by_key(|u| u.value).ok_or_else(|| {
+            anyhow!(
+                "nothing at the commit address {} yet (label {label})",
+                c.address
+            )
+        })?;
+        let st = Self::funding_state(wallet);
+        let change = fw.key(funding::Chain::Change, st.change)?.address;
+        wallet.funding_change = st.change + 1;
+        wallet.save(&self.wallet_path(name))?;
+        let memo = entry.memo_bytes()?;
+        let reveal = c.reveal(
+            &key,
+            coin.outpoint,
+            coin.value,
+            entry.extra_outputs()?,
+            memo.as_deref(),
+            &change,
+            fee_rate,
+        )?;
+        let txid = publisher.broadcast(&reveal)?;
+        println!(
+            "reveal {txid} ({} vB) spends {}",
+            reveal.vsize(),
+            coin.outpoint
+        );
         Ok(txid)
     }
 }
@@ -636,6 +776,13 @@ fn unfunded_hex(outputs: &[bitcoin::TxOut]) -> String {
     }
     v.extend_from_slice(&0u32.to_le_bytes());
     hex::encode(v)
+}
+
+/// `--carrier` of `profile-new`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+enum CarrierArg {
+    OpReturn,
+    Witness,
 }
 
 /// How a built carrier leaves the wallet.
@@ -699,6 +846,23 @@ impl OutboxEntry {
         }
     }
 
+    /// The extra outputs alone (a mint's vault payment).
+    fn extra_outputs(&self) -> Result<Vec<bitcoin::TxOut>> {
+        self.extra
+            .iter()
+            .map(|e| {
+                Ok(bitcoin::TxOut {
+                    value: bitcoin::Amount::from_sat(e.value),
+                    script_pubkey: bitcoin::ScriptBuf::from_bytes(hex::decode(&e.script_hex)?),
+                })
+            })
+            .collect()
+    }
+
+    fn memo_bytes(&self) -> Result<Option<Vec<u8>>> {
+        Ok(self.memo.as_deref().map(hex::decode).transpose()?)
+    }
+
     /// Carrier outputs: the extra ones, the envelope, then the memo.
     fn outputs(&self) -> Result<Vec<bitcoin::TxOut>> {
         let mut out = Vec::new();
@@ -737,6 +901,7 @@ fn main() -> Result<()> {
         swap_insecure,
         swap_vk,
         swap_pk,
+        carrier,
         window,
     } = &cli.cmd
     {
@@ -841,6 +1006,10 @@ fn main() -> Result<()> {
                 operator_address: operator_address.clone(),
             }),
             swap,
+            carrier: match carrier {
+                CarrierArg::OpReturn => sb_indexer::carrier::CarrierMode::OpReturn,
+                CarrierArg::Witness => sb_indexer::carrier::CarrierMode::Witness,
+            },
         };
         if let Some(p) = cli.profile.parent() {
             std::fs::create_dir_all(p)?;
@@ -1175,6 +1344,7 @@ fn main() -> Result<()> {
             name,
             fee_rate,
             relay,
+            reveal,
         } => {
             let path = if label.contains('/') || label.ends_with(".json") {
                 PathBuf::from(&label)
@@ -1193,6 +1363,14 @@ fn main() -> Result<()> {
                 .and_then(|s| s.to_str())
                 .unwrap_or("carrier")
                 .to_string();
+            if reveal {
+                if ctx.deployment.carrier != sb_indexer::carrier::CarrierMode::Witness {
+                    bail!("--reveal is for witness-carrier deployments");
+                }
+                let mut w = ctx.wallet(&name)?;
+                ctx.reveal_funded(&mut w, &name, &label, &entry, fee_rate)?;
+                return Ok(());
+            }
             // a relayer pays: no wallet of ours is involved
             let mut payer = match relay {
                 Some(_) => None,
@@ -1257,6 +1435,7 @@ fn main() -> Result<()> {
                 fw,
                 w,
                 ctx.wallet_path(&name),
+                ctx.btc_network(),
                 fee_rate,
                 max_per_hour,
             );

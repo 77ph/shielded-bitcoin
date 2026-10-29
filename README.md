@@ -26,6 +26,7 @@ soft fork or a hard fork.
 | Circuit | 2-in/2-out transfer relation, 84 362 constraints, Groth16/BLS12-381; prove ≈ 1.5 s, verify ≈ 4 ms (16 threads) |
 | Ceremony | `sb ceremony`: BGM17 multi-party setup (powers of tau, key derivation checked against arkworks, delta contributions, beacon), verifiable from files, for the base or the swap circuit; `profile-new --ceremony-vk` (`docs/CEREMONY.md`) |
 | Swaps | the paper's §22.5 extension: a note locked through `h_aux` to a SHA-256 hash-lock, claimable with the preimage or refundable after a height, atomic with a P2WSH HTLC on Bitcoin; `sb swap …` / `sb htlc …`, extension circuit 174 803 constraints, kind `0x03` envelopes (`docs/SWAP.md`) |
+| Witness carrier | the paper's §22.1 alternative: envelopes in a tapscript revealed by a script-path spend, commit-and-reveal pairs of 324–447 vB against 825–892 vB for OP_RETURN, standard under default node policy; `profile-new --carrier witness`, a separate non-interoperable deployment (`docs/WITNESS-CARRIER.md`) |
 | Indexer | Bitcoin Core RPC / Esplora / Electrum / mock sources, carrier rule, normative acceptance order, per-block checkpoints with reorg rollback, JSON or PostgreSQL state |
 | Wallet | scanning and sender recovery, note selection, anchor policy, change, input locks, reorg-safe rescan |
 | Boundary | development **mint** into a custodial vault and **withdraw** via payout memos (`docs/BOUNDARY.md`) |
@@ -45,7 +46,7 @@ verify 4 ms, envelope 700 bytes, carrier ≈ 830 vB.
 | `crates/sb-wallet` | §10, §16, §C | scanning, recovery, note selection, anchor policy, transfer construction |
 | `crates/sb-ceremony` | §8.4 | BGM17 multi-party setup: powers of tau, key derivation, delta contributions, beacon |
 | `crates/sb-cli` | — | `sb` command-line tool |
-| `docs/` | — | `PROFILE.md` (normative profile), `SWAP.md` (swap extension profile), `ROADMAP.md`, `BOUNDARY.md` (dev peg, fee funding), `CEREMONY.md` (parameter ceremony), `TEST_VECTORS.md`, `RUNS.md` |
+| `docs/` | — | `PROFILE.md` (normative profile), `SWAP.md` (swap extension profile), `WITNESS-CARRIER.md` (witness carrier profile), `ROADMAP.md`, `BOUNDARY.md` (dev peg, fee funding), `CEREMONY.md` (parameter ceremony), `TEST_VECTORS.md`, `RUNS.md` |
 | `deployments/` | profile §9 | deployment profiles |
 
 ## Quick start (signet)
