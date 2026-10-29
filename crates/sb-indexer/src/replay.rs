@@ -36,6 +36,8 @@ pub enum RejectReason {
     DuplicateNullifier,
     #[error("nullifier is zero, the nullifier tree's sentinel")]
     ZeroNullifier,
+    #[error("the nullifier tree is full")]
+    NullifierTreeFull,
     #[error("nullifier already spent")]
     SpentNullifier,
     #[error("proof does not verify")]
@@ -320,6 +322,14 @@ impl Indexer {
         if body.nullifiers.iter().any(|nf| *nf == Fr::from(0u64)) {
             return Err(RejectReason::ZeroNullifier);
         }
+        // the commitment holds 2^32 leaves; a deployment that reaches it is
+        // beyond what this scaffold is for, but the rule makes the insertion
+        // below total (it never meets `ImtError::Full`)
+        if self.state.nullifier_tree.size() + body.nullifiers.len() as u64
+            > 1u64 << sb_core::tree::DEPTH
+        {
+            return Err(RejectReason::NullifierTreeFull);
+        }
         if body
             .nullifiers
             .iter()
@@ -360,7 +370,7 @@ impl Indexer {
             self.state
                 .nullifier_tree
                 .insert(*nf)
-                .expect("checked unspent and distinct in step 5");
+                .expect("step 5 refuses zero, duplicate, spent and over-capacity nullifiers");
         }
         Ok(AcceptedEvent::from_swap(
             height,
@@ -402,7 +412,7 @@ impl Indexer {
             self.state
                 .nullifier_tree
                 .insert(*nf)
-                .expect("checked unspent and distinct in step 5");
+                .expect("step 5 refuses zero, duplicate, spent and over-capacity nullifiers");
         }
         Ok(AcceptedEvent::from_transfer(
             height,

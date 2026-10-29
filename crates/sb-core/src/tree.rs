@@ -126,6 +126,22 @@ impl NoteTree {
         }
     }
 
+    /// The path of the next empty slot (position `size`): what an append
+    /// proof needs, in the tree before the append (`docs/REPLAY-PROOF.md`
+    /// §4.2). Recomputing the root with leaf `0` over it gives the current
+    /// root; with the new leaf, the root after the append.
+    pub fn append_path(&self) -> MerklePath {
+        let size = self.size();
+        let mut siblings = [Fr::from(0u64); DEPTH];
+        for (k, s) in siblings.iter_mut().enumerate() {
+            *s = self.node_at(k, (size >> k) ^ 1, size);
+        }
+        MerklePath {
+            position: size,
+            siblings,
+        }
+    }
+
     /// Truncate to the first `size` leaves (reorganisation rollback).
     pub fn truncate(&mut self, size: u64) {
         let size = size as usize;

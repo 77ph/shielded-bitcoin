@@ -197,10 +197,10 @@ fn accept_spend_reject_and_reorg() {
     // the commitments of REPLAY-PROOF.md §4.1 follow the sets, and survive
     // a JSON round trip
     assert!(idx.state.check_commitments());
-    let digest = idx.state.digest();
+    let digest = idx.state.digest(ACTIVATION);
     let again = sb_indexer::state::ReplayState::from_json(&idx.state.to_json()).unwrap();
     assert!(again.check_commitments());
-    assert_eq!(again.digest(), digest);
+    assert_eq!(again.digest(ACTIVATION), digest);
 
     // Block 1002: t2 republished (double spend) plus a fresh anchor-999 transfer
     // (still inside the window W = 5).
@@ -263,13 +263,13 @@ fn accept_spend_reject_and_reorg() {
     assert_ne!(idx.state, snapshot);
     // the commitments were rebuilt by the rollback and differ from before it
     assert!(idx.state.check_commitments());
-    assert_ne!(idx.state.digest(), snapshot.digest());
+    assert_ne!(idx.state.digest(ACTIVATION), snapshot.digest(ACTIVATION));
 
     // Determinism: a fresh indexer over the same chain derives the same state.
     let mut fresh = w.indexer();
     fresh.sync(&chain).unwrap();
     assert_eq!(fresh.state, idx.state);
-    assert_eq!(fresh.state.digest(), idx.state.digest());
+    assert_eq!(fresh.state.digest(ACTIVATION), idx.state.digest(ACTIVATION));
 
     // Persistence round trip.
     let json = idx.state.to_json();

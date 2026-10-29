@@ -9,9 +9,12 @@ use rand_chacha::ChaCha20Rng;
 use sha2::{Digest, Sha256};
 
 use sb_core::envelope::PROOF_LEN;
+use sb_primitives::Fr;
 
+use crate::batch::BatchCircuit;
 use crate::swap::{SwapCircuit, SwapStatement, SwapWitness};
 use crate::transfer::{TransferCircuit, TransferStatement, TransferWitness};
+use sb_core::batch::{BatchStatement, BatchWitness};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProofError {
@@ -216,5 +219,121 @@ impl SwapVerifier {
             &proof,
         )
         .unwrap_or(false)
+    }
+}
+
+/// The shape of a batch circuit: what a setup is for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BatchShape {
+    pub n: usize,
+    pub activation: u32,
+    pub window_w: u32,
+    pub k_min: u32,
+    pub const_salt: Fr,
+}
+
+impl BatchShape {
+    fn circuit(
+        &self,
+        statement: Option<BatchStatement>,
+        witness: Option<BatchWitness>,
+    ) -> BatchCircuit {
+        BatchCircuit {
+            n: self.n,
+            activation: self.activation,
+            window_w: self.window_w,
+            k_min: self.k_min,
+            const_salt: self.const_salt,
+            statement,
+            witness,
+        }
+    }
+}
+
+/// Proving and verifying keys of a batch circuit (`docs/REPLAY-PROOF.md`
+/// §4.2), one per shape.
+pub struct BatchParams {
+    pub shape: BatchShape,
+    pub pk: ProvingKey<Bls12_381>,
+    pub pvk: PreparedVerifyingKey<Bls12_381>,
+}
+
+impl BatchParams {
+    /// **Insecure** deterministic setup from a public seed (development only).
+    pub fn insecure_setup(shape: BatchShape, seed: &[u8; 32]) -> Result<Self, ProofError> {
+        let mut rng = ChaCha20Rng::from_seed(*seed);
+        let (pk, _vk) =
+            Groth16::<Bls12_381>::circuit_specific_setup(shape.circuit(None, None), &mut rng)?;
+        Ok(Self::from_pk(shape, pk))
+    }
+
+    pub fn from_pk(shape: BatchShape, pk: ProvingKey<Bls12_381>) -> Self {
+        let pvk = Groth16::<Bls12_381>::process_vk(&pk.vk).expect("vk is well formed");
+        BatchParams { shape, pk, pvk }
+    }
+
+    pub fn vk(&self) -> &VerifyingKey<Bls12_381> {
+        &self.pk.vk
+    }
+
+    pub fn prove<R: RngCore + CryptoRng>(
+        &self,
+        statement: &BatchStatement,
+        witness: &BatchWitness,
+        rng: &mut R,
+    ) -> Result<[u8; PROOF_LEN], ProofError> {
+        let circuit = self.shape.circuit(Some(*statement), Some(witness.clone()));
+        let proof = Groth16::<Bls12_381>::prove(&self.pk, circuit, rng)?;
+        Ok(proof_to_bytes(&proof)?)
+    }
+
+    pub fn verify(&self, statement: &BatchStatement, proof: &[u8; PROOF_LEN]) -> bool {
+        BatchVerifier::verify_with(&self.pvk, statement, proof)
+    }
+
+    pub fn pk_to_bytes(&self) -> Result<Vec<u8>, ProofError> {
+        let mut out = Vec::new();
+        self.pk.serialize_uncompressed(&mut out)?;
+        Ok(out)
+    }
+
+    pub fn from_pk_bytes(shape: BatchShape, bytes: &[u8]) -> Result<Self, ProofError> {
+        let pk = ProvingKey::<Bls12_381>::deserialize_uncompressed_unchecked(bytes)?;
+        Ok(Self::from_pk(shape, pk))
+    }
+}
+
+/// A verifier of batch proofs (light clients).
+pub struct BatchVerifier {
+    pub vk: VerifyingKey<Bls12_381>,
+    pub pvk: PreparedVerifyingKey<Bls12_381>,
+}
+
+impl BatchVerifier {
+    pub fn new(vk: VerifyingKey<Bls12_381>) -> Self {
+        let pvk = Groth16::<Bls12_381>::process_vk(&vk).expect("vk is well formed");
+        BatchVerifier { vk, pvk }
+    }
+
+    pub fn from_vk_bytes(bytes: &[u8]) -> Result<Self, ProofError> {
+        Ok(Self::new(
+            VerifyingKey::<Bls12_381>::deserialize_compressed(bytes)?,
+        ))
+    }
+
+    pub fn verify(&self, statement: &BatchStatement, proof: &[u8; PROOF_LEN]) -> bool {
+        Self::verify_with(&self.pvk, statement, proof)
+    }
+
+    fn verify_with(
+        pvk: &PreparedVerifyingKey<Bls12_381>,
+        statement: &BatchStatement,
+        proof: &[u8; PROOF_LEN],
+    ) -> bool {
+        let Ok(proof) = proof_from_bytes(proof) else {
+            return false;
+        };
+        Groth16::<Bls12_381>::verify_with_processed_vk(pvk, &statement.to_field_elements(), &proof)
+            .unwrap_or(false)
     }
 }

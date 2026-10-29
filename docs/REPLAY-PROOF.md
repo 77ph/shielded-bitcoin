@@ -1,4 +1,4 @@
-# Succinct replay proofs (draft v0.2)
+# Succinct replay proofs (draft v0.3)
 
 The paper's §22.2 asks whether a light client can obtain a **succinct
 proof that `R[h]` is the correct deterministic replay** of the accepted
@@ -17,10 +17,11 @@ replay proof is a statement *about* replay, produced by an indexer and
 checked by a client, and a client that does not want it replays as
 before.
 
-Status: draft; slice 1 of §5 implemented (the nullifier and root
-commitments kept by replay, with the state digest); §6 to be measured.
-Reviewed on paper by the project's security reviewer (v0.1); v0.2 folds
-in the rigour notes.
+Status: draft; slices 1, 2 and 4 of §5 implemented and measured (the
+commitments kept by replay, the batch circuit `T`, the two-chain
+experiment); slice 3 (the protocol) next. Reviewed on paper by the
+project's security reviewer (v0.1, slice 1 firsthand); v0.2 folded in
+the rigour notes, v0.3 replaces estimates by measurements.
 
 ## 1. Replay as a relation
 
@@ -129,7 +130,13 @@ commitments with membership and non-membership proofs.
   membership path.
 * **Note tree:** as today (depth 32, `tree.rs`); appends are paths from
   the current frontier.
-* **State digest:** `PH(T_STATE, R, N, H, h)`.
+* **State digest:** `PH(T_STATE, R, |R|, N, |N|, H, height, applied)`,
+  where `|R|` and `|N|` are the leaf counts of the note tree and the
+  nullifier tree (a Merkle root does not commit to its size, and `T`
+  appends against the size), `height` is the block in progress (the
+  first whose root is not yet in `H`) and `applied` how many of its
+  statements `T` has applied so far (`0` between blocks), which lets a
+  block with more statements than `n` be proven in fragments that chain.
 
 ### 4.2 The batch circuit `T`
 
@@ -137,23 +144,29 @@ Groth16 over BLS12-381 with the stack's Poseidon, like the transfer
 circuit; one trusted setup per batch size `n` (the ceremony tooling of
 `CEREMONY.md` applies). Public inputs: `digest(S_prev)`,
 `digest(S_next)`, and `D = PH(T_BATCH, st_1 … st_n)` over the `n`
-statements (a statement is 18 field elements with `h_anchor` and the
-two `h_aux`; a slot left empty is a zero statement that the circuit
-skips). Witness: the statements and every path. Constraints per
-transfer (*estimates*; Poseidon with two inputs ≈ 250 constraints):
+statements (a statement is 17 field elements: `h_anchor`, `r_anchor`,
+the two nullifiers, per output `pk_eph` and the ciphertext, `h_body`,
+the two `h_aux`; a slot left empty is the all-zero statement, which the
+circuit enforces and skips). Witness: the state opening, the statements
+and every path. Constraints per slot (`crates/sb-circuit/src/batch.rs`,
+**measured**):
 
-| Check | Hashes |
+| Check | Hashes / work |
 |---|---|
-| anchor: `r_anchor` at `h_anchor` in the root tree, window and `K_min` range | 32 + range |
-| two nullifiers: non-membership, distinct, insert | 2 × 3 × 32 |
-| two leaves: `leaf_j` from the statement, append | 2 × (1 + 32) |
-| statement into `D` | 1 sponge |
-| ≈ 300 hashes ≈ 75 000 constraints per transfer (*estimate*) | |
+| anchor: `r_anchor` at `h_anchor − activation` in the root tree, window and `K_min` range | 32 hashes + two 32-bit ranges |
+| two nullifiers: non-membership, strict order, insert | 2 × (3 × 32 hashes + 2 full-field comparisons) |
+| two leaves: `leaf_j` from the statement, append at the next position | 2 × (1 + 2 × 32 hashes) |
+| the statement into `D` | part of one sponge |
+| **≈ 217 000 constraints per slot** (plus ≈ 33 000 for the opening, the root append and the digests) | |
 
-So `n = 16` is ≈ 1.2 · 10⁶ constraints (2²¹), `n = 64` ≈ 5 · 10⁶
-(2²³): minutes of proving and gigabytes of proving key on a laptop,
-which decides the batch size an indexer can afford and therefore the
-update frequency the paper asks about (§6).
+Measured: `n = 1` 250 368, `n = 2` 467 888, `n = 4` 902 685, `n = 16`
+3 511 467 constraints. So `n = 16` is a 2²² circuit and `n = 64` would
+be ≈ 1.4 · 10⁷ (2²⁴): the batch size an indexer can afford on one
+machine is in the tens of statements, which with fragments (one block
+over several proofs, chained through `applied`) sets the update
+frequency the paper asks about (§6). The comparisons cost more than
+expected (a full-field comparison decomposes both operands into 255
+bits), the hashes about as estimated.
 
 `T` applies the statements **in order**, threading the nullifier tree
 and the note tree through the `n` slots: the non-membership proof of a
@@ -222,19 +235,39 @@ natively inside a BW6-761 circuit, because BW6-761's scalar field is
 BLS12-377's base field, the field the pairing of a BLS12-377 proof is
 computed in; but the converse fails (BLS12-377's scalar field is not
 BW6-761's base field, which is far larger), so a BW6-761 proof does not
-verify natively inside BLS12-377 and the chain has exactly one level. Unbounded recursion needs a pairing cycle
-(MNT4/MNT6-753: pairings an order of magnitude slower, keys to match)
-or an accumulation scheme over a cycle of non-pairing curves
-(Pasta-style folding), which would replace Groth16 for `T` and leave
-the transfer proofs on a different curve, verified non-natively again.
+verify natively inside BLS12-377 and the chain has exactly one level.
+Unbounded recursion needs a pairing cycle (MNT4/MNT6-753: pairings an
+order of magnitude slower, keys to match) or an accumulation scheme
+over a cycle of non-pairing curves (Pasta-style folding), which would
+replace Groth16 for `T` and leave the transfer proofs on a different
+curve, verified non-natively again.
+
+**Measured** (`experiments/twochain`, arkworks' pairing gadgets):
+verifying one BLS12-377 Groth16 proof with 17 public inputs inside a
+BW6-761 circuit costs **154 649 constraints**, 75 003 of them the
+verifier itself (pairings and the input combination), the rest the
+allocation of the key, the proof and the inputs as witnesses (a key
+fixed as a constant would cost less). The number is for the native
+level the two-chain exists for; the non-native self-recursion on one
+curve stays where the estimate above puts it. It does change what the
+one native level buys: an outer BW6-761 proof could verify the `k`
+transfer proofs of a batch **and** the `T` proof natively, at
+≈ `(k + 1) × 155 000` constraints (`k = 64`: ≈ 10⁷), giving one
+constant-size proof per batch without an aggregation scheme (§4.3's
+option 3 by other means). The full price: both inner proofs, the
+transfer circuit **and** `T`, must live on BLS12-377, so every Poseidon
+value of the profile (note commitments, nullifiers, digests, the three
+trees) moves to that curve's scalar field with a different embedded
+curve for keys; that is a new, non-interoperable profile with two new
+trusted setups (the transfer key and `T`'s), not a parameter change;
+plus the slower BW6-761 prover and verifier (a 761-bit curve), and the
+same one-level limit: batches still chain linearly.
 
 So, within this profile, succinctness is **per batch**: a client
 verifies a chain of batch proofs from the activation state, each of
 constant size (`T`) plus the layer of §4.3; the cost is linear in the
 number of batches and independent of the transfers inside a batch up
-to that layer. The appendix experiment of §5 puts a number on the one
-native level a two-chain would buy, so that the paper can say what
-moving the transfer circuit to BLS12-377 would and would not give.
+to that layer.
 
 ### 4.5 The protocol
 
@@ -277,18 +310,36 @@ trees plus the full nullifier set over time.
    per transfer, proving time and key size for `n = 4, 16, 64`.
 3. Batched Groth16 verification; `sb serve` producing batches;
    `--chain proof:<url>`; the end-to-end test; a signet run.
-4. Appendix experiment: the constraint count of one in-circuit Groth16
-   verification of a BLS12-377 proof with 18 public inputs inside a
-   BW6-761 circuit, with arkworks' pairing gadgets, to measure the one
-   native recursion level of §4.4.
+4. Appendix experiment (done, `experiments/twochain`): the constraint
+   count of one in-circuit Groth16 verification of a BLS12-377 proof
+   with 17 public inputs inside a BW6-761 circuit, with arkworks'
+   pairing gadgets, to measure the one native recursion level of §4.4.
 5. (If the numbers call for it) SnarkPack aggregation.
 
 ## 6. Measured
 
-To be filled.
+* **`T`** (`crates/sb-circuit/tests/batch.rs`, release build): 250 368
+  constraints for `n = 1`, 467 888 for `n = 2`, 902 685 for `n = 4`,
+  3 511 467 for `n = 16`; ≈ 217 000 per slot. A two-slot block proves
+  and verifies; the same block as two fragments (one slot open, one
+  slot closing the block) ends in the same state digest; an empty block
+  proves the root append alone; a double spend inside the batch, an
+  anchor root absent from the root tree, an anchor at the block in
+  progress, a leaf at the wrong position and a block closed without its
+  root append each leave the constraints unsatisfied.
+* **Two-chain** (`experiments/twochain`): 154 649 BW6-761 constraints to
+  verify one BLS12-377 Groth16 proof with 17 public inputs in-circuit
+  (75 003 for the verifier gadget), satisfied.
+* Proving time and key size of `T`, bytes per batch and client
+  verification time: with slice 3.
 
 ## 7. Changelog
 
+* **v0.3** — measurements replace estimates: the per-slot cost of `T`
+  and its shape (17-element statements, the all-zero skip slot, the
+  size and `applied` fields of the digest, fragments); the two-chain
+  verification cost, what it buys and its full price (§4.4); slices 1,
+  2 and 4 done.
 * **v0.2** — after the paper review: the witness commitment and the
   leaf-count malleability in §3; `T` threads the trees in order, `D`
   binds the order, the all-zero skip slot is unambiguous, and the
