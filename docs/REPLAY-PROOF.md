@@ -1,4 +1,4 @@
-# Succinct replay proofs (draft v0.5)
+# Succinct replay proofs (draft v0.6)
 
 The paper's §22.2 asks whether a light client can obtain a **succinct
 proof that `R[h]` is the correct deterministic replay** of the accepted
@@ -283,6 +283,17 @@ trusted setups (the transfer key and `T`'s), not a parameter change;
 plus the slower BW6-761 prover and verifier (a 761-bit curve), and the
 same one-level limit: batches still chain linearly.
 
+An outer curve for BLS12-381 itself exists (BW6-767) and verifies a
+BLS12-381 proof natively in **169 580 constraints** (74 741 for the
+gadget) [measured], but no Groth16 key can be generated over it: its
+scalar field is BLS12-381's base field, whose multiplicative group has
+2-adicity 1, so no evaluation domain beyond 18 points exists and the
+setup fails with `PolynomialDegreeTooLarge` [measured]. BLS12-381 is by
+definition not the inner curve of a SNARK-friendly 2-chain (El Housni
+and Guillevic, ePrint 2021/1359, Definition 2); the one native level
+is bought only by moving the profile to BLS12-377. `REMAINING.md`
+§2.3 has the measurement and the cycle and non-native numbers.
+
 So, within this profile, succinctness is **per batch**: a client
 verifies a chain of batch proofs from the activation state, each of
 constant size (`T`) plus the layer of §4.3; the cost is linear in the
@@ -376,7 +387,10 @@ replay, with no envelope bytes kept.
   root append each leave the constraints unsatisfied.
 * **Two-chain** (`experiments/twochain`): 154 649 BW6-761 constraints to
   verify one BLS12-377 Groth16 proof with 17 public inputs in-circuit
-  (75 003 for the verifier gadget), satisfied.
+  (75 003 for the verifier gadget), satisfied; outer setup 8.8 s, proof
+  10.7 s, verification 12.6 ms, 2.2 GB peak. The same for BLS12-381
+  inside BW6-767: 169 580 constraints (74 741), satisfied, and no
+  Groth16 setup possible (`PolynomialDegreeTooLarge`, 2-adicity 1).
 * **Not yet exercised end to end:** a reorganisation on the client's
   side (the rollback through the digest history is implemented and
   reviewed as logic only).
@@ -395,6 +409,9 @@ replay, with no envelope bytes kept.
 
 ## 7. Changelog
 
+* **v0.6** — the BLS12-381 / BW6-767 measurement in §4.4 and §6 (one
+  native level exists for this profile's curve, with no FFT-friendly
+  prover); `REMAINING.md` linked.
 * **v0.5** — after the code review: the mint as the proof client's
   inflation surface (§3, §4.6); the client-side reorganisation noted as
   untested end to end (§6); the review linked.

@@ -52,7 +52,12 @@ how). The intended output is an article in academic form, a
 continuation of the original devoted to its §22. The owner's
 post-quantum thread comes after that.
 
-To be chosen from "Later" below.
+Nothing: §22 is exhausted as of 29 October 2026. The three items that
+could not be implemented end in `REMAINING.md` as demonstrations with
+numbers (smaller proof systems, certified-recipient lineage, the
+PIPE-based boundary), with the conditions under which each reopens;
+`REMAINING.md` §4 maps every item of §22 to where it ends. The project
+is parked here.
 
 ## Completed directions, as planned
 
@@ -162,14 +167,24 @@ the fee-funding models reused, a deployment on signet alongside the
 OP_RETURN one, and measurements of weight, fees and confirmation
 behaviour side by side, recorded in `RUNS.md`.
 
-### Later, from the same section of the paper
+### Closed without implementation, with numbers (`REMAINING.md`)
 
-* Peg-in and peg-out through PIPEs v2 (§20.4, §22.3; ePrint 2026/186),
-  replacing the custodial development boundary and the fee vault's
-  operator.
-* Proof systems with smaller proofs and without re-randomisation
-  (Polymath, Pari; §22.1); a standard arity with padding (§22.1).
-* Opt-in certified-recipient lineage (§22.4, §D).
+* Peg-in and peg-out through PIPEs v2 (§20.4, §22.3; ePrint 2026/186):
+  the only WE instantiation its authors consider implementable needs
+  ≈ 338 TiB per key release, has no implementation, rests on a
+  heuristic security claim, and releases a key once (`REMAINING.md` §3).
+* Proof systems with smaller proofs (Polymath, Pari; §22.1): 16–32
+  bytes per envelope, ≤ 3.9 % of the carrier, against a new
+  circuit-specific setup without a published ceremony, a different
+  security model and, for Pari, no zero knowledge as published
+  (`REMAINING.md` §1). The standard arity with padding is implemented
+  (the profile's fixed 2-in-2-out).
+* Opt-in certified-recipient lineage (§22.4, §D): needs unbounded
+  recursion, which BLS12-381 does not have natively (no cycle; its
+  2-chain partner BW6-767 has no FFT-friendly prover, measured), costs
+  0.7–7.8 M constraints per step on the alternatives, multiplies every
+  envelope's weight by 1.5–22, and presupposes the boundary above
+  (`REMAINING.md` §2).
 
 ### A thread of the owner's own
 

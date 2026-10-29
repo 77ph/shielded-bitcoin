@@ -6,7 +6,9 @@ edition = "2021"
 [dependencies]
 ark-bls12-377 = { version = "0.5", features = ["r1cs"] }
 ark-bw6-761 = "0.5"
-ark-groth16 = { version = "0.5", features = ["r1cs"] }
+ark-bls12-381 = { version = "0.5", features = ["curve"] }
+ark-bw6-767 = "0.5"
+ark-groth16 = { version = "0.5", features = ["r1cs", "parallel"] }
 ark-r1cs-std = "0.5"
 ark-relations = "0.5"
 ark-ff = "0.5"
