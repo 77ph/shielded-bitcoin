@@ -44,7 +44,7 @@ verify 4 ms, envelope 700 bytes, carrier ≈ 830 vB.
 | `crates/sb-wallet` | §10, §16, §C | scanning, recovery, note selection, anchor policy, transfer construction |
 | `crates/sb-ceremony` | §8.4 | BGM17 multi-party setup: powers of tau, key derivation, delta contributions, beacon |
 | `crates/sb-cli` | — | `sb` command-line tool |
-| `docs/` | — | `PROFILE.md` (normative profile), `BOUNDARY.md` (dev peg, fee funding), `CEREMONY.md` (parameter ceremony), `TEST_VECTORS.md`, `RUNS.md` |
+| `docs/` | — | `PROFILE.md` (normative profile), `ROADMAP.md`, `BOUNDARY.md` (dev peg, fee funding), `CEREMONY.md` (parameter ceremony), `TEST_VECTORS.md`, `RUNS.md` |
 | `deployments/` | profile §9 | deployment profiles |
 
 ## Quick start (signet)
@@ -196,16 +196,12 @@ to grow into a real indexer and wallet, and test-vector-first interoperability.
 
 ## Roadmap
 
-1. ~~Primitives~~ 2. ~~Core~~ 3. ~~Circuit~~ 4. ~~Indexer~~ 5. ~~Wallet + CLI~~
-6. ~~End-to-end runs on real nodes~~ (private and public signet, see
-   `docs/RUNS.md`).
-7. ~~Encrypted wallet files~~, ~~profile versioning rules~~, ~~Electrum
-   source~~, ~~PostgreSQL-backed indexer state~~, ~~fee-funding models
-   (fresh addresses, external funding, sponsored relayer)~~, ~~verified
-   sync from an indexer (`sb serve`, `--chain light:`)~~, ~~ceremony
-   tooling~~, ~~proving-key cache~~.
-8. ~~Import of public powers-of-tau transcripts~~; outside review of the
-   ceremony tooling and a ceremony with independent participants are
-   operational steps for whoever deploys, not code.
+Everything the paper specifies for the transfer layer, plus the
+deployment layer it leaves open (fee funding, verified sync, a parameter
+ceremony), is built and run on signet. `docs/ROADMAP.md` records what is
+done and what comes next, taken from the paper's own "Future Work": first
+the atomic swap between a shielded note and transparent Bitcoin through
+the reserved `h_aux` slot and a Bitcoin HTLC (§22.5), then witness-carried
+envelopes (§22.1).
 
 Rust 1.85+ (edition 2024).
