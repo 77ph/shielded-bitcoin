@@ -916,6 +916,15 @@ fn full_cycle_on_fake_node() {
     };
     ro(&dir.join("wallets"), 0o555);
     ro(&dir, 0o555);
+    // a process that ignores permissions (root, as in a container) cannot
+    // run this check: probe, and skip it rather than assert the impossible
+    let privileged = std::fs::write(dir.join(".probe"), b"").is_ok();
+    if privileged {
+        let _ = std::fs::remove_file(dir.join(".probe"));
+        ro(&dir, 0o755);
+        ro(&dir.join("wallets"), 0o755);
+        eprintln!("read-only directory check skipped: this process ignores permissions");
+    }
     let writes = [
         vec!["scan", "--name", "alice"],
         vec!["unlock", "--name", "alice"],
@@ -935,7 +944,7 @@ fn full_cycle_on_fake_node() {
     ro(&dir.join("wallets"), 0o755);
     for (args, ok, text) in results {
         assert!(
-            !ok,
+            privileged || !ok,
             "{args:?} should fail on a read-only directory:\n{text}"
         );
     }
