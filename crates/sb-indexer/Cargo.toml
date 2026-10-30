@@ -10,6 +10,7 @@ license.workspace = true
 sb-primitives.workspace = true
 sb-core.workspace = true
 sb-circuit.workspace = true
+sb-common.workspace = true
 ark-bls12-381.workspace = true
 ark-groth16.workspace = true
 rand.workspace = true
@@ -22,11 +23,7 @@ hex.workspace = true
 thiserror.workspace = true
 log.workspace = true
 ureq.workspace = true
-base64.workspace = true
-rustls.workspace = true
-webpki-roots.workspace = true
 postgres.workspace = true
-rcgen.workspace = true
 
 [dev-dependencies]
 hex.workspace = true

@@ -134,7 +134,14 @@ fn light_replay_equals_full_replay_and_every_check_fires() {
         assert_eq!((r.accepted, r.rejected), (2, 1));
         assert_eq!(state_json(&idx), state_json(&full));
         // the fake claims no roots, so nothing to compare
-        assert_eq!(light.verify_claims(&idx).unwrap(), 0);
+        assert_eq!(
+            light
+                .verify_claims(|h| idx
+                    .root_at(h)
+                    .map(|r| hex::encode(sb_primitives::encoding::fr_to_bytes(&r))))
+                .unwrap(),
+            0
+        );
         // a second sync is a no-op and `block` by hash works from the cache or the route
         let r = idx.sync(&light).unwrap();
         assert_eq!(r.blocks, 0);
@@ -170,7 +177,13 @@ fn light_replay_equals_full_replay_and_every_check_fires() {
         ReplayState::new(),
     );
     idx.sync(&light).unwrap();
-    let e = light.verify_claims(&idx).unwrap_err().to_string();
+    let e = light
+        .verify_claims(|h| {
+            idx.root_at(h)
+                .map(|r| hex::encode(sb_primitives::encoding::fr_to_bytes(&r)))
+        })
+        .unwrap_err()
+        .to_string();
     assert!(
         e.contains("claims R[10]") && e.contains("different carrier set"),
         "{e}"

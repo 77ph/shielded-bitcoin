@@ -318,7 +318,7 @@ impl EsploraPublisher {
 impl Publisher for EsploraPublisher {
     fn utxos(&self, address: &Address) -> Result<Vec<Utxo>> {
         let url = format!("{}/address/{}/utxo", self.base, address);
-        let list: Vec<EsploraUtxo> = sb_indexer::net::agent()
+        let list: Vec<EsploraUtxo> = crate::net::agent()
             .get(&url)
             .call()
             .context("esplora utxo")?
@@ -340,7 +340,7 @@ impl Publisher for EsploraPublisher {
     fn broadcast(&self, tx: &Transaction) -> Result<Txid> {
         let hex = bitcoin::consensus::encode::serialize_hex(tx);
         let url = format!("{}/tx", self.base);
-        let resp = sb_indexer::net::agent()
+        let resp = crate::net::agent()
             .post(&url)
             .send_string(&hex)
             .map_err(|e| match e {
@@ -351,7 +351,7 @@ impl Publisher for EsploraPublisher {
                         r.into_string().unwrap_or_default().trim()
                     )
                 }
-                other => anyhow!("broadcast: {other}{}", sb_indexer::net::route()),
+                other => anyhow!("broadcast: {other}{}", crate::net::route()),
             })?;
         let txid = resp.into_string()?;
         txid.trim().parse().context("txid")
@@ -360,7 +360,7 @@ impl Publisher for EsploraPublisher {
 
 /// Electrum server: `listunspent` by scripthash and `transaction.broadcast`.
 pub struct ElectrumPublisher {
-    pub electrum: sb_indexer::chain::electrum::Electrum,
+    pub electrum: crate::chain::electrum::Electrum,
 }
 
 impl Publisher for ElectrumPublisher {
@@ -389,7 +389,7 @@ impl Publisher for ElectrumPublisher {
 /// Bitcoin Core RPC without a node wallet: `scantxoutset` for UTXOs (confirmed
 /// only) and `sendrawtransaction`.
 pub struct RpcPublisher {
-    pub rpc: sb_indexer::chain::rpc::BitcoinCoreRpc,
+    pub rpc: crate::chain::rpc::BitcoinCoreRpc,
 }
 
 impl Publisher for RpcPublisher {

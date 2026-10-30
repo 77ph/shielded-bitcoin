@@ -2005,13 +2005,13 @@ dependencies = [
  "clap",
  "env_logger",
  "hex",
- "hkdf",
  "log",
  "rand 0.8.8",
  "rand_chacha 0.3.1",
  "rpassword",
  "sb-ceremony",
  "sb-circuit",
+ "sb-common",
  "sb-core",
  "sb-indexer",
  "sb-primitives",
@@ -2020,6 +2020,30 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "ureq",
+]
+
+[[package]]
+name = "sb-common"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "argon2",
+ "base64",
+ "bitcoin",
+ "chacha20poly1305",
+ "hex",
+ "hkdf",
+ "log",
+ "rand 0.8.8",
+ "rcgen",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror",
+ "ureq",
+ "webpki-roots 0.26.11",
+ "zeroize",
 ]
 
 [[package]]
@@ -2051,16 +2075,14 @@ dependencies = [
  "ark-ff",
  "ark-groth16",
  "ark-std",
- "base64",
  "bitcoin",
  "hex",
  "log",
  "postgres",
  "rand 0.8.8",
  "rand_chacha 0.3.1",
- "rcgen",
- "rustls",
  "sb-circuit",
+ "sb-common",
  "sb-core",
  "sb-primitives",
  "sb-wallet",
@@ -2069,7 +2091,6 @@ dependencies = [
  "sha2 0.10.9",
  "thiserror",
  "ureq",
- "webpki-roots 0.26.11",
 ]
 
 [[package]]
@@ -2094,20 +2115,18 @@ dependencies = [
 name = "sb-wallet"
 version = "0.1.0"
 dependencies = [
- "argon2",
  "ark-ff",
- "chacha20poly1305",
  "hex",
  "log",
  "rand 0.8.8",
  "rand_chacha 0.3.1",
  "sb-circuit",
+ "sb-common",
  "sb-core",
  "sb-primitives",
  "serde",
  "serde_json",
  "thiserror",
- "zeroize",
 ]
 
 [[package]]

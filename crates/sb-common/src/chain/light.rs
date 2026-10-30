@@ -54,8 +54,8 @@ pub struct CarrierView {
 }
 
 /// Does the carrier rule look at this transaction (candidate or probe)?
-pub fn is_carrier(mode: CarrierMode, tx: &Transaction) -> bool {
-    mode.is_carrier(tx)
+pub fn is_carrier(mode: CarrierMode, prefix: &[u8], tx: &Transaction) -> bool {
+    mode.is_carrier(tx, prefix)
 }
 
 impl BlockView {
@@ -64,12 +64,17 @@ impl BlockView {
     /// with its proof.
     pub fn from_block(
         mode: CarrierMode,
+        prefix: &[u8],
         height: u32,
         block: &Block,
         root_after: Option<String>,
     ) -> Self {
         let txids: Vec<Txid> = block.txdata.iter().map(|t| t.compute_txid()).collect();
-        let matches: Vec<bool> = block.txdata.iter().map(|t| is_carrier(mode, t)).collect();
+        let matches: Vec<bool> = block
+            .txdata
+            .iter()
+            .map(|t| is_carrier(mode, prefix, t))
+            .collect();
         let carriers = block
             .txdata
             .iter()
@@ -185,18 +190,22 @@ impl LightSource {
     }
 
     /// Compare every root the indexer claimed with what local replay
-    /// produced; the number compared, or the first height that differs
-    /// (the indexer hid a carrier from us, or one of us is wrong).
-    pub fn verify_claims(&self, indexer: &crate::Indexer) -> Result<usize, ChainError> {
+    /// produced (`root_hex_at`: the local root after a height, in the
+    /// family's hex encoding, `None` when not replayed); the number
+    /// compared, or the first height that differs (the indexer hid a
+    /// carrier from us, or one of us is wrong).
+    pub fn verify_claims(
+        &self,
+        root_hex_at: impl Fn(u32) -> Option<String>,
+    ) -> Result<usize, ChainError> {
         let claims = self.claims.lock().unwrap();
         let mut heights: Vec<&u32> = claims.keys().collect();
         heights.sort();
         let mut n = 0;
         for h in heights {
-            let Some(ours) = indexer.root_at(*h) else {
+            let Some(ours) = root_hex_at(*h) else {
                 continue;
             };
-            let ours = hex::encode(sb_primitives::encoding::fr_to_bytes(&ours));
             if claims[h] != ours {
                 return Err(ChainError::Decode(format!(
                     "the indexer claims R[{h}] = {} but local replay gives {ours}: it served a different carrier set",
@@ -295,6 +304,7 @@ impl ChainSource for LightSource {
 #[cfg(test)]
 mod tests {
     use super::*;
+    const CANDIDATE_PREFIX: [u8; 4] = *b"btc\x01"; // the paper profile's prefix, for the tests
     use crate::chain::mock::{MockChain, carrier_tx};
     use bitcoin::hashes::Hash;
 
@@ -303,7 +313,7 @@ mod tests {
         for i in 0..n_plain {
             if carriers_at.contains(&i) {
                 let mut env = vec![0u8; 700];
-                env[..4].copy_from_slice(&sb_core::envelope::CANDIDATE_PREFIX);
+                env[..4].copy_from_slice(&CANDIDATE_PREFIX);
                 env[4] = i as u8;
                 txs.push(carrier_tx(&env, i as u32));
             } else {
@@ -333,7 +343,13 @@ mod tests {
             (4, vec![]),
         ] {
             let block = block_with(n, &at);
-            let view = BlockView::from_block(CarrierMode::OpReturn, 9, &block, Some("rr".into()));
+            let view = BlockView::from_block(
+                CarrierMode::OpReturn,
+                &CANDIDATE_PREFIX,
+                9,
+                &block,
+                Some("rr".into()),
+            );
             assert_eq!(view.carriers.len(), at.len());
             let json = serde_json::to_string(&view).unwrap();
             let back: BlockView = serde_json::from_str(&json).unwrap();
@@ -342,12 +358,16 @@ mod tests {
             assert_eq!(rebuilt.txdata.len(), block.txdata.len());
             // (the mock chain puts a coinbase first, so every position is +1)
             for (i, tx) in block.txdata.iter().enumerate() {
-                if is_carrier(CarrierMode::OpReturn, tx) {
+                if is_carrier(CarrierMode::OpReturn, &CANDIDATE_PREFIX, tx) {
                     assert!(at.contains(&(i - 1)));
                     assert_eq!(&rebuilt.txdata[i], tx);
                 } else {
                     assert!(rebuilt.txdata[i].output.is_empty());
-                    assert!(!is_carrier(CarrierMode::OpReturn, &rebuilt.txdata[i]));
+                    assert!(!is_carrier(
+                        CarrierMode::OpReturn,
+                        &CANDIDATE_PREFIX,
+                        &rebuilt.txdata[i]
+                    ));
                 }
             }
         }
@@ -357,7 +377,7 @@ mod tests {
     fn tampered_views_are_refused() {
         let block = block_with(6, &[1, 4]);
         let hash = block.block_hash();
-        let good = BlockView::from_block(CarrierMode::OpReturn, 1, &block, None);
+        let good = BlockView::from_block(CarrierMode::OpReturn, &CANDIDATE_PREFIX, 1, &block, None);
         let err = |v: BlockView, h: &BlockHash| match v.clone().into_block(h) {
             Ok(_) => panic!(
                 "accepted: carriers {:?}, tx_count {}, header {}…, merkle {}…, expected {h}",
@@ -421,8 +441,14 @@ mod tests {
         assert!(err(v, &hash).contains("empty block"));
         // a merkle tree of a different block (same count, other transactions)
         let mut v = good.clone();
-        v.merkle =
-            BlockView::from_block(CarrierMode::OpReturn, 1, &block_with(6, &[4]), None).merkle;
+        v.merkle = BlockView::from_block(
+            CarrierMode::OpReturn,
+            &CANDIDATE_PREFIX,
+            1,
+            &block_with(6, &[4]),
+            None,
+        )
+        .merkle;
         assert!(err(v, &hash).contains("merkle root does not match"));
     }
 }

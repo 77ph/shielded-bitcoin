@@ -17,7 +17,7 @@ use bitcoin::{
     XOnlyPublicKey,
 };
 
-use sb_indexer::carrier::{envelope_tapscript, memo_output};
+use crate::carrier::{envelope_tapscript, memo_output};
 
 use crate::funding::{Coin, DUST_LIMIT, FundingKey, FundingState, FundingWallet, Publisher};
 
@@ -237,6 +237,7 @@ pub fn broadcast(
 #[cfg(test)]
 mod tests {
     use super::*;
+    const CANDIDATE_PREFIX: [u8; 4] = *b"btc\x01"; // the paper profile's prefix, for the tests
     use crate::funding::{Chain, Utxo};
     use bitcoin::Txid;
 
@@ -245,7 +246,7 @@ mod tests {
         let fw = FundingWallet::new([3u8; 32], Network::Regtest);
         let key = fw.key(Chain::Receive, 0).unwrap();
         let mut env = vec![0u8; 700];
-        env[..4].copy_from_slice(&sb_core::envelope::CANDIDATE_PREFIX);
+        env[..4].copy_from_slice(&CANDIDATE_PREFIX);
         let coins = vec![Coin {
             utxo: Utxo {
                 outpoint: OutPoint {
@@ -294,8 +295,8 @@ mod tests {
         assert_eq!(&w[1], commitment.script.as_bytes());
         assert_eq!(w[2].len(), 33);
         // the indexer's witness rule finds the envelope and the memo
-        let c = sb_indexer::carrier::CarrierMode::Witness
-            .extract(&p.reveal)
+        let c = crate::carrier::CarrierMode::Witness
+            .extract(&p.reveal, &CANDIDATE_PREFIX)
             .unwrap()
             .unwrap();
         assert_eq!(c.envelope, env);

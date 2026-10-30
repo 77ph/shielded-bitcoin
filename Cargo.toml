@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/sb-primitives",
     "crates/sb-core",
+    "crates/sb-common",
     "crates/sb-circuit",
     "crates/sb-indexer",
     "crates/sb-wallet",
@@ -22,6 +23,7 @@ repository = "https://github.com/77ph/shielded-bitcoin"
 [workspace.dependencies]
 sb-primitives = { path = "crates/sb-primitives" }
 sb-core = { path = "crates/sb-core" }
+sb-common = { path = "crates/sb-common" }
 sb-circuit = { path = "crates/sb-circuit" }
 sb-indexer = { path = "crates/sb-indexer" }
 sb-wallet = { path = "crates/sb-wallet" }
