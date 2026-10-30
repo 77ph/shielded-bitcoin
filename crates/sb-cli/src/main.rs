@@ -6,15 +6,13 @@
 
 mod ceremony;
 mod feeauth;
-mod funding;
-mod htlc;
-mod http;
 mod prove;
 mod relay;
 mod serve;
 mod swap;
 mod vault;
-mod witness;
+
+use sb_common::{funding, htlc, http, witness};
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -1384,7 +1382,10 @@ fn main() -> Result<()> {
             let r = idx.sync_with(chain.as_ref(), Some(store.as_mut()))?;
             println!("{r:?}");
             if let Some(l) = light {
-                let n = l.verify_claims(&idx)?;
+                let n = l.verify_claims(|h| {
+                    idx.root_at(h)
+                        .map(|r| hex::encode(sb_primitives::encoding::fr_to_bytes(&r)))
+                })?;
                 println!("the indexer's claimed roots agree with local replay for {n} block(s)");
             }
             print_status(&idx);

@@ -18,6 +18,10 @@ use serde_json::{Value, json};
 use super::mock::MockChain;
 use super::{BlockId, ChainSource};
 
+/// The candidate prefix of the paper profile (`"btc"` ‖ version 1): the
+/// fake light route serves a paper-profile deployment.
+pub const PAPER_PREFIX: [u8; 4] = *b"btc\x01";
+
 #[derive(Clone)]
 pub struct Shared {
     pub chain: Arc<Mutex<MockChain>>,
@@ -345,6 +349,7 @@ fn esplora(s: &Shared, path: &str) -> (u16, &'static str, Vec<u8>) {
             let block = chain.block(&hash).unwrap();
             let mut view = super::light::BlockView::from_block(
                 super::super::carrier::CarrierMode::OpReturn,
+                &PAPER_PREFIX,
                 height,
                 &block,
                 None,
@@ -381,7 +386,11 @@ fn omit_last_carrier(
         .enumerate()
         .map(|(i, t)| {
             i as u32 != last.index
-                && super::light::is_carrier(super::super::carrier::CarrierMode::OpReturn, t)
+                && super::light::is_carrier(
+                    super::super::carrier::CarrierMode::OpReturn,
+                    &PAPER_PREFIX,
+                    t,
+                )
         })
         .collect();
     view.merkle = if view.carriers.is_empty() {

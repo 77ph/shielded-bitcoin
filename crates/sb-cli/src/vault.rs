@@ -35,7 +35,7 @@ use sb_primitives::encoding::{fr_from_bytes, fr_to_bytes};
 use sb_wallet::wallet::FeeAccountRecord;
 use sb_wallet::{Wallet, anchor_for};
 
-use crate::feeauth::{AuthKey, draw_message, reclaim_message, verify};
+use crate::feeauth::{draw_message, reclaim_message, verify};
 use crate::funding::{Chain, Coin, FundingState, Utxo};
 use crate::http::{get_json, post_json, read_request, respond};
 use crate::relay::Relayer;
@@ -973,7 +973,7 @@ pub(crate) fn draw_from_wallet(
         }
     };
     let h_body = h_body_of(envelope, &deployment.const_salt)?;
-    let key = AuthKey::derive(&wallet.keys, acct.index)?;
+    let key = crate::feeauth::derive(&wallet.keys, acct.index)?;
     if hex::encode(key.public()) != acct.key {
         bail!(
             "account {} does not match this wallet's key {}",
@@ -1201,7 +1201,7 @@ pub fn run(ctx: &Ctx, cmd: FeeVaultCmd) -> Result<()> {
                 bail!("no deposit with key index {index} to top up");
             }
             let key = loop {
-                match AuthKey::derive(&w.keys, index) {
+                match crate::feeauth::derive(&w.keys, index) {
                     Ok(k) => break k,
                     Err(_) => index += 1,
                 }
@@ -1320,7 +1320,7 @@ pub fn run(ctx: &Ctx, cmd: FeeVaultCmd) -> Result<()> {
                     a.encode(ctx.deployment.network)
                 }
             };
-            let key = AuthKey::derive(&w.keys, acct.index)?;
+            let key = crate::feeauth::derive(&w.keys, acct.index)?;
             let sig = key.sign(&reclaim_message(&ctx.deployment.name, &address, deposited));
             let req = ReclaimRequest {
                 key: acct.key.clone(),

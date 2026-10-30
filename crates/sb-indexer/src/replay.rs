@@ -7,8 +7,8 @@ use log::{debug, info, warn};
 
 use sb_circuit::{SwapStatement, SwapVerifier, TransferStatement, TransferVerifier};
 use sb_core::envelope::{
-    Envelope, MintEnvelope, ParseError, SwapEnvelope, TransferBody, TransferEnvelope,
-    parse_envelope,
+    CANDIDATE_PREFIX, Envelope, MintEnvelope, ParseError, SwapEnvelope, TransferBody,
+    TransferEnvelope, parse_envelope,
 };
 use sb_core::event::AcceptedEvent;
 use sb_core::note::{note_leaf, note_leaf_aux};
@@ -144,7 +144,7 @@ impl Indexer {
         };
         let mut report = BlockReport::default();
         for (tx_index, tx) in block.txdata.iter().enumerate() {
-            let Some(candidate) = self.deployment.carrier.extract(tx) else {
+            let Some(candidate) = self.deployment.carrier.extract(tx, &CANDIDATE_PREFIX) else {
                 continue;
             };
             let txid = tx.compute_txid().to_byte_array();
@@ -564,6 +564,6 @@ impl Indexer {
 
     /// Is this transaction a carrier candidate under this deployment's rule?
     pub fn is_carrier(&self, tx: &Transaction) -> bool {
-        self.deployment.carrier.is_carrier(tx)
+        self.deployment.carrier.is_carrier(tx, &CANDIDATE_PREFIX)
     }
 }

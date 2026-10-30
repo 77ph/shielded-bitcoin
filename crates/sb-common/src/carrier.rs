@@ -10,8 +10,6 @@ use bitcoin::blockdata::script::{Builder, Instruction, PushBytesBuf, ScriptBuf};
 use bitcoin::{Amount, Transaction, TxOut, XOnlyPublicKey};
 use serde::{Deserialize, Serialize};
 
-use sb_core::envelope::is_candidate;
-
 #[derive(Debug, thiserror::Error, PartialEq, Eq, Clone)]
 pub enum CarrierError {
     #[error("more than one OP_RETURN output carries an envelope")]
@@ -37,16 +35,22 @@ pub enum CarrierMode {
 }
 
 impl CarrierMode {
-    /// The candidate envelope of a transaction under this rule.
-    pub fn extract(&self, tx: &Transaction) -> Option<Result<Candidate, CarrierError>> {
+    /// The candidate envelope of a transaction under this rule. `prefix`
+    /// is the family's candidate prefix (magic ‖ version byte): a payload
+    /// is a candidate when it starts with it.
+    pub fn extract(
+        &self,
+        tx: &Transaction,
+        prefix: &[u8],
+    ) -> Option<Result<Candidate, CarrierError>> {
         match self {
-            CarrierMode::OpReturn => extract_envelope(tx),
-            CarrierMode::Witness => extract_envelope_witness(tx),
+            CarrierMode::OpReturn => extract_envelope(tx, prefix),
+            CarrierMode::Witness => extract_envelope_witness(tx, prefix),
         }
     }
 
-    pub fn is_carrier(&self, tx: &Transaction) -> bool {
-        self.extract(tx).is_some()
+    pub fn is_carrier(&self, tx: &Transaction, prefix: &[u8]) -> bool {
+        self.extract(tx, prefix).is_some()
     }
 }
 
@@ -135,14 +139,17 @@ pub fn tapscript_of(witness: &bitcoin::Witness) -> Option<ScriptBuf> {
 /// The witness-carrier rule: exactly one input whose script-path witness
 /// (`…, script, control block[, annex]`) reveals an envelope tapscript
 /// whose payload starts with the magic. Memos stay in OP_RETURN outputs.
-pub fn extract_envelope_witness(tx: &Transaction) -> Option<Result<Candidate, CarrierError>> {
+pub fn extract_envelope_witness(
+    tx: &Transaction,
+    prefix: &[u8],
+) -> Option<Result<Candidate, CarrierError>> {
     let mut found: Option<Vec<u8>> = None;
     for input in &tx.input {
         let Some(script) = tapscript_of(&input.witness) else {
             continue;
         };
         match tapscript_payload(&script) {
-            Ok(Some(payload)) if is_candidate(&payload) => {
+            Ok(Some(payload)) if payload.starts_with(prefix) => {
                 if found.is_some() {
                     return Some(Err(CarrierError::MultipleWitnessEnvelopes));
                 }
@@ -150,7 +157,7 @@ pub fn extract_envelope_witness(tx: &Transaction) -> Option<Result<Candidate, Ca
             }
             Ok(_) => {}
             Err(e) => {
-                if script.as_bytes().windows(4).any(is_candidate) {
+                if script.as_bytes().windows(prefix.len()).any(|w| w == prefix) {
                     return Some(Err(e));
                 }
             }
@@ -207,12 +214,15 @@ pub struct Candidate {
 /// * `Some(Ok(c))`: exactly one OP_RETURN output with a candidate payload.
 /// * `Some(Err(_))`: the transaction looks like a carrier but violates the
 ///   carrier rule; replay records it as a rejection.
-pub fn extract_envelope(tx: &Transaction) -> Option<Result<Candidate, CarrierError>> {
+pub fn extract_envelope(
+    tx: &Transaction,
+    prefix: &[u8],
+) -> Option<Result<Candidate, CarrierError>> {
     let mut found: Option<Vec<u8>> = None;
     let mut memo: Option<Vec<u8>> = None;
     for out in &tx.output {
         match op_return_payload(&out.script_pubkey) {
-            Ok(Some(payload)) if is_candidate(&payload) => {
+            Ok(Some(payload)) if payload.starts_with(prefix) => {
                 if found.is_some() {
                     return Some(Err(CarrierError::MultipleEnvelopes));
                 }
@@ -227,7 +237,12 @@ pub fn extract_envelope(tx: &Transaction) -> Option<Result<Candidate, CarrierErr
             Err(e) => {
                 // A malformed OP_RETURN whose raw bytes start with our magic
                 // is a probe; anything else is somebody else's data.
-                if out.script_pubkey.as_bytes().windows(4).any(is_candidate) {
+                if out
+                    .script_pubkey
+                    .as_bytes()
+                    .windows(prefix.len())
+                    .any(|w| w == prefix)
+                {
                     return Some(Err(e));
                 }
             }
@@ -260,7 +275,8 @@ mod tests {
     use super::*;
     use bitcoin::absolute::LockTime;
     use bitcoin::transaction::Version;
-    use sb_core::envelope::{CANDIDATE_PREFIX, ENVELOPE_LEN};
+    const CANDIDATE_PREFIX: [u8; 4] = *b"btc\x01"; // the paper profile's prefix, for the tests
+    const ENVELOPE_LEN: usize = 700;
 
     fn tx_with(outputs: Vec<TxOut>) -> Transaction {
         Transaction {
@@ -282,7 +298,7 @@ mod tests {
         let e = envelope();
         let tx = tx_with(vec![carrier_output(&e)]);
         assert_eq!(
-            extract_envelope(&tx),
+            extract_envelope(&tx, &CANDIDATE_PREFIX),
             Some(Ok(Candidate {
                 envelope: e.clone(),
                 memo: None
@@ -303,7 +319,7 @@ mod tests {
             value: Amount::ZERO,
             script_pubkey: other.clone(),
         }]);
-        assert_eq!(extract_envelope(&tx), None);
+        assert_eq!(extract_envelope(&tx, &CANDIDATE_PREFIX), None);
         // one envelope plus an unrelated OP_RETURN is fine
         let tx = tx_with(vec![
             carrier_output(&e),
@@ -313,7 +329,7 @@ mod tests {
             },
         ]);
         assert_eq!(
-            extract_envelope(&tx),
+            extract_envelope(&tx, &CANDIDATE_PREFIX),
             Some(Ok(Candidate {
                 envelope: e.clone(),
                 memo: None
@@ -322,7 +338,7 @@ mod tests {
         // two envelopes
         let tx = tx_with(vec![carrier_output(&e), carrier_output(&e)]);
         assert_eq!(
-            extract_envelope(&tx),
+            extract_envelope(&tx, &CANDIDATE_PREFIX),
             Some(Err(CarrierError::MultipleEnvelopes))
         );
         // extra push after the envelope
@@ -335,7 +351,7 @@ mod tests {
             script_pubkey: script.into_script(),
         }]);
         assert_eq!(
-            extract_envelope(&tx),
+            extract_envelope(&tx, &CANDIDATE_PREFIX),
             Some(Err(CarrierError::MalformedScript))
         );
         // non-minimal push (PUSHDATA4) of the envelope
@@ -347,7 +363,7 @@ mod tests {
             script_pubkey: ScriptBuf::from_bytes(raw),
         }]);
         assert_eq!(
-            extract_envelope(&tx),
+            extract_envelope(&tx, &CANDIDATE_PREFIX),
             Some(Err(CarrierError::MalformedScript))
         );
     }
@@ -359,7 +375,7 @@ mod tests {
             value: Amount::ZERO,
             script_pubkey: bare,
         }]);
-        assert_eq!(extract_envelope(&tx), None);
+        assert_eq!(extract_envelope(&tx, &CANDIDATE_PREFIX), None);
     }
 
     #[test]
@@ -397,15 +413,26 @@ mod tests {
             output: outputs,
         };
         let good = tx(vec![reveal_input(&script)], vec![]);
-        let c = CarrierMode::Witness.extract(&good).unwrap().unwrap();
+        let c = CarrierMode::Witness
+            .extract(&good, &CANDIDATE_PREFIX)
+            .unwrap()
+            .unwrap();
         assert_eq!(c.envelope, env);
         assert_eq!(c.memo, None);
-        assert!(CarrierMode::Witness.is_carrier(&good));
+        assert!(CarrierMode::Witness.is_carrier(&good, &CANDIDATE_PREFIX));
         // the OP_RETURN rule does not see it, and vice versa
-        assert!(CarrierMode::OpReturn.extract(&good).is_none());
+        assert!(
+            CarrierMode::OpReturn
+                .extract(&good, &CANDIDATE_PREFIX)
+                .is_none()
+        );
         let op_return = tx(vec![], vec![carrier_output(&env)]);
-        assert!(CarrierMode::Witness.extract(&op_return).is_none());
-        assert!(CarrierMode::OpReturn.is_carrier(&op_return));
+        assert!(
+            CarrierMode::Witness
+                .extract(&op_return, &CANDIDATE_PREFIX)
+                .is_none()
+        );
+        assert!(CarrierMode::OpReturn.is_carrier(&op_return, &CANDIDATE_PREFIX));
         // a memo output rides along
         let with_memo = tx(
             vec![reveal_input(&script)],
@@ -413,7 +440,7 @@ mod tests {
         );
         assert_eq!(
             CarrierMode::Witness
-                .extract(&with_memo)
+                .extract(&with_memo, &CANDIDATE_PREFIX)
                 .unwrap()
                 .unwrap()
                 .memo,
@@ -422,7 +449,10 @@ mod tests {
         // two revealing inputs
         let two = tx(vec![reveal_input(&script), reveal_input(&script)], vec![]);
         assert_eq!(
-            CarrierMode::Witness.extract(&two).unwrap().unwrap_err(),
+            CarrierMode::Witness
+                .extract(&two, &CANDIDATE_PREFIX)
+                .unwrap()
+                .unwrap_err(),
             CarrierError::MultipleWitnessEnvelopes
         );
         // a key-path spend (one witness item) and an unrelated script are not candidates
@@ -437,11 +467,15 @@ mod tests {
             }],
             vec![],
         );
-        assert!(CarrierMode::Witness.extract(&keypath).is_none());
+        assert!(
+            CarrierMode::Witness
+                .extract(&keypath, &CANDIDATE_PREFIX)
+                .is_none()
+        );
         let other = Builder::new().push_opcode(OP_CHECKSIG).into_script();
         assert!(
             CarrierMode::Witness
-                .extract(&tx(vec![reveal_input(&other)], vec![]))
+                .extract(&tx(vec![reveal_input(&other)], vec![]), &CANDIDATE_PREFIX)
                 .is_none()
         );
         // a tapscript with the magic but broken chunking is a probe: rejected
@@ -456,7 +490,7 @@ mod tests {
             .into_script();
         assert_eq!(
             CarrierMode::Witness
-                .extract(&tx(vec![reveal_input(&bad)], vec![]))
+                .extract(&tx(vec![reveal_input(&bad)], vec![]), &CANDIDATE_PREFIX)
                 .unwrap()
                 .unwrap_err(),
             CarrierError::MalformedTapscript
@@ -467,7 +501,10 @@ mod tests {
         let trailing = ScriptBuf::from_bytes(trailing);
         assert_eq!(
             CarrierMode::Witness
-                .extract(&tx(vec![reveal_input(&trailing)], vec![]))
+                .extract(
+                    &tx(vec![reveal_input(&trailing)], vec![]),
+                    &CANDIDATE_PREFIX
+                )
                 .unwrap()
                 .unwrap_err(),
             CarrierError::MalformedTapscript
@@ -486,7 +523,8 @@ mod tests {
             .push_opcode(OP_ENDIF)
             .into_script();
         assert!(matches!(
-            CarrierMode::Witness.extract(&tx(vec![reveal_input(&empty)], vec![])),
+            CarrierMode::Witness
+                .extract(&tx(vec![reveal_input(&empty)], vec![]), &CANDIDATE_PREFIX),
             Some(Err(CarrierError::MalformedTapscript))
         ));
         // a reveal with a BIP 341 annex: the script is the third-to-last item
@@ -494,7 +532,7 @@ mod tests {
         with_annex.witness.push([0x50u8, 1, 2, 3]);
         assert_eq!(
             CarrierMode::Witness
-                .extract(&tx(vec![with_annex], vec![]))
+                .extract(&tx(vec![with_annex], vec![]), &CANDIDATE_PREFIX)
                 .unwrap()
                 .unwrap()
                 .envelope,
@@ -511,7 +549,7 @@ mod tests {
         let s1 = envelope_tapscript(&small, &key);
         assert_eq!(
             CarrierMode::Witness
-                .extract(&tx(vec![reveal_input(&s1)], vec![]))
+                .extract(&tx(vec![reveal_input(&s1)], vec![]), &CANDIDATE_PREFIX)
                 .unwrap()
                 .unwrap()
                 .envelope,

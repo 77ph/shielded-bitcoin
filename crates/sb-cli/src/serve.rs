@@ -128,7 +128,13 @@ impl Server {
             .indexer
             .root_at(cp.height)
             .map(|r| hex::encode(sb_primitives::encoding::fr_to_bytes(&r)));
-        let view = BlockView::from_block(self.indexer.deployment.carrier, cp.height, &block, root);
+        let view = BlockView::from_block(
+            self.indexer.deployment.carrier,
+            &sb_core::envelope::CANDIDATE_PREFIX,
+            cp.height,
+            &block,
+            root,
+        );
         (200, serde_json::to_value(view).unwrap_or(Value::Null))
     }
 }

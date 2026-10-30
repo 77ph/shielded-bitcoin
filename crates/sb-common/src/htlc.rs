@@ -19,7 +19,7 @@ use bitcoin::{
     TxIn, TxOut, Witness,
 };
 
-use sb_indexer::ChainSource;
+use crate::ChainSource;
 
 use crate::funding::{DUST_LIMIT, FundingKey};
 
@@ -182,7 +182,7 @@ mod tests {
     use crate::funding::{Chain, FundingWallet};
     use bitcoin::consensus::encode::serialize;
     use bitcoin::secp256k1::Secp256k1;
-    use sb_core::lock::Secret;
+    use sha2::{Digest, Sha256};
 
     fn keys() -> (FundingKey, FundingKey) {
         let a = FundingWallet::new([1u8; 32], Network::Regtest);
@@ -196,15 +196,16 @@ mod tests {
     #[test]
     fn script_paths_and_witnesses() {
         let (x, y) = keys();
-        let secret = Secret([9u8; 32]);
+        let secret = [9u8; 32];
+        let secret_hash: [u8; 32] = Sha256::digest(secret).into();
         let htlc = Htlc {
-            hash: secret.hash(),
+            hash: secret_hash,
             claim_pk: x.pubkey(),
             refund_pk: y.pubkey(),
             timeout: 150,
         };
         let script = htlc.witness_script();
-        assert!(script.as_bytes().windows(32).any(|w| w == secret.hash()));
+        assert!(script.as_bytes().windows(32).any(|w| w == secret_hash));
         assert_eq!(
             htlc.address(Network::Regtest).script_pubkey(),
             htlc.script_pubkey()
@@ -214,11 +215,11 @@ mod tests {
         let to = x.address.clone();
         // claim: witness [sig, secret, 1, script], no lock time
         let claim = htlc
-            .spend(outpoint, 10_000, &x, Some(secret.0), &to, 2)
+            .spend(outpoint, 10_000, &x, Some(secret), &to, 2)
             .unwrap();
         let w = &claim.input[0].witness;
         assert_eq!(w.len(), 4);
-        assert_eq!(w[1], secret.0);
+        assert_eq!(w[1], secret);
         assert_eq!(w[2], [1u8]);
         assert_eq!(&w[3], script.as_bytes());
         assert_eq!(claim.lock_time, LockTime::ZERO);
@@ -247,14 +248,11 @@ mod tests {
         assert!(!serialize(&refund).is_empty());
         // the wrong key for a path, and a value that cannot pay the fee
         assert!(
-            htlc.spend(outpoint, 10_000, &y, Some(secret.0), &to, 1)
+            htlc.spend(outpoint, 10_000, &y, Some(secret), &to, 1)
                 .is_err()
         );
         assert!(htlc.spend(outpoint, 10_000, &x, None, &to, 1).is_err());
-        assert!(
-            htlc.spend(outpoint, 500, &x, Some(secret.0), &to, 1)
-                .is_err()
-        );
+        assert!(htlc.spend(outpoint, 500, &x, Some(secret), &to, 1).is_err());
         assert!(parse_outpoint("nocolon").is_err());
         assert!(parse_outpoint("zz:1").is_err());
     }
