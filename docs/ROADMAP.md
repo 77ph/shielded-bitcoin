@@ -191,7 +191,13 @@ behaviour side by side, recorded in `RUNS.md`.
 A post-quantum variant of the transfer relation: what the profile would
 have to change to prove the same statement with a hash-based proof system
 (no pairing, no trusted setup), and what it would cost in proof size on
-Bitcoin. A study first, code second.
+Bitcoin. A study first, code second. The study is `POST-QUANTUM.md`
+(30 October 2026): the six quantum-exposed surfaces of the profile, the
+proof-system landscape with carrier arithmetic, and the taxonomy of
+post-quantum Bitcoin efforts; its recommendation is a measured
+hash-based variant (B) together with the post-quantum encryption
+analysis (C), no Halo 2 detour, and a drill on a post-quantum testnet
+as the venue question's only testable form.
 
 ## Not planned
 
