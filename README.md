@@ -50,7 +50,7 @@ verify 4 ms, envelope 700 bytes, carrier ≈ 830 vB.
 | `crates/sb-wallet` | §10, §16, §C | scanning, recovery, note selection, anchor policy, transfer construction |
 | `crates/sb-ceremony` | §8.4 | BGM17 multi-party setup: powers of tau, key derivation, delta contributions, beacon |
 | `crates/sb-cli` | — | `sb` command-line tool |
-| `docs/` | — | `PROFILE.md` (normative profile), `SWAP.md` (swap extension profile), `WITNESS-CARRIER.md` (witness carrier profile), `FEE-VAULT.md` (fee vault), `PUBLICATION.md` (publication privacy and wallet policy), `REPLAY-PROOF.md` (replay proofs), `REMAINING.md` (what remains of §22 and why), `POST-QUANTUM.md` (the post-quantum study), `ROADMAP.md`, `BOUNDARY.md` (dev peg, fee funding), `CEREMONY.md` (parameter ceremony), `TEST_VECTORS.md`, `RUNS.md` |
+| `docs/` | — | `PROFILE.md` (normative profile), `SWAP.md` (swap extension profile), `WITNESS-CARRIER.md` (witness carrier profile), `FEE-VAULT.md` (fee vault), `PUBLICATION.md` (publication privacy and wallet policy), `REPLAY-PROOF.md` (replay proofs), `REMAINING.md` (what remains of §22 and why), `POST-QUANTUM.md` (the post-quantum study), `VARIANT-A.md` (variant A: no trusted setup, study and plan), `ROADMAP.md`, `BOUNDARY.md` (dev peg, fee funding), `CEREMONY.md` (parameter ceremony), `TEST_VECTORS.md`, `RUNS.md` |
 | `deployments/` | profile §9 | deployment profiles |
 
 ## Quick start (signet)
