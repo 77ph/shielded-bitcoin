@@ -205,6 +205,22 @@ hash-based variant (B) together with the post-quantum encryption
 analysis (C), no Halo 2 detour, and a drill on a post-quantum testnet
 as the venue question's only testable form.
 
+### Ideas noted, not scheduled
+
+* **OP_CAT (BIP-347) and the boundary.** A covenant opcode is the
+  reopen condition `REMAINING.md` §3.5 names for the PIPE-free
+  boundary: with OP_CAT the fee vault's release rule and a
+  rate-limited custody vault become script covenants (vault and
+  recursive-covenant examples exist), hash-based one-time signatures
+  become expressible (`POST-QUANTUM.md` §5.1), and a Circle STARK
+  verifier in script exists as building blocks
+  (`Bitcoin-Wildlife-Sanctuary/bitcoin-circle-stark`), which would make
+  a variant-B STARK proof verifiable on chain for a trust-minimised
+  peg-out. Test venues: the signet with OP_CAT (Bitcoin Inquisition),
+  CatNet, Fractal. Not part of variant A; a boundary direction for
+  after it (owner's pointer: `sCrypt-Inc/awesome-op-cat`, 30 October
+  2026).
+
 ## Not planned
 
 An independent audit, a ceremony with independent participants, a
