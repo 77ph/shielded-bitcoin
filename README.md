@@ -46,6 +46,7 @@ verify 4 ms, envelope 700 bytes, carrier ≈ 830 vB.
 | `crates/sb-primitives` | §2, §A.1 | Poseidon over BLS12-381 `Fr`, domain tags, Jubjub encodings, `DiversifyHash` |
 | `crates/sb-core` | §5, §6, §9, §12, §13, §A.3, §A.5 | keys, addresses, notes, encryption, leaves, nullifiers, envelope codec, `h_body`, note tree |
 | `crates/sb-circuit` | §14, §B | R1CS gadgets, the transfer circuit, Groth16 setup/prove/verify |
+| `crates/sb-common` | — | family-agnostic code shared with the variants (`docs/VARIANT-A.md` §6): chain sources, carrier extraction by candidate prefix, the publication layer, the fee-funding wallet and publishers, the witness commit-and-reveal pair, HTLC scripts, fee-authorization messages, the encrypted-file format |
 | `crates/sb-indexer` | §8, §11, §15, §A.4, §A.6, §A.7 | chain sources, carrier extraction, replay, state, reorg handling, dev mint |
 | `crates/sb-wallet` | §10, §16, §C | scanning, recovery, note selection, anchor policy, transfer construction |
 | `crates/sb-ceremony` | §8.4 | BGM17 multi-party setup: powers of tau, key derivation, delta contributions, beacon |

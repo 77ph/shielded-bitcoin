@@ -1,4 +1,4 @@
-# Variant A: the paper's protocol without a trusted setup (study, draft v0.3)
+# Variant A: the paper's protocol without a trusted setup (study, draft v0.4)
 
 Status: a study with a first measurement, 30 October 2026; no change to
 the paper implementation. It records a decision of the owner and the
@@ -283,8 +283,16 @@ implementation of the paper? Rules this repository adopts:
   verifying-key identifier, the deployment profile with `family`, the
   departures and the security-analysis delta. To be reviewed on paper
   by the auditor before code (review batch planned for 3 November 2026).
-* **S3, the shared-crate extraction** (§6.3), no behaviour change,
-  reviewed.
+* **S3, the shared-crate extraction** (§6.3): done (`crates/sb-common`,
+  30 October 2026): chain sources, carrier extraction parametrised by the
+  family's candidate prefix (`"btc"` ‖ version byte), `net`, HTTP, the
+  funding wallet and publishers, the witness pair, HTLC scripts, the
+  fee-authorization messages over bytes, the encrypted-file format. The
+  paper crates re-export or wrap them (`sb_indexer::{carrier, chain,
+  net}`, `sb-cli`'s `feeauth` shim over the profile's key derivation and
+  `h_body` encoding, `sb-wallet`'s `WalletCrypto` alias with the
+  profile's file domain). No behaviour change: every test of the paper
+  implementation passes unchanged; to be reviewed as a refactor.
 * **S4, `variants/a-halo2`**: primitives, core, circuit, test vectors,
   state, wallet, the family dispatch in `sb`; the transfer only
   (swap and batch circuits come after, by the same procedure as for
@@ -312,6 +320,7 @@ implementation of the paper? Rules this repository adopts:
 
 ## 9. Changelog
 
+* **v0.4** (30 October 2026) — S3 done: `sb-common` extracted.
 * **v0.3** (30 October 2026) — S2 done: `PROFILE-A.md` v0.1 written,
   the plan updated.
 * **v0.2** (30 October 2026) — S1 done: the transfer relation in Halo 2
