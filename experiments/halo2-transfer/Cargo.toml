@@ -1,0 +1,17 @@
+[package]
+name = "halo2-transfer"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+halo2_proofs = "0.3"
+halo2_gadgets = "0.5"
+pasta_curves = "0.5"
+ff = "0.13"
+group = "0.13"
+rand = "0.8"
+
+[profile.release]
+debug = false
+
+[workspace]
