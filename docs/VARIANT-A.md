@@ -1,4 +1,4 @@
-# Variant A: the paper's protocol without a trusted setup (study, draft v0.2)
+# Variant A: the paper's protocol without a trusted setup (study, draft v0.3)
 
 Status: a study with a first measurement, 30 October 2026; no change to
 the paper implementation. It records a decision of the owner and the
@@ -276,11 +276,13 @@ implementation of the paper? Rules this repository adopts:
 * **S1, the real measurement**: done, §4.2 (`experiments/halo2-transfer`,
   run in Docker on the server and on the laptop): k = 14, 4 416 bytes,
   2.0 s proving on 20 threads, 24.5 ms verification. Gate met.
-* **S2, `PROFILE-A.md`**: the normative profile of the variant: fields,
-  curves, Poseidon parameters over `Fp`, key hierarchy on Pallas,
-  addresses, envelope version, nullifier, encryption, the public
-  statement, and the list of departures from the paper with reasons.
-  Reviewed on paper by the auditor before code.
+* **S2, `PROFILE-A.md`**: written (v0.1, 30 October 2026) as a delta to
+  `PROFILE.md`: fields, curves, the halo2 hash mode, scalars from field
+  elements, DiversifyHash on Pallas, the envelope with a 4 416-byte
+  proof and version byte `0x02`, the circuit as built in S1, the
+  verifying-key identifier, the deployment profile with `family`, the
+  departures and the security-analysis delta. To be reviewed on paper
+  by the auditor before code (review batch planned for 3 November 2026).
 * **S3, the shared-crate extraction** (§6.3), no behaviour change,
   reviewed.
 * **S4, `variants/a-halo2`**: primitives, core, circuit, test vectors,
@@ -310,6 +312,8 @@ implementation of the paper? Rules this repository adopts:
 
 ## 9. Changelog
 
+* **v0.3** (30 October 2026) — S2 done: `PROFILE-A.md` v0.1 written,
+  the plan updated.
 * **v0.2** (30 October 2026) — S1 done: the transfer relation in Halo 2
   measured on the server and the laptop (§4.2), the carrier arithmetic
   and the problem table updated to the measured 4 416 bytes.
