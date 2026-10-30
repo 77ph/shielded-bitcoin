@@ -1,4 +1,4 @@
-# Variant A: the paper's protocol without a trusted setup (study, draft v0.1)
+# Variant A: the paper's protocol without a trusted setup (study, draft v0.2)
 
 Status: a study with a first measurement, 30 October 2026; no change to
 the paper implementation. It records a decision of the owner and the
@@ -50,13 +50,13 @@ discrete-logarithm assumption on Pasta; it is not post-quantum
 | Proof re-randomization caveat | §14.3 | **weakened, not closed.** Groth16's known re-randomization map does not exist for a Fiat–Shamir proof whose transcript binds the statement; but Halo 2 is not proven non-malleable either, so the caveat becomes "non-malleability unproven" instead of "re-randomization exists". The protocol's defence (replay rejects a repeated nullifier) is unchanged. |
 | Succinct replay proof: per batch only, no unbounded recursion on BLS12-381 | §22.2; `REPLAY-PROOF.md` §4.4; `REMAINING.md` §2.3 | **the wall falls.** The Pasta cycle exists for accumulation: a Halo 2 proof verifies a Halo 2 proof natively at every depth (Halo's design goal; split accumulation's recursion threshold is 52 000 constraints on Pasta [cited: ePrint 2020/1618 §1.1]). One accumulated proof of the whole replay from activation becomes an engineering task. |
 | Certified-recipient lineage: "not now, and not by engineering" | §22.4, §D; `REMAINING.md` §2 | **the cryptographic obstacle R1 falls**, for the same reason; the economic one stays: a package per output is a Halo 2 proof of kilobytes (`REMAINING.md` §2.4), so a lineage-carrying envelope is still several times the plain one. |
-| Footprint, for which Groth16 was chosen | §22.1, §A.4 | **regresses.** The proof is 7 264 bytes for the two instances a 2-in-2-out transfer needs [measured, §4], 38 × Groth16's 192; the witness carrier grows 5 ×, the OP_RETURN carrier 9.6 × (§4.2). |
+| Footprint, for which Groth16 was chosen | §22.1, §A.4 | **regresses.** The proof of this relation is 4 416 bytes [measured, §4.2], 23 × Groth16's 192; the witness carrier grows 3.4 ×, the OP_RETURN carrier 6.1 × (§4.3). |
 | Everything else: the boundary (PIPE), publication privacy, the completeness of the carrier list, wallet policy | §20.4, §22.3; `BOUNDARY.md`, `PUBLICATION.md`, `REPLAY-PROOF.md` §3 | **unaffected** either way. |
 
 So A is the one proof-system change that answers several of the paper's
 own open items at once (setup, setup-per-arity, and the recursion wall
-behind §22.2 and §22.4), at the price of a 5–10 × heavier carrier and a
-full profile migration (§5). Whether that is "fixing" the paper depends
+behind §22.2 and §22.4), at the price of a 3.4–6 × heavier carrier, a
+6 × slower verifier and a full profile migration (§5). Whether that is "fixing" the paper depends
 on which of its problems is held to be the first one. For a project
 that has ruled out a real ceremony, the trusted setup is the first one:
 every deployment profile this repository ships says, truthfully, that
@@ -125,23 +125,81 @@ Sinsemilla the row count is, if anything, lower. **[estimate]**: the
 transfer relation fits k = 11 or 12, and its proof is 7–9 KB for the
 two instances; the exact number is the first measurement of §7.
 
-### 4.2 The carrier arithmetic [computed]
+### 4.2 S1: this profile's transfer relation in Halo 2 [measured]
+
+`experiments/halo2-transfer` expresses the transfer relation of
+`PROFILE.md` §8 in Halo 2 with `halo2_gadgets` 0.5 (`halo2_proofs`
+0.3.5), structurally faithful to the R1CS circuit of `sb-circuit`: two
+inputs and two outputs; Poseidon (width 3, x⁵, 8 + 56 rounds, the tag as
+first element) for every hash; the spend-authority derivations; the
+position-bound nullifier; DiversifyHash with a witnessed even
+coordinate and the curve check; the diversified-address check
+`pk_d = [sk_view] G_d`; the recipient channel (`pk_eph = [sk_eph] G_d`,
+`ss = [sk_eph] pk_d`, KDF, stream, MAC) proven in circuit for every
+input and output; the leaf; a depth-32 Poseidon Merkle path skipped for
+a zero-value dummy by `(root − anchor) · v = 0`; 64- and 88-bit range
+checks by 10-bit lookups; value conservation; the 17 public inputs in
+the profile's order. Variable-base scalar multiplications use the
+gadget's base-field-element scalars, as Orchard does for `[ivk] g_d`.
+Two differences are forced by the curve: Pallas has prime order, so the
+cofactor clearings (`[8]·`) of Jubjub disappear, and the even-coordinate
+rule applies to `y` (short Weierstrass) instead of `x` (twisted
+Edwards). The ten advice columns, the fixed columns and the lookup table
+are laid out as in Orchard's circuit; the ECC chip's fixed-base
+multiplication is configured but unused.
+
+| | Server container (4 CPUs of a loaded 8-core host) | Laptop (20 threads, idle) |
+|---|---|---|
+| Rows | **k = 14** (2¹⁴ = 16 384; k = 13 does not fit) | same |
+| Key generation | 14.1 s | 4.4 s |
+| Prove, one transfer | 7.79 s | **1.97 s** |
+| Proof size, one transfer | **4 416 B** | same |
+| Verify | 106.5 ms | 24.5 ms |
+| Two transfers in one proof | 12.03 s, 6 176 B (+1 760 B per instance) | 3.10 s, 6 176 B |
+| Peak memory | 673 MB | 672 MB |
+| Mock prover (satisfied) | 2.0 s | 0.9 s |
+
+[measured, 30 October 2026, release builds; the server numbers inside
+Docker with `--cpus=4`, CPU use 260 %; the laptop numbers at 713 % CPU.]
+The Groth16 row of this profile, for comparison: 192 B, prove 1.5 s,
+verify 4 ms, setup 1.5 s (`README.md`).
+
+Reading the numbers. The proof for one transfer is 4 416 bytes, not the
+7 264 of the two-action Orchard proxy, because one 2-in-2-out transfer
+is one instance of one circuit; a second instance in the same proof adds
+1 760 bytes. Proving is in the range of the Groth16 prover on the same
+hardware (2.0 s against 1.5 s on the laptop). Verification is 6 × slower
+than Groth16 (24.5 ms against 4 ms) and grows with the circuit's rows
+(the inner-product argument's verifier is linear in 2ᵏ): an indexer
+replaying a full block of transfers verifies at ≈ 40 proofs per second
+per core, which is the cost A moves from the prover to every verifier;
+Halo 2's accumulation amortises it when proofs are verified in batches,
+and a smaller circuit (Sinsemilla for the Merkle path, as Orchard, or
+fewer in-circuit hashes) would lower k. Rows are dominated by the
+≈ 127 Poseidon permutations of the relation (≈ 66 rows each in the
+width-3 chip), not by the ten scalar multiplications.
+
+**Gate of S1** (≤ 9 KB per transfer, ≤ 3 s proving): met, 4 416 B and
+1.97 s on the laptop; the 7.8 s of the 4-CPU container is the same
+work on fewer and busier cores.
+
+### 4.3 The carrier arithmetic [computed]
 
 Measured carriers of this profile: OP_RETURN 825 vB and witness 447 vB
 for a 700-byte envelope (`WITNESS-CARRIER.md` §6); non-envelope parts
 125 vB and 272 vB; envelope = 508 bytes of body + proof.
 
-| | Groth16 (today) | A, two instances (7 264 B) |
-|---|---|---|
-| Envelope | 700 B | 7 772 B |
-| OP_RETURN carrier | 825 vB | 7 897 vB (× 9.6) |
-| Witness carrier | 447 vB | 2 215 vB (× 5.0) |
-| Fee at 1 / 20 sat/vB, witness | 447 / 8 940 sat | 2 215 / 44 300 sat |
-| Transfers per 1-MvB block, witness | ≈ 2 240 | ≈ 450 |
+| | Groth16 (today) | A, this relation (4 416 B, measured) | A, Orchard two-action proxy (7 264 B) |
+|---|---|---|---|
+| Envelope | 700 B | 4 924 B | 7 772 B |
+| OP_RETURN carrier | 825 vB | 5 049 vB (× 6.1) | 7 897 vB (× 9.6) |
+| Witness carrier | 447 vB | **1 503 vB (× 3.4)** | 2 215 vB (× 5.0) |
+| Fee at 1 / 20 sat/vB, witness | 447 / 8 940 sat | 1 503 / 30 060 sat | 2 215 / 44 300 sat |
+| Transfers per 1-MvB block, witness | ≈ 2 240 | ≈ 665 | ≈ 450 |
 
 The witness carrier is the only sensible one for A; the OP_RETURN
-carrier at 7.9 kvB is a 7.8-KB OP_RETURN, within current default
-policy but pointless against the witness alternative.
+carrier at 5 kvB is a 4.9-KB OP_RETURN, within current default policy
+but pointless against the witness alternative.
 
 ## 5. The migration, as an inventory
 
@@ -215,15 +273,9 @@ implementation of the paper? Rules this repository adopts:
 
 * **S0, this document**: the question, the problem table, the proxy
   measurement. Done.
-* **S1, the real measurement** (code, but an experiment outside the
-  workspace): this profile's transfer relation expressed in `halo2`
-  with `halo2_gadgets` (2-in-2-out, Poseidon everywhere, the
-  position-bound nullifier, in-circuit ciphertext consistency, dummy
-  flags, `h_body` as instance), on Pallas, as a standalone circuit with
-  synthetic witnesses: k, proof size, proving and verification time,
-  memory, on the server. **Gate**: proof ≤ 9 KB for the two instances
-  and proving ≤ 3 s on the server's cores; otherwise back to this
-  document.
+* **S1, the real measurement**: done, §4.2 (`experiments/halo2-transfer`,
+  run in Docker on the server and on the laptop): k = 14, 4 416 bytes,
+  2.0 s proving on 20 threads, 24.5 ms verification. Gate met.
 * **S2, `PROFILE-A.md`**: the normative profile of the variant: fields,
   curves, Poseidon parameters over `Fp`, key hierarchy on Pallas,
   addresses, envelope version, nullifier, encryption, the public
@@ -258,6 +310,9 @@ implementation of the paper? Rules this repository adopts:
 
 ## 9. Changelog
 
+* **v0.2** (30 October 2026) — S1 done: the transfer relation in Halo 2
+  measured on the server and the laptop (§4.2), the carrier arithmetic
+  and the problem table updated to the measured 4 416 bytes.
 * **v0.1** (30 October 2026) — the reframed question, the problem
   table, the Orchard measurement, the migration inventory, the
   repository rules for post-paper variants, the plan with gates.
