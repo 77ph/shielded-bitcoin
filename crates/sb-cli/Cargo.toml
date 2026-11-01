@@ -16,6 +16,7 @@ sb-core.workspace = true
 sb-circuit.workspace = true
 sb-indexer.workspace = true
 sb-common.workspace = true
+sba-cli.workspace = true
 sb-wallet.workspace = true
 sb-ceremony.workspace = true
 ark-ff.workspace = true

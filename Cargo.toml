@@ -14,6 +14,8 @@ members = [
     "variants/a-halo2/crates/sba-core",
     "variants/a-halo2/crates/sba-circuit",
     "variants/a-halo2/crates/sba-indexer",
+    "variants/a-halo2/crates/sba-wallet",
+    "variants/a-halo2/crates/sba-cli",
 ]
 # standalone measurements with their own dependencies (experiments/README.md)
 exclude = ["experiments/twochain"]
@@ -37,6 +39,8 @@ sba-primitives = { path = "variants/a-halo2/crates/sba-primitives" }
 sba-core = { path = "variants/a-halo2/crates/sba-core" }
 sba-circuit = { path = "variants/a-halo2/crates/sba-circuit" }
 sba-indexer = { path = "variants/a-halo2/crates/sba-indexer" }
+sba-wallet = { path = "variants/a-halo2/crates/sba-wallet" }
+sba-cli = { path = "variants/a-halo2/crates/sba-cli" }
 
 # variant A: Halo 2 over the Pasta curves
 halo2_proofs = "0.3"

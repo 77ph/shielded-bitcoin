@@ -1,0 +1,25 @@
+[package]
+name = "sba-wallet"
+description = "Shielded Bitcoin variant A: wallet scanning, recovery, note selection and transfer construction (docs/PROFILE-A.md)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+sba-primitives.workspace = true
+sba-core.workspace = true
+sba-circuit.workspace = true
+sb-common.workspace = true
+ff.workspace = true
+rand.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+hex.workspace = true
+thiserror.workspace = true
+log.workspace = true
+
+[dev-dependencies]
+sba-indexer.workspace = true
+bitcoin.workspace = true
+rand_chacha.workspace = true
