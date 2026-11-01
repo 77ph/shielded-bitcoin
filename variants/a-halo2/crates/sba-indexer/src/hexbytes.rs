@@ -1,0 +1,79 @@
+//! serde helpers: fixed-size byte arrays and `Fp` as hex strings.
+
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+pub fn serialize<S: Serializer, const N: usize>(v: &[u8; N], s: S) -> Result<S::Ok, S::Error> {
+    hex::encode(v).serialize(s)
+}
+
+pub fn deserialize<'de, D: Deserializer<'de>, const N: usize>(d: D) -> Result<[u8; N], D::Error> {
+    let s = String::deserialize(d)?;
+    let v = hex::decode(&s).map_err(serde::de::Error::custom)?;
+    v.try_into()
+        .map_err(|_| serde::de::Error::custom(format!("expected {N} bytes")))
+}
+
+pub mod fp {
+    use super::*;
+    use sba_primitives::Fp;
+    use sba_primitives::encoding::{fp_from_bytes, fp_to_bytes};
+
+    pub fn serialize<S: Serializer>(v: &Fp, s: S) -> Result<S::Ok, S::Error> {
+        hex::encode(fp_to_bytes(v)).serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Fp, D::Error> {
+        let s = String::deserialize(d)?;
+        let v = hex::decode(&s).map_err(serde::de::Error::custom)?;
+        fp_from_bytes(&v).map_err(serde::de::Error::custom)
+    }
+}
+
+pub mod fp_vec {
+    use super::*;
+    use sba_primitives::Fp;
+    use sba_primitives::encoding::{fp_from_bytes, fp_to_bytes};
+
+    pub fn serialize<S: Serializer>(v: &[Fp], s: S) -> Result<S::Ok, S::Error> {
+        let strings: Vec<String> = v.iter().map(|f| hex::encode(fp_to_bytes(f))).collect();
+        strings.serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<Fp>, D::Error> {
+        let strings: Vec<String> = Vec::deserialize(d)?;
+        strings
+            .iter()
+            .map(|s| {
+                let v = hex::decode(s).map_err(serde::de::Error::custom)?;
+                fp_from_bytes(&v).map_err(serde::de::Error::custom)
+            })
+            .collect()
+    }
+}
+
+pub mod bytes {
+    use super::*;
+
+    pub fn serialize<S: Serializer>(v: &Vec<u8>, s: S) -> Result<S::Ok, S::Error> {
+        hex::encode(v).serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<u8>, D::Error> {
+        let s = String::deserialize(d)?;
+        hex::decode(&s).map_err(serde::de::Error::custom)
+    }
+}
+
+pub mod opt_bytes {
+    use super::*;
+
+    pub fn serialize<S: Serializer>(v: &Option<Vec<u8>>, s: S) -> Result<S::Ok, S::Error> {
+        v.as_ref().map(hex::encode).serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Vec<u8>>, D::Error> {
+        let s: Option<String> = Option::deserialize(d)?;
+        s.map(|s| hex::decode(&s).map_err(serde::de::Error::custom))
+            .transpose()
+    }
+}

@@ -1,0 +1,21 @@
+[package]
+name = "sba-circuit"
+description = "Shielded Bitcoin variant A: the transfer relation in Halo 2 over Pasta (docs/PROFILE-A.md §8)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+sba-primitives.workspace = true
+sba-core.workspace = true
+halo2_proofs.workspace = true
+halo2_gadgets.workspace = true
+pasta_curves.workspace = true
+ff.workspace = true
+group.workspace = true
+rand.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+rand_chacha.workspace = true
