@@ -103,6 +103,9 @@ enum Cmd {
     ProfileNew {
         #[arg(long)]
         name: String,
+        /// Implementation family: `paper` (default, this profile) or a variant's name (`a-halo2`), which routes to that variant.
+        #[arg(long)]
+        family: Option<String>,
         #[arg(long, default_value = "signet")]
         network: String,
         #[arg(long)]
@@ -1091,6 +1094,12 @@ impl OutboxEntry {
 
 fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    // family dispatch (docs/VARIANT-A.md §6.5): a deployment of another
+    // family is served by that family's implementation, same binary
+    let args: Vec<String> = std::env::args().collect();
+    if sba_cli::is_family_a(&args) {
+        return sba_cli::run(args);
+    }
     let cli = Cli::parse();
     // before any connection: with a proxy set, nothing goes out directly
     sb_indexer::net::set_proxy(cli.proxy.as_deref())?;
@@ -1100,6 +1109,7 @@ fn main() -> Result<()> {
     }
     if let Cmd::ProfileNew {
         name,
+        family,
         network,
         activation,
         vault_script,
@@ -1116,6 +1126,13 @@ fn main() -> Result<()> {
         batch_insecure,
     } = &cli.cmd
     {
+        if let Some(f) = family {
+            if f != "paper" {
+                bail!(
+                    "unknown family {f}; this build has: paper (default) and a-halo2 (docs/VARIANT-A.md)"
+                );
+            }
+        }
         let base = cli
             .profile
             .parent()

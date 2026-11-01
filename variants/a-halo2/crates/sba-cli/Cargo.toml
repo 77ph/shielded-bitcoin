@@ -1,0 +1,24 @@
+[package]
+name = "sba-cli"
+description = "Shielded Bitcoin variant A: the family's commands behind the `sb` binary (profile, wallets, mint, send, sync, scan)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+sba-primitives.workspace = true
+sba-core.workspace = true
+sba-circuit.workspace = true
+sba-indexer.workspace = true
+sba-wallet.workspace = true
+sb-common.workspace = true
+bitcoin.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+hex.workspace = true
+rand.workspace = true
+ff.workspace = true
+rpassword.workspace = true

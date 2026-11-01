@@ -56,7 +56,9 @@ Variant A, the paper's protocol without a trusted setup (Halo 2 over
 Pasta), as a separate profile beside the paper implementation: decided
 30 October 2026, study and measurement first (`VARIANT-A.md`, slices S1–
 S6 with gates; S1 done the same day: k = 14, 4 416-byte proof, 2 s
-proving, the gate met), code second; the rules for post-paper variants in one
+proving, the gate met; S2 `PROFILE-A.md` and S3 `sb-common` 30 October;
+S4, the variant's crates and the `sb` dispatch, 1 November), code
+second; the rules for post-paper variants in one
 repository are `VARIANT-A.md` §6. Before that: §22 is exhausted as of
 29 October 2026. The three items that
 could not be implemented end in `REMAINING.md` as demonstrations with

@@ -1,4 +1,4 @@
-# Variant A: the paper's protocol without a trusted setup (study, draft v0.4)
+# Variant A: the paper's protocol without a trusted setup (study, draft v0.5)
 
 Status: a study with a first measurement, 30 October 2026; no change to
 the paper implementation. It records a decision of the owner and the
@@ -293,10 +293,24 @@ implementation of the paper? Rules this repository adopts:
   `h_body` encoding, `sb-wallet`'s `WalletCrypto` alias with the
   profile's file domain). No behaviour change: every test of the paper
   implementation passes unchanged; to be reviewed as a refactor.
-* **S4, `variants/a-halo2`**: primitives, core, circuit, test vectors,
-  state, wallet, the family dispatch in `sb`; the transfer only
-  (swap and batch circuits come after, by the same procedure as for
-  the paper).
+* **S4, `variants/a-halo2`**: done (1 November 2026): the crates
+  `sba-primitives` (Pasta field, Pallas, the halo2 Poseidon mode, tags,
+  encodings, DiversifyHash), `sba-core` (keys, addresses `sba…`, notes,
+  encryption, leaves, nullifiers, the version-`0x02` envelope with a
+  4 416-byte proof, the development mint, the note tree, `ct_out`),
+  `sba-circuit` (the S1 circuit as a library with statement and witness
+  types, deterministic keys, `vk_id`), `sba-indexer` (deployment profile
+  with `family`, replay over `sb-common`'s chain sources and carriers
+  with the family's prefix, JSON store), `sba-wallet` (scanning,
+  recovery, selection, the builder, encrypted files under
+  `sb-a/v1/wallet`), and `sba-cli`, to which `sb` dispatches when the
+  profile names family `a-halo2` (`profile-new --family a-halo2`).
+  Tests: unit tests per crate, a real transfer proven and verified, a
+  mock-chain replay with every rejection class and a reorganisation, a
+  wallet flow, and `sb` end to end on the fake node on both carriers
+  (`crates/sb-cli/tests/variant_a_e2e.rs`). The transfer only; swap,
+  batch, fee vault and relayer come after, by the same procedure as for
+  the paper. Test vectors for the family: with S5.
 * **S5, a run on signet** on the witness carrier, `RUNS.md`.
 * **S6, review** of the circuits and the codec.
 * **Later, the items A reopens**: the accumulated replay proof (§22.2)
@@ -320,6 +334,8 @@ implementation of the paper? Rules this repository adopts:
 
 ## 9. Changelog
 
+* **v0.5** (1 November 2026) — S4 done: the variant's crates and the
+  family dispatch in `sb`, tested end to end on the fake node.
 * **v0.4** (30 October 2026) — S3 done: `sb-common` extracted.
 * **v0.3** (30 October 2026) — S2 done: `PROFILE-A.md` v0.1 written,
   the plan updated.

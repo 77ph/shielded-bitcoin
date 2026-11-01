@@ -141,7 +141,10 @@ mod tests {
             Err(AddressError::Bech32(_))
         ));
         // the paper profile's HRP is not ours
-        assert!(PaymentAddress::decode(&a.encode(Network::Signet).replacen("tsba1", "tsb1", 1)).is_err());
+        assert!(
+            PaymentAddress::decode(&a.encode(Network::Signet).replacen("tsba1", "tsb1", 1))
+                .is_err()
+        );
         assert_eq!(
             PaymentAddress::from_bytes(&[0u8; 10]),
             Err(AddressError::Length(10))

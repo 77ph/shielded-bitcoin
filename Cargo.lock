@@ -2182,6 +2182,7 @@ dependencies = [
  "sb-indexer",
  "sb-primitives",
  "sb-wallet",
+ "sba-cli",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -2312,6 +2313,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "sba-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bitcoin",
+ "clap",
+ "ff",
+ "hex",
+ "rand 0.8.8",
+ "rpassword",
+ "sb-common",
+ "sba-circuit",
+ "sba-core",
+ "sba-indexer",
+ "sba-primitives",
+ "sba-wallet",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "sba-core"
 version = "0.1.0"
 dependencies = [
@@ -2359,6 +2381,26 @@ dependencies = [
  "halo2_gadgets",
  "hex",
  "pasta_curves",
+ "thiserror",
+]
+
+[[package]]
+name = "sba-wallet"
+version = "0.1.0"
+dependencies = [
+ "bitcoin",
+ "ff",
+ "hex",
+ "log",
+ "rand 0.8.8",
+ "rand_chacha 0.3.1",
+ "sb-common",
+ "sba-circuit",
+ "sba-core",
+ "sba-indexer",
+ "sba-primitives",
+ "serde",
+ "serde_json",
  "thiserror",
 ]
 
