@@ -181,12 +181,17 @@ cargo llvm-cov --workspace --release --ignore-run-fail \
   --ignore-filename-regex 'chain/fake\.rs' -- --include-ignored
 ```
 
-Measured in CI on 28 October 2026 (PostgreSQL included, live network tests
-best effort): **93 % of lines, 89 % of regions**; CI fails below 90 % of
-lines. The ceremony commands on the full-size circuit run only with
+Measured in CI on 1 November 2026 (PostgreSQL included, live network
+tests best effort, variant A included): **91.6 % of lines, 88.6 % of
+regions**; the paper crates alone stay at about 92 % of lines, the
+variant's 3 580 lines are at 88.9 % (the gaps: `sba-cli` commands the
+end-to-end test does not run, the payout memo module no variant command
+uses yet, and the fixed-base tables the ECC chip requires but the circuit
+never calls). CI fails below 90 % of lines. The ceremony commands on the full-size circuit run only with
 `SB_CEREMONY_FULL=1` (minutes) and are not counted. The in-process fake Esplora / RPC / Electrum servers
-(`sb-indexer/src/chain/fake.rs`) are test support and are excluded. What
-stays uncovered is of four kinds: error arms of `?` on multi-line calls,
+(`sb-indexer/src/chain/fake.rs`) are test support and are excluded. `sb serve` runs in the tests as a subprocess that is stopped by a
+signal, so its lines are not recorded. What stays uncovered otherwise is
+of four kinds: error arms of `?` on multi-line calls,
 interactive passphrase prompts, defensive branches that cannot be reached
 through the public API (for example a non-canonical re-serialisation that
 the strict parser already rejects), and a few corruption arms of rows inside
