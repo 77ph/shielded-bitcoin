@@ -1,4 +1,4 @@
-# Variant A: the paper's protocol without a trusted setup (study, draft v0.5)
+# Variant A: the paper's protocol without a trusted setup (study, draft v0.6)
 
 Status: a study with a first measurement, 30 October 2026; no change to
 the paper implementation. It records a decision of the owner and the
@@ -183,7 +183,7 @@ width-3 chip), not by the ten scalar multiplications.
 1.97 s on the laptop; the 7.8 s of the 4-CPU container is the same
 work on fewer and busier cores.
 
-### 4.3 The carrier arithmetic [computed]
+### 4.3 The carrier arithmetic [computed; measured on signet 1 November 2026]
 
 Measured carriers of this profile: OP_RETURN 825 vB and witness 447 vB
 for a 700-byte envelope (`WITNESS-CARRIER.md` §6); non-envelope parts
@@ -193,9 +193,14 @@ for a 700-byte envelope (`WITNESS-CARRIER.md` §6); non-envelope parts
 |---|---|---|---|
 | Envelope | 700 B | 4 924 B | 7 772 B |
 | OP_RETURN carrier | 825 vB | 5 049 vB (× 6.1) | 7 897 vB (× 9.6) |
-| Witness carrier | 447 vB | **1 503 vB (× 3.4)** | 2 215 vB (× 5.0) |
+| Witness carrier | 447 vB | **1 503 vB computed, 1 509 vB measured (× 3.4)** | 2 215 vB (× 5.0) |
 | Fee at 1 / 20 sat/vB, witness | 447 / 8 940 sat | 1 503 / 30 060 sat | 2 215 / 44 300 sat |
 | Transfers per 1-MvB block, witness | ≈ 2 240 | ≈ 665 | ≈ 450 |
+
+Measured on public signet (`RUNS.md`, 1 November 2026): the reveal
+weighs 1 356 vB (5 087 witness bytes) and a single-input commit 153 vB,
+1 509 vB for the pair; the run's two pairs weighed 1 577 and 1 614 vB
+because the fee wallet spent two and three coins in the commits.
 
 The witness carrier is the only sensible one for A; the OP_RETURN
 carrier at 5 kvB is a 4.9-KB OP_RETURN, within current default policy
@@ -311,7 +316,11 @@ implementation of the paper? Rules this repository adopts:
   (`crates/sb-cli/tests/variant_a_e2e.rs`). The transfer only; swap,
   batch, fee vault and relayer come after, by the same procedure as for
   the paper. Test vectors for the family: with S5.
-* **S5, a run on signet** on the witness carrier, `RUNS.md`.
+* **S5, a run on signet**: done (1 November 2026, `RUNS.md`): deployment
+  `signet-a-1` on public signet, witness carrier, a mint and two
+  transfers as commit-and-reveal pairs, reveals of 1 356 vB; the
+  family's test vectors locked with the verifying-key identifier
+  (`TEST_VECTORS-A.md`, `sba-circuit/tests/vectors.rs`).
 * **S6, review** of the circuits and the codec.
 * **Later, the items A reopens**: the accumulated replay proof (§22.2)
   and lineage feasibility (§22.4), each as its own study first.
@@ -334,6 +343,8 @@ implementation of the paper? Rules this repository adopts:
 
 ## 9. Changelog
 
+* **v0.6** (1 November 2026) — S5 done: the run on public signet, §4.3
+  measured, the test vectors locked.
 * **v0.5** (1 November 2026) — S4 done: the variant's crates and the
   family dispatch in `sb`, tested end to end on the fake node.
 * **v0.4** (30 October 2026) — S3 done: `sb-common` extracted.

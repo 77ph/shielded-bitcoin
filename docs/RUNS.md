@@ -389,3 +389,42 @@ their carriers' partial Merkle trees that the `light:` verified sync of
 skipped every nullifier-set check and never held the set. What it still
 trusts the indexer for is the enumeration of carriers (§3 of the design):
 that these four were all of them.
+
+
+## Public signet, 1 November 2026: variant A on the witness carrier (deployment `signet-a-1`, activation 328966)
+
+The first run of a family-A deployment (`VARIANT-A.md`, `PROFILE-A.md`):
+Halo 2 transfer proofs of 4 416 bytes with no trusted setup, 4 924-byte
+envelopes in the witness of a reveal transaction. Profile
+`variants/a-halo2/deployments/signet-a-1.json` (`transfer_vk_id` as
+pinned in `TEST_VECTORS-A.md`), mempool.space Esplora as the chain
+source, 1 sat/vB, anchor depth 3. The development vault is alice's own
+funding script, as in the swap drill, so the mint's vault payment
+returned to her fee coins; those came from the paper deployment's
+operator wallet (4 150 sat in `54bef760…`, block 328 966: the family's
+funding keys are its own, so a paper-profile wallet could only fund it
+transparently). On the laptop a `send` took 11.4–11.7 s and 535 MB: the
+proving key is derived from the deterministic parameters at every call
+(about 8 s, no key file), the proof itself about 2 s.
+
+| Step | Heights (commit, reveal) | Pair | Size |
+|---|---|---|---|
+| mint 1 000 to alice (89-byte envelope, vault paid by the reveal) | 328969 | `671d5399…` + `c3981a2f…` | 153 + 171 = 324 vB |
+| alice pays bob 400 shielded, change 600 (4 924-byte envelope, anchor 328970) | 328973 | `6ad5c4f6…` + `2a70ba59…` | 221 + 1 356 = 1 577 vB |
+| alice pays the operator 200 shielded, change 400 (anchor 328974) | 328977 | `fda76086…` + `a8a3921f…` | 258 + 1 356 = 1 614 vB |
+
+3 accepted events, 0 rejections; alice 400, bob 400, operator 200
+shielded, each wallet scanning its notes from the chain. The reveal of a
+transfer carries 5 087 witness bytes (the envelope in ten pushes, the
+signature, the script, the control block) for 1 356 vB, against 1 350
+computed in `VARIANT-A.md` §4.3. The commits weighed 221 and 258 vB
+instead of the 153 vB of a single-input commit because alice's fee
+wallet spent two and then three coins (the second commit had no change
+output: the remainder was below the dust limit and went to the fee, 335
+sat for 258 vB). With a single-input commit the pair is 1 509 vB, 3.4
+times the paper profile's 447 vB on the same carrier (825 vB on its
+OP_RETURN carrier). The first transfer was in a block 9 minutes after
+its broadcast, the second in the next block, 2 minutes after. The anchor policy was exercised as
+designed: a `send` attempted right after the mint's block was refused
+("no input is confirmed under the selected anchor") with no input left
+locked, and succeeded three blocks later.

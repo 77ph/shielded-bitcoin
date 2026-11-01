@@ -378,7 +378,11 @@ properties" part of it is B and C, whose numbers come from question 2.
 
 1. **A: no**, unless the owner wants the ceremony-free property or a
    common stack with confidant for their own sake; then as a separate,
-   so-justified decision, not as a post-quantum step.
+   so-justified decision, not as a post-quantum step. *Status (1 November
+   2026): the owner took that decision for the ceremony-free property
+   on 30 October; A exists as its own family (`VARIANT-A.md`,
+   `PROFILE-A.md`, `variants/a-halo2`), run on signet, and is not
+   counted as post-quantum progress; B and C remain this thread.*
 2. **B: the core of the thread, measured before chosen.** One
    experiment in the spirit of `experiments/`: the transfer relation in
    one or two hash-based systems with zero knowledge at 128 bits, proof
@@ -430,6 +434,8 @@ properties" part of it is B and C, whose numbers come from question 2.
 
 ## 8. Changelog
 
+* **v0.1, status note** (1 November 2026) — §6.1 records the owner's
+  decision on A and where it lives; nothing else changed.
 * **v0.1** (30 October 2026) — the study: the six surfaces, the
   proof-system table and carrier arithmetic, the three questions
   answered, the taxonomy of post-quantum Bitcoin efforts.

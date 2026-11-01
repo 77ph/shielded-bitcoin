@@ -29,7 +29,7 @@ soft fork or a hard fork.
 | Witness carrier | the paper's §22.1 alternative: envelopes in a tapscript revealed by a script-path spend, commit-and-reveal pairs of 324–447 vB against 825–892 vB for OP_RETURN, standard under default node policy; `profile-new --carrier witness`, a separate non-interoperable deployment (`docs/WITNESS-CARRIER.md`) |
 | Publication privacy, wallet policy | the paper's §22.3 surfaces: one SOCKS5 proxy for every outbound connection (`--proxy`, Tor or `ssh -D`), a separate publication route (`--publish-via`), delayed broadcast within the anchor window (`--delay`), a shared anchor depth per deployment, random change placement, and what stays visible (`docs/PUBLICATION.md`) |
 | Replay proofs | the paper's §22.2 succinct replay proof, as far as it goes on this stack: a batch circuit proving the state transition over an indexed nullifier tree and a root tree, batched verification of the transfer proofs, `sb prove-batches` on the indexer and a `--chain proof:<url>` light client that keeps no nullifier set (`docs/REPLAY-PROOF.md`); the completeness of the carrier list stays trusted, and succinctness is per batch (the recursion frontier is measured) |
-| Variant A (no trusted setup) | the paper's transfer protocol over the Pasta curves with Halo 2: a 4 416-byte proof, no ceremony, `k = 14`; a separate family of deployments (`profile-new --family a-halo2`), transfers and the development mint end to end on the fake node; swap, batch and fee vault not yet (`docs/VARIANT-A.md`, `docs/PROFILE-A.md`) |
+| Variant A (no trusted setup) | the paper's transfer protocol over the Pasta curves with Halo 2: a 4 416-byte proof, no ceremony, `k = 14`; a separate family of deployments (`profile-new --family a-halo2`), transfers and the development mint end to end on the fake node and run on public signet on the witness carrier (1 509 vB per transfer with a single-input commit, `docs/RUNS.md`), test vectors locked (`docs/TEST_VECTORS-A.md`); swap, batch and fee vault not yet (`docs/VARIANT-A.md`, `docs/PROFILE-A.md`) |
 | What remains of §22 | the three items that could not be implemented, closed with numbers: smaller proof systems, certified-recipient lineage, the PIPE-based boundary; every §22 item mapped to where it ends; two 2-chains and the MNT cycle measured (`docs/REMAINING.md`) |
 | Fee vault | the paper's §20.5 fee-unlock vault as a development scaffold: credit deposited as a shielded note whose `rseed` commits to a BIP 340 key, signed draws publish carriers from the vault's pool, a deterministic release rule and ledger (no over-release, backing, reclaim), the operator's code where a PIPE covenant would be; `sb fee-vault`, `--fee-vault` on `send`/`withdraw`/`publish` (`docs/FEE-VAULT.md`) |
 | Indexer | Bitcoin Core RPC / Esplora / Electrum / mock sources, carrier rule, normative acceptance order, per-block checkpoints with reorg rollback, JSON or PostgreSQL state |
@@ -53,8 +53,8 @@ verify 4 ms, envelope 700 bytes, carrier ≈ 830 vB.
 | `crates/sb-wallet` | §10, §16, §C | scanning, recovery, note selection, anchor policy, transfer construction |
 | `crates/sb-ceremony` | §8.4 | BGM17 multi-party setup: powers of tau, key derivation, delta contributions, beacon |
 | `crates/sb-cli` | — | `sb` command-line tool |
-| `docs/` | — | `PROFILE.md` (normative profile), `SWAP.md` (swap extension profile), `WITNESS-CARRIER.md` (witness carrier profile), `FEE-VAULT.md` (fee vault), `PUBLICATION.md` (publication privacy and wallet policy), `REPLAY-PROOF.md` (replay proofs), `REMAINING.md` (what remains of §22 and why), `POST-QUANTUM.md` (the post-quantum study), `VARIANT-A.md` (variant A: no trusted setup, study and plan), `PROFILE-A.md` (variant A profile, delta to `PROFILE.md`), `ROADMAP.md`, `BOUNDARY.md` (dev peg, fee funding), `CEREMONY.md` (parameter ceremony), `TEST_VECTORS.md`, `RUNS.md` |
-| `deployments/` | profile §9 | deployment profiles |
+| `docs/` | — | `PROFILE.md` (normative profile), `SWAP.md` (swap extension profile), `WITNESS-CARRIER.md` (witness carrier profile), `FEE-VAULT.md` (fee vault), `PUBLICATION.md` (publication privacy and wallet policy), `REPLAY-PROOF.md` (replay proofs), `REMAINING.md` (what remains of §22 and why), `POST-QUANTUM.md` (the post-quantum study), `VARIANT-A.md` (variant A: no trusted setup, study and plan), `PROFILE-A.md` (variant A profile, delta to `PROFILE.md`), `TEST_VECTORS-A.md` (variant A vectors), `ROADMAP.md`, `BOUNDARY.md` (dev peg, fee funding), `CEREMONY.md` (parameter ceremony), `TEST_VECTORS.md`, `RUNS.md` |
+| `deployments/`, `variants/a-halo2/deployments/` | profile §9, `PROFILE-A.md` §9 | deployment profiles of the paper family and of variant A |
 
 ## Quick start (signet)
 
@@ -168,7 +168,11 @@ rejection classes, reorg rollback, fresh-replay determinism, state and wallet
 persistence, and a two-wallet mint → pay → change → reorg → repay flow.
 `cargo test -p sb-indexer --release --test esplora_live -- --ignored` and
 `--test electrum_live` hit public signet; `--test pg_store` needs
-`SB_TEST_PG` pointing at a PostgreSQL database.
+`SB_TEST_PG` pointing at a PostgreSQL database. Variant A has the same
+kinds of tests in its own crates (`variants/a-halo2/crates/*/tests`), its
+vectors locked in `docs/TEST_VECTORS-A.md` together with the verifying-key
+identifier, and `sb` end to end on the fake node on both carriers
+(`crates/sb-cli/tests/variant_a_e2e.rs`).
 
 ## Coverage
 
