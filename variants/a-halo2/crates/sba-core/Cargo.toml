@@ -1,0 +1,22 @@
+[package]
+name = "sba-core"
+description = "Shielded Bitcoin variant A: keys, addresses, notes, encryption, leaves, nullifiers, envelope codec and the note tree of docs/PROFILE-A.md"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+sba-primitives.workspace = true
+pasta_curves.workspace = true
+ff.workspace = true
+group.workspace = true
+hkdf.workspace = true
+sha2.workspace = true
+chacha20poly1305.workspace = true
+bech32.workspace = true
+zeroize.workspace = true
+rand.workspace = true
+serde.workspace = true
+hex.workspace = true
+thiserror.workspace = true
