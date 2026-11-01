@@ -2304,11 +2304,13 @@ dependencies = [
  "group",
  "halo2_gadgets",
  "halo2_proofs",
+ "hex",
  "pasta_curves",
  "rand 0.8.8",
  "rand_chacha 0.3.1",
  "sba-core",
  "sba-primitives",
+ "sha2 0.10.9",
  "thiserror",
 ]
 
