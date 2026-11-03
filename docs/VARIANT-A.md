@@ -1,4 +1,4 @@
-# Variant A: the paper's protocol without a trusted setup (study, draft v0.6)
+# Variant A: the paper's protocol without a trusted setup (study, draft v0.7)
 
 Status: a study with a first measurement, 30 October 2026; no change to
 the paper implementation. It records a decision of the owner and the
@@ -323,7 +323,12 @@ implementation of the paper? Rules this repository adopts:
   transfers as commit-and-reveal pairs, reveals of 1 356 vB; the
   family's test vectors locked with the verifying-key identifier
   (`TEST_VECTORS-A.md`, `sba-circuit/tests/vectors.rs`).
-* **S6, review** of the circuits and the codec.
+* **S6, review** of the circuits and the codec: in progress (batch handed
+  to the auditor 3 November 2026). First finding, fixed the same day: the
+  parity rule of DiversifyHash bounded `h < 2^254` only, which admits
+  the odd root (`PROFILE-A.md` §4.2 v0.2; `sba-circuit` test
+  `the_odd_root_of_g_d_is_refused_by_the_mock_prover`); `k = 14` and the
+  proof size are unchanged, `vk_id` moved, profile a-0.2.
 * **Later, the items A reopens**: the accumulated replay proof (§22.2)
   and lineage feasibility (§22.4), each as its own study first.
 
@@ -345,6 +350,8 @@ implementation of the paper? Rules this repository adopts:
 
 ## 9. Changelog
 
+* **v0.7** (3 November 2026) — S6 in progress: the parity finding and
+  its fix recorded.
 * **v0.6** (1 November 2026) — S5 done: the run on public signet, §4.3
   measured, the test vectors locked.
 * **v0.5** (1 November 2026) — S4 done: the variant's crates and the

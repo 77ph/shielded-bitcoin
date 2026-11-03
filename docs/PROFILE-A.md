@@ -1,4 +1,4 @@
-# Variant A implementation profile: Halo 2 over Pasta (draft v0.1)
+# Variant A implementation profile: Halo 2 over Pasta (draft v0.2)
 
 Status: **draft, not frozen**; the normative profile of variant A
 (`VARIANT-A.md`), the paper's transfer protocol with a transparent proof
@@ -134,7 +134,15 @@ DiversifyHash(d):
 In circuit the prover witnesses `y`, the point is witnessed as a
 non-identity curve point (the gadget checks the curve equation), `x` is
 constrained equal to the hash output, and `y` is constrained even by
-`y = 2h` with `h` range-checked below `2^254`. About half of all
+`y = 2h` with `h ≤ (p − 1)/2`, so that `2h` never wraps modulo `p`:
+`h = h_hi · 2^253 + h_lo` with `h_hi` boolean and `h_lo < 2^253`, and
+`z = h_hi · (h_lo + K) < 2^125` with `K = 2^125 − c`, `c = (p + 1)/2 −
+2^253`, so that `h_hi = 1` forces `h_lo < c`. (A bound `h < 2^254`
+alone, as in v0.1, admits `h' = p − h` and therefore the odd root for
+all but a `2^-129` fraction of diversifiers; review finding of 3
+November 2026, no effect on ownership or value, since both roots carry
+the same discrete logarithms up to sign and the wallet uses the even
+one.) About half of all
 diversifiers are invalid, as before.
 
 ## 5. Notes (amends `PROFILE.md` §5)
@@ -201,7 +209,9 @@ Blocks 1–8 of `PROFILE.md` §8.3 with these readings:
 3–5. As there.
 6. `v` is 64-bit range-checked (six 10-bit lookups and a 4-bit check), `d`
    88-bit (eight lookups and an 8-bit check), `pos` is decomposed into 32
-   constrained bits that also drive the Merkle path's swaps.
+   constrained bits that also drive the Merkle path's swaps; the parity
+   rule of §4.2 costs, per `G_d`, 25 lookups and a 3-bit check on `h_lo`
+   and 12 lookups and a 5-bit check on `z`.
 7. `v_in_0 + v_in_1 = v_out_0 + v_out_1` (one gate).
 8. `h_body`, `N`, `M` are instance cells; `N` and `M` are constrained to
    the constants 2 and 2; `h_body` and `r_anchor` need no extra
@@ -237,7 +247,7 @@ and must not share a deployment. The identifier for `k = 14` is pinned in
 
 ```json
 {
-  "profile": "a-0.1",
+  "profile": "a-0.2",
   "family": "a-halo2",
   "name": "signet-a-1",
   "network": "signet",
@@ -299,7 +309,7 @@ The table of `PROFILE.md` §12 applies, plus:
 ## 13. Versioning (amends `PROFILE.md` §13)
 
 The family's profile version is `a-MAJOR.MINOR` (this document's title,
-`a-0.1`); its wire version byte is `0x02`. The rules of `PROFILE.md` §13
+`a-0.2`); its wire version byte is `0x02`. The rules of `PROFILE.md` §13
 apply within the family: while the profile is a draft, every
 incompatible change bumps MINOR and old envelopes are rejected; from
 `a-1.0` on, changes bump the wire version byte. Family bytes are
@@ -308,6 +318,9 @@ families take the next values (`VARIANT-A.md` §6.2).
 
 ### Changelog
 
+* **v0.2** (3 November 2026) — the parity rule of DiversifyHash bounds
+  `h ≤ (p − 1)/2` (§4.2, §8.3); the verifying key and `vk_id` change,
+  `TEST_VECTORS-A.md` regenerated, envelopes of a-0.1 are rejected.
 * **v0.1, amended** (1 November 2026, after S4 and S5; no vector
   changed) — the circuit crate referenced (§8.3), the `feeauth` tag and
   the `ct_out` infos written out (§2.1, §7), the deployment example

@@ -126,6 +126,7 @@ fn real_transfer_proves_and_verifies() {
     let circuit = TransferCircuit {
         statement: Some(st.clone()),
         witness: Some(w.clone()),
+        negate_g_d: false,
     };
     MockProver::run(K, &circuit, vec![st.to_field_elements()])
         .unwrap()
@@ -180,11 +181,35 @@ fn unsatisfiable_witnesses_are_refused_by_the_mock_prover() {
     let circuit = TransferCircuit {
         statement: Some(st.clone()),
         witness: Some(w),
+        negate_g_d: false,
     };
     assert!(
         MockProver::run(K, &circuit, vec![st.to_field_elements()])
             .unwrap()
             .verify()
             .is_err()
+    );
+}
+
+/// The odd root of `x³ + 5` as `G_d` satisfies every other constraint (the
+/// discrete logarithms are the same up to sign) and must be refused by the
+/// parity rule alone; with the former bound `h < 2^254` it was accepted
+/// (review finding, 3 November 2026).
+#[test]
+fn the_odd_root_of_g_d_is_refused_by_the_mock_prover() {
+    let (st, w) = sample();
+    let circuit = TransferCircuit {
+        statement: Some(st.clone()),
+        witness: Some(w),
+        negate_g_d: true,
+    };
+    let err = MockProver::run(K, &circuit, vec![st.to_field_elements()])
+        .unwrap()
+        .verify()
+        .unwrap_err();
+    let text = format!("{err:?}");
+    assert!(
+        text.contains("2h") || text.contains("rc") || text.contains("Lookup"),
+        "{text}"
     );
 }

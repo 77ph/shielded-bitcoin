@@ -149,11 +149,29 @@ pub struct Config {
 pub struct TransferCircuit {
     pub statement: Option<TransferStatement>,
     pub witness: Option<TransferWitness>,
+    /// Test hook: witness the odd root of every `G_d` instead of the even
+    /// one. The parity rule must refuse it; nothing else sets this.
+    #[doc(hidden)]
+    pub negate_g_d: bool,
+}
+
+/// `2^253` as a field element.
+fn two_pow_253() -> Fp {
+    let mut b = [0u8; 32];
+    b[31] = 0x20;
+    Fp::from_repr(b).unwrap()
+}
+
+/// `K = 2^125 − c` with `c = (p + 1)/2 − 2^253`, the parity rule's constant.
+fn parity_k() -> Fp {
+    Fp::from_u128(0x0edc_b381_fb59_8372_3369_6789_7fff_ffff)
 }
 
 struct Ctx<'a> {
     cfg: &'a Config,
     ecc: Ecc,
+    /// The test hook of [`TransferCircuit::negate_g_d`].
+    negate_g_d: bool,
 }
 
 impl Ctx<'_> {
@@ -293,41 +311,49 @@ impl Ctx<'_> {
         )
     }
 
-    /// `G_d = DiversifyHash(d)`: `x = PH_A(T_DIV, d)`, witnessed even `y`
-    /// (`y = 2h`, `h < 2^254`), the point witnessed on the curve.
+    /// `G_d = DiversifyHash(d)`: `x = PH_A(T_DIV, d)`, the point witnessed on
+    /// the curve with the even `y`, enforced as `y = 2h` with `h ≤ (p − 1)/2`
+    /// so that `2h` never wraps modulo `p` (`PROFILE-A.md` §4.2): `h = h_hi ·
+    /// 2^253 + h_lo` with `h_hi` boolean, `h_lo < 2^253`, and `z = h_hi ·
+    /// (h_lo + K) < 2^125` where `K = 2^125 − c`, `c = (p + 1)/2 − 2^253`, so
+    /// that `h_hi = 1` forces `h_lo < c`. A bound of `h < 2^254` alone would
+    /// admit `h' = p − h`, i.e. the odd root (review finding, 3 November 2026).
     fn diversify(&self, l: &mut impl Layouter<Fp>, d: &Cell) -> Result<Pt, Error> {
         let t = self.constant(l, t_div())?;
         let x = self.hash(l, [t, d.clone()])?;
+        let negate = self.negate_g_d;
         let p = x.value().map(|x| {
             let y = even_y_for_x(x).expect("the wallet never uses an invalid diversifier");
+            let y = if negate { -y } else { y };
             pallas::Affine::from_xy(*x, y).unwrap()
         });
         let point = NonIdentityPoint::new(self.ecc.clone(), l.namespace(|| "G_d"), p)?;
         let cfg = self.cfg;
-        let h = l.assign_region(
+        let (h_lo, z) = l.assign_region(
             || "parity",
             |mut r| {
                 cfg.q_par.enable(&mut r, 0)?;
                 let yc = point.inner().y();
                 yc.copy_advice(|| "y", &mut r, cfg.advices[0], 0)?;
-                let h = yc.value().map(|y| {
-                    let mut b = y.to_repr();
-                    let mut carry = 0u16;
-                    for i in (0..32).rev() {
-                        let cur = (carry << 8) | b[i] as u16;
-                        b[i] = (cur >> 1) as u8;
-                        carry = cur & 1;
-                    }
-                    Fp::from_repr(b).unwrap()
-                });
-                r.assign_advice(|| "h", cfg.advices[1], 0, || h)
+                // h = y / 2 in the field (= the integer half when y is even;
+                // for the odd root it is (y + p)/2, which the bound refuses)
+                let h = yc.value().map(|y| *y * Fp::TWO_INV);
+                let h_hi = h.map(|h| Fp::from(u64::from(h.to_repr()[31] >> 5 & 1)));
+                let h_lo = h.zip(h_hi).map(|(h, hi)| h - hi * two_pow_253());
+                let z = h_hi.zip(h_lo).map(|(hi, lo)| hi * (lo + parity_k()));
+                r.assign_advice(|| "h", cfg.advices[1], 0, || h)?;
+                r.assign_advice(|| "h_hi", cfg.advices[2], 0, || h_hi)?;
+                let lo = r.assign_advice(|| "h_lo", cfg.advices[3], 0, || h_lo)?;
+                let z = r.assign_advice(|| "z", cfg.advices[4], 0, || z)?;
+                Ok((lo, z))
             },
         )?;
         l.assign_region(
             || "x = hash",
             |mut r| r.constrain_equal(point.inner().x().cell(), x.cell()),
         )?;
-        self.range(l, &h, 25, 4)?;
+        self.range(l, &h_lo, 25, 3)?;
+        self.range(l, &z, 12, 5)?;
         Ok(point)
     }
 
@@ -462,11 +488,29 @@ impl Circuit<Fp> for TransferCircuit {
             Constraints::with_selector(q, [("(root - anchor) v", (root - anchor) * v)])
         });
         let q_par = meta.selector();
-        meta.create_gate("y = 2h", |m| {
+        meta.create_gate("y = 2h, h <= (p-1)/2", |m| {
             let q = m.query_selector(q_par);
             let y = m.query_advice(advices[0], Rotation::cur());
             let h = m.query_advice(advices[1], Rotation::cur());
-            Constraints::with_selector(q, [("y - 2h", y - h * Expression::Constant(Fp::from(2)))])
+            let h_hi = m.query_advice(advices[2], Rotation::cur());
+            let h_lo = m.query_advice(advices[3], Rotation::cur());
+            let z = m.query_advice(advices[4], Rotation::cur());
+            let one = Expression::Constant(Fp::one());
+            Constraints::with_selector(
+                q,
+                [
+                    ("y - 2h", y - h.clone() * Expression::Constant(Fp::from(2))),
+                    (
+                        "h - h_hi 2^253 - h_lo",
+                        h - h_hi.clone() * Expression::Constant(two_pow_253()) - h_lo.clone(),
+                    ),
+                    ("h_hi boolean", h_hi.clone() * (h_hi.clone() - one)),
+                    (
+                        "z - h_hi (h_lo + K)",
+                        z - h_hi * (h_lo + Expression::Constant(parity_k())),
+                    ),
+                ],
+            )
         });
         let q_sum = meta.selector();
         meta.create_gate("sum", |m| {
@@ -512,7 +556,11 @@ impl Circuit<Fp> for TransferCircuit {
             },
         )?;
         let ecc = EccChip::construct(cfg.ecc.clone(), CircuitVersion::AnchoredBase);
-        let ctx = Ctx { cfg: &cfg, ecc };
+        let ctx = Ctx {
+            cfg: &cfg,
+            ecc,
+            negate_g_d: self.negate_g_d,
+        };
         let l = &mut layouter;
         let w = self.witness.as_ref();
         let wv = |f: &dyn Fn(&TransferWitness) -> Fp| -> Value<Fp> {
