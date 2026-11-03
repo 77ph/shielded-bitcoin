@@ -191,6 +191,27 @@ fn unsatisfiable_witnesses_are_refused_by_the_mock_prover() {
     );
 }
 
+#[test]
+fn batch_verification_agrees_with_one_by_one() {
+    let (st, w) = sample();
+    let params = TransferParams::build().unwrap();
+    let verifier = params.verifier();
+    let mut rng = StdRng::seed_from_u64(9);
+    let p1 = params.prove(&st, &w, &mut rng).unwrap();
+    let p2 = params.prove(&st, &w, &mut rng).unwrap();
+    assert_ne!(p1, p2, "proofs are randomised");
+    assert!(verifier.verify_batch(&[]));
+    assert!(verifier.verify_batch(&[(st.clone(), p1.clone())]));
+    assert!(verifier.verify_batch(&[(st.clone(), p1.clone()), (st.clone(), p2.clone())]));
+    let mut bad = p2.clone();
+    bad[300] ^= 1;
+    assert!(!verifier.verify_batch(&[(st.clone(), p1.clone()), (st.clone(), bad)]));
+    let mut wrong_st = st.clone();
+    wrong_st.h_body += Fp::ONE;
+    assert!(!verifier.verify_batch(&[(st.clone(), p1.clone()), (wrong_st, p2.clone())]));
+    assert!(!verifier.verify_batch(&[(st.clone(), p1), (st, p2[..PROOF_LEN - 1].to_vec())]));
+}
+
 /// The odd root of `x³ + 5` as `G_d` satisfies every other constraint (the
 /// discrete logarithms are the same up to sign) and must be refused by the
 /// parity rule alone; with the former bound `h < 2^254` it was accepted

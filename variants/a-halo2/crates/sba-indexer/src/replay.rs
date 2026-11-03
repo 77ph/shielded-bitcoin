@@ -122,26 +122,82 @@ impl Indexer {
             self.next_height(),
             "blocks must be replayed in order"
         );
-        let mut cp = BlockCheckpoint {
+        // Optimistic pass first (`REPLAY-PROOF-A.md` §2): every envelope goes
+        // through steps 1–5 and 7 in order with its proof left for a batch
+        // verification at the end of the block. When the batch holds, every
+        // proof was valid and the outcome equals the normative one. When it
+        // does not, the block is undone and replayed sequentially with each
+        // proof verified alone (§11 as written), which also names the culprit.
+        let mut cp = self.checkpoint(id);
+        let mut report = BlockReport::default();
+        let mut batch = Vec::new();
+        self.replay_txs(id, block, &mut cp, &mut report, Some(&mut batch));
+        if !batch.is_empty() && !self.verifier.verify_batch(&batch) {
+            debug!(
+                "height {}: batch of {} proofs failed, replaying sequentially",
+                id.height,
+                batch.len()
+            );
+            self.undo(&cp);
+            cp = self.checkpoint(id);
+            report = BlockReport::default();
+            self.replay_txs(id, block, &mut cp, &mut report, None);
+        }
+        let root = self.state.tree.root();
+        self.state.roots.insert(id.height, root);
+        self.state.blocks.push(cp);
+        report
+    }
+
+    fn checkpoint(&self, id: BlockId) -> BlockCheckpoint {
+        BlockCheckpoint {
             height: id.height,
             hash: id.hash,
             leaf_count_before: self.state.tree.size(),
             events_before: self.state.events.len(),
             rejections_before: self.state.rejections.len(),
             nullifiers_added: Vec::new(),
-        };
-        let mut report = BlockReport::default();
+        }
+    }
+
+    /// Undo a block in progress: back to the checkpoint's before-state.
+    fn undo(&mut self, cp: &BlockCheckpoint) {
+        self.state.tree.truncate(cp.leaf_count_before);
+        for nf in &cp.nullifiers_added {
+            self.state.unmark_spent(nf);
+        }
+        self.state.events.truncate(cp.events_before);
+        self.state.rejections.truncate(cp.rejections_before);
+    }
+
+    /// The block's carriers in order; with `batch`, transfer proofs are
+    /// collected instead of verified.
+    fn replay_txs(
+        &mut self,
+        id: BlockId,
+        block: &Block,
+        cp: &mut BlockCheckpoint,
+        report: &mut BlockReport,
+        mut batch: Option<&mut Vec<(TransferStatement, Vec<u8>)>>,
+    ) {
         for (tx_index, tx) in block.txdata.iter().enumerate() {
             let Some(candidate) = self.deployment.carrier.extract(tx, &CANDIDATE_PREFIX) else {
                 continue;
             };
             let txid = tx.compute_txid().to_byte_array();
             let result = candidate.map_err(RejectReason::from).and_then(|c| {
-                self.accept(id.height, tx_index as u32, txid, tx, &c.envelope)
-                    .map(|mut ev| {
-                        ev.memo = c.memo;
-                        ev
-                    })
+                self.accept(
+                    id.height,
+                    tx_index as u32,
+                    txid,
+                    tx,
+                    &c.envelope,
+                    batch.as_deref_mut(),
+                )
+                .map(|mut ev| {
+                    ev.memo = c.memo;
+                    ev
+                })
             });
             match result {
                 Ok(event) => {
@@ -165,10 +221,6 @@ impl Indexer {
                 }
             }
         }
-        let root = self.state.tree.root();
-        self.state.roots.insert(id.height, root);
-        self.state.blocks.push(cp);
-        report
     }
 
     fn accept(
@@ -178,10 +230,15 @@ impl Indexer {
         txid: [u8; 32],
         tx: &Transaction,
         bytes: &[u8],
+        batch: Option<&mut Vec<(TransferStatement, Vec<u8>)>>,
     ) -> Result<AcceptedEvent, RejectReason> {
         match parse_envelope(bytes)? {
             Envelope::Transfer(env) => {
-                let h_body = self.validate_transfer(height, &env)?;
+                let (h_body, statement) =
+                    self.validate_transfer_with(height, &env, batch.is_none())?;
+                if let Some(batch) = batch {
+                    batch.push((statement, env.proof.clone()));
+                }
                 self.apply_transfer(height, tx_index, txid, env, h_body)
             }
             Envelope::Mint(env) => self.accept_mint(height, tx_index, txid, tx, env),
@@ -215,6 +272,18 @@ impl Indexer {
         height: u32,
         envelope: &TransferEnvelope,
     ) -> Result<Fp, RejectReason> {
+        self.validate_transfer_with(height, envelope, true)
+            .map(|(h_body, _)| h_body)
+    }
+
+    /// Steps 2–5, and step 6 when `check_proof`; returns `h_body` and the
+    /// statement the proof is (to be) verified against.
+    fn validate_transfer_with(
+        &self,
+        height: u32,
+        envelope: &TransferEnvelope,
+        check_proof: bool,
+    ) -> Result<(Fp, TransferStatement), RejectReason> {
         let body = &envelope.body;
         let h_body = body.h_body(&self.deployment.const_salt);
         let r_anchor = self.check_anchor_and_nullifiers(height, body)?;
@@ -226,10 +295,10 @@ impl Indexer {
             ct_note: body.ct_note,
             h_body,
         };
-        if !self.verifier.verify(&statement, &envelope.proof) {
+        if check_proof && !self.verifier.verify(&statement, &envelope.proof) {
             return Err(RejectReason::ProofInvalid);
         }
-        Ok(h_body)
+        Ok((h_body, statement))
     }
 
     /// Steps 3–5; returns `r_anchor`.

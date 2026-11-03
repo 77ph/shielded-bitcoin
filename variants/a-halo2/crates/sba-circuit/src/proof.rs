@@ -2,12 +2,14 @@
 //! (`Params::new(K)`), keys derived from the circuit, Blake2b transcripts,
 //! fixed-length proofs, and the verifying-key identifier a deployment pins.
 
+use ff::Field;
 use halo2_proofs::{
-    plonk::{self, ProvingKey, SingleVerifier, VerifyingKey},
-    poly::commitment::Params,
+    plonk::{self, Error, ProvingKey, SingleVerifier, VerificationStrategy, VerifyingKey},
+    poly::commitment::{Guard, MSM, Params},
     transcript::{Blake2bRead, Blake2bWrite, Challenge255, EncodedChallenge, Transcript},
 };
 use pasta_curves::vesta;
+use rand::rngs::OsRng;
 use rand::{CryptoRng, RngCore};
 
 use sba_core::envelope::PROOF_LEN;
@@ -116,6 +118,52 @@ impl TransferVerifier {
 
     pub fn vk_id(&self) -> [u8; 32] {
         vk_id(&self.vk)
+    }
+
+    /// Verify several proofs together (`REPLAY-PROOF-A.md` §2): each proof's
+    /// deferred multi-scalar multiplication, scaled by a fresh random
+    /// factor, is added into one that is evaluated once. `true` iff every
+    /// proof is valid, with the same acceptance as [`verify`](Self::verify)
+    /// proof by proof (up to the 2^-128 chance of a random cancellation);
+    /// on `false` the caller verifies one by one to find the culprit. An
+    /// empty batch is valid.
+    pub fn verify_batch(&self, items: &[(TransferStatement, Vec<u8>)]) -> bool {
+        /// Hands back the guard's MSM with the `s` vector folded in.
+        struct Deferred<'p>(&'p Params<vesta::Affine>);
+        impl<'p> VerificationStrategy<'p, vesta::Affine> for Deferred<'p> {
+            type Output = MSM<'p, vesta::Affine>;
+            fn process<E: EncodedChallenge<vesta::Affine>>(
+                self,
+                f: impl FnOnce(MSM<'p, vesta::Affine>) -> Result<Guard<'p, vesta::Affine, E>, Error>,
+            ) -> Result<Self::Output, Error> {
+                Ok(f(MSM::new(self.0))?.use_challenges())
+            }
+        }
+        if items.len() == 1 {
+            return self.verify(&items[0].0, &items[0].1);
+        }
+        let mut acc = MSM::new(&self.params);
+        for (statement, proof) in items {
+            if proof.len() != PROOF_LEN {
+                return false;
+            }
+            let instance = statement.to_field_elements();
+            let mut transcript = Blake2bRead::<_, _, Challenge255<_>>::init(&proof[..]);
+            let Ok(mut msm) = plonk::verify_proof(
+                &self.params,
+                &self.vk,
+                Deferred(&self.params),
+                &[&[&instance[..]]],
+                &mut transcript,
+            ) else {
+                return false;
+            };
+            msm.scale(
+                <vesta::Affine as halo2_proofs::arithmetic::CurveAffine>::ScalarExt::random(OsRng),
+            );
+            acc.add_msm(&msm);
+        }
+        acc.eval()
     }
 
     /// Verify a proof of `statement`; a proof of the wrong length is invalid.

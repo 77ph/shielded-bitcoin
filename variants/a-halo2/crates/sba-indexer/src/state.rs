@@ -103,6 +103,12 @@ impl ReplayState {
         self.nullifiers.insert(fp_to_bytes(nf));
     }
 
+    /// The inverse of [`mark_spent`](Self::mark_spent), for undoing a block
+    /// in progress.
+    pub fn unmark_spent(&mut self, nf: &Fp) {
+        self.nullifiers.remove(&fp_to_bytes(nf));
+    }
+
     /// Height of the last replayed block.
     pub fn last_height(&self) -> Option<u32> {
         self.blocks.last().map(|b| b.height)
