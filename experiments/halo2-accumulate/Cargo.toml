@@ -1,0 +1,19 @@
+[package]
+name = "halo2-accumulate"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+sba-circuit = { path = "../../variants/a-halo2/crates/sba-circuit" }
+sba-core = { path = "../../variants/a-halo2/crates/sba-core" }
+sba-primitives = { path = "../../variants/a-halo2/crates/sba-primitives" }
+halo2_proofs = "0.3"
+pasta_curves = "0.5"
+ff = "0.13"
+group = "0.13"
+rand = "0.8"
+
+[profile.release]
+debug = false
+
+[workspace]
