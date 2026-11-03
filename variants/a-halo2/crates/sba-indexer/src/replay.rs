@@ -142,16 +142,23 @@ impl Indexer {
         // Completeness guard: every transfer the pass accepted must be in the
         // batch, one entry each, else nothing certifies the ones outside it.
         // An empty batch is therefore valid only when no transfer was accepted.
-        let accepted_transfers = self.state.events[cp.events_before..]
+        // The binding is structural, not only a count: the i-th batch entry
+        // must be the i-th accepted transfer's own statement (`h_body` binds
+        // the envelope's body; the proof was cloned from the same envelope).
+        let accepted: Vec<&AcceptedEvent> = self.state.events[cp.events_before..]
             .iter()
             .filter(|e| e.kind == EventKind::Transfer)
-            .count();
-        let complete = batch.len() == accepted_transfers;
+            .collect();
+        let complete = batch.len() == accepted.len()
+            && batch
+                .iter()
+                .zip(&accepted)
+                .all(|((st, _), ev)| st.h_body == ev.h_body);
         if !complete {
             warn!(
-                "height {}: {} accepted transfers but {} proofs in the batch; replaying sequentially",
+                "height {}: {} accepted transfers against {} proofs in the batch (or out of order); replaying sequentially",
                 id.height,
-                accepted_transfers,
+                accepted.len(),
                 batch.len()
             );
         }

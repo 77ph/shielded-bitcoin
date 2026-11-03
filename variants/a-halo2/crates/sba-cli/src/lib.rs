@@ -201,6 +201,16 @@ enum Cmd {
         #[arg(long)]
         no_broadcast: bool,
     },
+    /// Publish a carrier from the outbox, paid from a wallet's fee coins
+    /// (any wallet, not only the sender's: third-party funding).
+    Publish {
+        /// Outbox label (`transfer-…`, `mint-…`, `withdraw-…`) or a path to its `.json`.
+        label: String,
+        #[arg(long, default_value = "default")]
+        name: String,
+        #[arg(long, default_value = "1")]
+        fee_rate: u64,
+    },
     /// Pay transparent coins from the wallet's funding address.
     FundSend {
         #[arg(long, default_value = "default")]
@@ -933,6 +943,31 @@ pub fn run(args: Vec<String>) -> Result<()> {
                 w.record_payout(&p.note.txid, &p.request, Some(txid.to_string()));
                 w.save(&ctx.wallet_path(&name))?;
             }
+        }
+        Cmd::Publish {
+            label,
+            name,
+            fee_rate,
+        } => {
+            let path = if label.contains('/') || label.ends_with(".json") {
+                PathBuf::from(&label)
+            } else {
+                ctx.data_dir.join("outbox").join(format!("{label}.json"))
+            };
+            let text = std::fs::read_to_string(&path).with_context(|| {
+                format!(
+                    "{} (`sb <mint|send|withdraw> --no-broadcast` writes it)",
+                    path.display()
+                )
+            })?;
+            let entry: OutboxEntry = serde_json::from_str(&text)?;
+            let label = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("carrier")
+                .to_string();
+            let mut w = ctx.wallet(&name)?;
+            ctx.publish(&mut w, &name, &label, &entry, fee_rate, false)?;
         }
         Cmd::FundSend {
             name,
