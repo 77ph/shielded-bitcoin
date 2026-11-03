@@ -268,9 +268,11 @@ implementation of the paper? Rules this repository adopts:
    it, and the variant's documents say which parts those are.
 7. **CI** builds and tests the paper workspace and every variant;
    heavy variant builds get their own job so the paper's job stays as
-   it is. As of 1 November 2026 A runs inside the workspace job, which
-   it lengthens from about 1 h 35 min to about 1 h 55 min (mostly the
-   coverage pass); it gets a job of its own when that grows.
+   it is. A's crates are built and unit-tested inside the workspace job;
+   its end-to-end test through `sb` (ten minutes of proving on the
+   laptop, several times that on a CI runner, twice if it were also
+   under the coverage pass) has its own job since 3 November 2026 and is
+   out of the coverage figure.
 8. **Machines.** Measurements and tests that need more than a few GB
    or minutes run in Docker on the server, not on the laptop; the
    laptop's memory and disk are watched during every build (owner's
