@@ -11,6 +11,7 @@ use sba_core::envelope::{
     parse_envelope,
 };
 use sba_core::event::AcceptedEvent;
+use sba_core::event::EventKind;
 use sba_core::note::note_leaf;
 use sba_core::recovery::N_OUT;
 use sba_primitives::Fp;
@@ -85,6 +86,11 @@ pub struct Indexer {
     verifier: TransferVerifier,
     pub state: ReplayState,
     vault_script: Option<ScriptBuf>,
+    /// Test hook: leave the first transfer of a block out of the batch, so
+    /// that the completeness guard of [`replay_block`](Self::replay_block)
+    /// is exercised. Nothing but tests sets it.
+    #[doc(hidden)]
+    pub drop_first_from_batch: bool,
 }
 
 impl Indexer {
@@ -97,6 +103,7 @@ impl Indexer {
             verifier,
             state,
             vault_script,
+            drop_first_from_batch: false,
         }
     }
 
@@ -132,9 +139,25 @@ impl Indexer {
         let mut report = BlockReport::default();
         let mut batch = Vec::new();
         self.replay_txs(id, block, &mut cp, &mut report, Some(&mut batch));
-        if !batch.is_empty() && !self.verifier.verify_batch(&batch) {
+        // Completeness guard: every transfer the pass accepted must be in the
+        // batch, one entry each, else nothing certifies the ones outside it.
+        // An empty batch is therefore valid only when no transfer was accepted.
+        let accepted_transfers = self.state.events[cp.events_before..]
+            .iter()
+            .filter(|e| e.kind == EventKind::Transfer)
+            .count();
+        let complete = batch.len() == accepted_transfers;
+        if !complete {
+            warn!(
+                "height {}: {} accepted transfers but {} proofs in the batch; replaying sequentially",
+                id.height,
+                accepted_transfers,
+                batch.len()
+            );
+        }
+        if !complete || (!batch.is_empty() && !self.verifier.verify_batch(&batch)) {
             debug!(
-                "height {}: batch of {} proofs failed, replaying sequentially",
+                "height {}: batch of {} proofs not accepted, replaying sequentially",
                 id.height,
                 batch.len()
             );
@@ -237,7 +260,11 @@ impl Indexer {
                 let (h_body, statement) =
                     self.validate_transfer_with(height, &env, batch.is_none())?;
                 if let Some(batch) = batch {
-                    batch.push((statement, env.proof.clone()));
+                    if self.drop_first_from_batch && batch.is_empty() {
+                        self.drop_first_from_batch = false;
+                    } else {
+                        batch.push((statement, env.proof.clone()));
+                    }
                 }
                 self.apply_transfer(height, tx_index, txid, env, h_body)
             }

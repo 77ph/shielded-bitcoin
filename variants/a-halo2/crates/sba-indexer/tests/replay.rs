@@ -373,3 +373,76 @@ fn a_block_with_a_bad_proof_is_replayed_sequentially() {
     fresh.sync(&chain).unwrap();
     assert_eq!(fresh.state.to_json(), idx.state.to_json());
 }
+
+/// A transfer the optimistic pass accepted but did not put in the batch
+/// must not stand on the batch's verdict: the completeness guard sends the
+/// block to the sequential path, where its (bad) proof is checked.
+#[test]
+fn a_transfer_missing_from_the_batch_is_not_accepted_unchecked() {
+    let mut w = World::new();
+    let (_, alice0) = w.alice.ivk.find_address(0);
+    let (_, bob0) = w.bob.ivk.find_address(0);
+    let mut chain = MockChain::new(ACTIVATION);
+    let mut idx = w.indexer();
+    let (m0, _) = w.mint_tx(&alice0, 1000);
+    chain.push_block(vec![m0]);
+    chain.push_block(vec![]);
+    idx.sync(&chain).unwrap();
+    // a tampered dummy-only transfer first, a valid one second
+    let mut bad = w.transfer(&idx, 1001, None, [(bob0, 0), (bob0, 0)]);
+    bad.proof[2000] ^= 1;
+    let good = w.transfer(&idx, 1001, None, [(bob0, 0), (bob0, 0)]);
+    chain.push_block(vec![
+        tx_with(vec![carrier_output(&bad.to_bytes())]),
+        tx_with(vec![carrier_output(&good.to_bytes())]),
+    ]);
+    idx.drop_first_from_batch = true;
+    let r = idx.sync(&chain).unwrap();
+    assert!(!idx.drop_first_from_batch, "the hook fired");
+    assert_eq!((r.accepted, r.rejected), (1, 1));
+    assert_eq!(idx.state.rejections.len(), 1);
+    assert_eq!(idx.state.rejections[0].tx_index, 1);
+    assert!(idx.state.rejections[0].reason.contains("proof"));
+    assert_eq!(idx.state.events[1].tx_index, 2);
+    // and with the batch complete, the same block gives the same outcome
+    let mut fresh = w.indexer();
+    fresh.sync(&chain).unwrap();
+    assert_eq!(fresh.state.to_json(), idx.state.to_json());
+}
+
+/// The sequential fallback rejects every bad proof of a block, not only the
+/// first one it meets.
+#[test]
+fn two_bad_proofs_in_one_block_are_both_rejected() {
+    let mut w = World::new();
+    let (_, alice0) = w.alice.ivk.find_address(0);
+    let (_, bob0) = w.bob.ivk.find_address(0);
+    let mut chain = MockChain::new(ACTIVATION);
+    let mut idx = w.indexer();
+    let (m0, _) = w.mint_tx(&alice0, 1000);
+    chain.push_block(vec![m0]);
+    chain.push_block(vec![]);
+    idx.sync(&chain).unwrap();
+    let mut bad1 = w.transfer(&idx, 1001, None, [(bob0, 0), (bob0, 0)]);
+    bad1.proof[100] ^= 1;
+    let good = w.transfer(&idx, 1001, None, [(bob0, 0), (bob0, 0)]);
+    let mut bad2 = w.transfer(&idx, 1001, None, [(bob0, 0), (bob0, 0)]);
+    bad2.proof[4000] ^= 1;
+    chain.push_block(vec![
+        tx_with(vec![carrier_output(&bad1.to_bytes())]),
+        tx_with(vec![carrier_output(&good.to_bytes())]),
+        tx_with(vec![carrier_output(&bad2.to_bytes())]),
+    ]);
+    let r = idx.sync(&chain).unwrap();
+    assert_eq!((r.accepted, r.rejected), (1, 2));
+    let rejected: Vec<u32> = idx.state.rejections.iter().map(|r| r.tx_index).collect();
+    assert_eq!(rejected, vec![1, 3]);
+    assert!(
+        idx.state
+            .rejections
+            .iter()
+            .all(|r| r.reason.contains("proof"))
+    );
+    assert_eq!(idx.state.events[1].tx_index, 2);
+    assert_eq!(idx.state.tree.size(), 1 + 2);
+}
