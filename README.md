@@ -181,9 +181,9 @@ cargo llvm-cov --workspace --release --ignore-run-fail \
   --ignore-filename-regex 'chain/fake\.rs' -- --include-ignored
 ```
 
-Measured in CI on 1 November 2026 (PostgreSQL included, live network
-tests best effort, variant A included): **91.6 % of lines, 88.6 % of
-regions**; the paper crates alone stay at about 92 % of lines, the
+Measured in CI on 3 November 2026 (PostgreSQL included, live network
+tests best effort, variant A's crates included): **91.7 % of lines,
+88.9 % of regions**; the paper crates alone stay at about 92 % of lines, the
 variant's crates were at 88.9 % (the fixed-base tables the ECC chip
 requires but the circuit never calls stay uncovered). Since 3 November
 the variant's command-line crate and its end-to-end test (`sb` on both
