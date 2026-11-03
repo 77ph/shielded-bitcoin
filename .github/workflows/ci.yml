@@ -30,8 +30,10 @@ jobs:
       - run: cargo test -p sb-indexer --release --test pg_store -- --ignored
         env:
           SB_TEST_PG: postgresql://postgres:postgres@localhost:5432/shielded_bitcoin
-      # Poseidon constants re-derived independently of arkworks.
+      # Poseidon constants re-derived independently of arkworks (paper profile)
+      # and of halo2_poseidon (variant A).
       - run: python3 scripts/poseidon_params_check.py
+      - run: python3 scripts/poseidon_params_check_a.py
       # Line coverage gate (test-support fake servers excluded). Live network
       # tests are included; a failing one does not abort the measurement.
       - uses: taiki-e/install-action@cargo-llvm-cov
