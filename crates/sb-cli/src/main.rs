@@ -1396,6 +1396,16 @@ fn main() -> Result<()> {
                 Some(l) => Box::new(l.clone()),
                 None => ctx.chain_source()?,
             };
+            if let Some(rest) = ctx.chain.strip_prefix("light:") {
+                match rest.split_once('|') {
+                    Some((url, full)) => {
+                        println!("light sync from {url}: block hashes cross-checked against {full}")
+                    }
+                    None => println!(
+                        "bare light sync from {rest}: the chain itself (tip and headers) is trusted from that indexer, proof of work is not validated; add |<full source> to cross-check block hashes"
+                    ),
+                }
+            }
             let r = idx.sync_with(chain.as_ref(), Some(store.as_mut()))?;
             println!("{r:?}");
             if let Some(l) = light {
