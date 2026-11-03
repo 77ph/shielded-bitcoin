@@ -18,6 +18,7 @@ anyhow.workspace = true
 clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+log.workspace = true
 hex.workspace = true
 rand.workspace = true
 ff.workspace = true

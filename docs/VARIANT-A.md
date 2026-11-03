@@ -318,8 +318,10 @@ implementation of the paper? Rules this repository adopts:
   wallet flow, and `sb` end to end on the fake node on both carriers
   (`crates/sb-cli/tests/variant_a_e2e.rs`). The transfer and, since 3
   November, the development boundary's `withdraw` and `payouts` (the
-  payout memo next to the envelope, as `BOUNDARY.md`); swap, batch, fee
-  vault and relayer come after, by the same procedure as for the paper.
+  payout memo next to the envelope, as `BOUNDARY.md`), `publish` from the
+  outbox (third-party funding) and the sponsored relayer (`relay-serve`,
+  `--relay`, the paper's wire format); swap, batch and the fee vault come
+  after, by the same procedure as for the paper.
   Test vectors for the family: with S5.
 * **S5, a run on signet**: done (1 November 2026, `RUNS.md`): deployment
   `signet-a-1` on public signet, witness carrier, a mint and two

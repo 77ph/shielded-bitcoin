@@ -76,6 +76,24 @@ fn script_of(addr: &str) -> ScriptBuf {
         .script_pubkey()
 }
 
+struct KillOnDrop(std::process::Child);
+
+impl Drop for KillOnDrop {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// The outbox label of a `--no-broadcast` or relayed command's output.
+fn label_of(text: &str) -> String {
+    text.lines()
+        .find(|l| l.contains("written to"))
+        .and_then(|l| l.rsplit('/').next())
+        .map(|f| f.trim_end_matches(".json").to_string())
+        .expect("outbox label")
+}
+
 fn balance(text: &str) -> u64 {
     text.lines()
         .find(|l| l.starts_with("balance"))
@@ -349,6 +367,137 @@ fn cycle(carrier: &str, tag: &str) {
     assert!(out.contains("not broadcast"), "{out}");
     assert_eq!(balance(&cli.ok(&["scan", "--name", "bob"])), 0);
     assert_eq!(balance(&cli.ok(&["unlock", "--name", "bob"])), 800);
+
+    // a sponsored relayer with its own data directory and fee wallet: a
+    // transfer relayed end to end, the client-side refusals, the server's
+    // answers to a tampered envelope, junk and an unknown path
+    let relay_dir = dir.join("relay");
+    std::fs::create_dir_all(&relay_dir).unwrap();
+    std::fs::write(relay_dir.join("pass"), "pw\n").unwrap();
+    let relay_cli = Cli {
+        data: relay_dir.clone(),
+        profile: cli.profile.clone(),
+        chain: cli.chain.clone(),
+    };
+    let relay_wallet = relay_cli.ok(&["wallet-new", "--name", "relay"]);
+    let relay_funding = field(&relay_wallet, "funding address:").to_string();
+    shared.fund(&script_of(&relay_funding), 100_000);
+    mine(1);
+    relay_cli.fails(
+        &["relay-serve", "--name", "relay", "--listen", "256.0.0.1:1"],
+        "listen on",
+    );
+    let server = Command::new(env!("CARGO_BIN_EXE_sb"))
+        .arg("--profile")
+        .arg(&relay_cli.profile)
+        .arg("--data-dir")
+        .arg(&relay_cli.data)
+        .arg("--chain")
+        .arg(&relay_cli.chain)
+        .arg("--passphrase-file")
+        .arg(relay_dir.join("pass"))
+        .args([
+            "relay-serve",
+            "--name",
+            "relay",
+            "--listen",
+            "127.0.0.1:0",
+            "--fee-rate",
+            "1",
+            "--max-requests",
+            "6",
+        ])
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut server = KillOnDrop(server);
+    let relay_url = {
+        use std::io::BufRead;
+        let mut line = String::new();
+        std::io::BufReader::new(server.0.stdout.take().unwrap())
+            .read_line(&mut line)
+            .unwrap();
+        let start = line.find("http://").unwrap();
+        line[start..].split_whitespace().next().unwrap().to_string()
+    };
+    let info: serde_json::Value = ureq::get(&format!("{relay_url}/info"))
+        .call()
+        .unwrap()
+        .into_json()
+        .unwrap();
+    assert_eq!(info["deployment"], "a-e2e");
+    assert_eq!(info["family"], "a-halo2");
+    assert_eq!(info["network"], "regtest");
+    cli.fails(
+        &[
+            "send",
+            "--name",
+            "alice",
+            "--to",
+            &bob_shielded,
+            "--amount",
+            "50",
+            "--relay",
+            &relay_url,
+            "--no-broadcast",
+        ],
+        "cannot be used with",
+    );
+    let relayed = cli.ok(&[
+        "send",
+        "--name",
+        "alice",
+        "--to",
+        &bob_shielded,
+        "--amount",
+        "50",
+        "--relay",
+        &relay_url,
+    ]);
+    assert!(relayed.contains("relayed by"), "{relayed}");
+    let relayed_label = label_of(&relayed);
+    cli.fails(
+        &["publish", &relayed_label, "--relay", &relay_url],
+        "already relayed",
+    );
+    let mint_label = label_of(&cli.ok(&[
+        "mint",
+        "--name",
+        "alice",
+        "--amount",
+        "70",
+        "--no-broadcast",
+    ]));
+    cli.fails(
+        &["publish", &mint_label, "--relay", &relay_url],
+        "pays the vault",
+    );
+    let mut tampered = hex::decode(
+        std::fs::read_to_string(dir.join("outbox").join(format!("{relayed_label}.hex"))).unwrap(),
+    )
+    .unwrap();
+    let last = tampered.len() - 1;
+    tampered[last] ^= 1;
+    let post = |body: &str| -> (u16, String) {
+        match ureq::post(&format!("{relay_url}/relay")).send_string(body) {
+            Ok(r) => (200, r.into_string().unwrap()),
+            Err(ureq::Error::Status(c, r)) => (c, r.into_string().unwrap()),
+            Err(e) => panic!("{e}"),
+        }
+    };
+    let (code, text) = post(&format!("{{\"envelope\":\"{}\"}}", hex::encode(&tampered)));
+    assert!(code == 400 && text.contains("rejected"), "{code} {text}");
+    let (code, text) = post("not json");
+    assert!(code == 400 && text.contains("bad request"), "{code} {text}");
+    let status = ureq::get(&format!("{relay_url}/nothing"))
+        .call()
+        .unwrap_err();
+    assert!(matches!(status, ureq::Error::Status(404, _)));
+    assert!(server.0.wait().unwrap().success());
+    mine(3);
+    cli.ok(&["sync"]);
+    assert_eq!(balance(&cli.ok(&["scan", "--name", "alice"])), 2950);
+    assert_eq!(balance(&cli.ok(&["scan", "--name", "bob"])), 850);
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("pass"), "pw\n").unwrap();
