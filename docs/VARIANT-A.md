@@ -269,7 +269,7 @@ implementation of the paper? Rules this repository adopts:
 7. **CI** builds and tests the paper workspace and every variant;
    heavy variant builds get their own job so the paper's job stays as
    it is. A's crates are built and unit-tested inside the workspace job;
-   its end-to-end test through `sb` (ten minutes of proving on the
+   its end-to-end test through `sb` (five minutes of proving on the
    laptop, several times that on a CI runner, twice if it were also
    under the coverage pass) has its own job since 3 November 2026 and is
    out of the coverage figure.

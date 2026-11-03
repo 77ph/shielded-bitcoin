@@ -4,6 +4,8 @@
 //! `publish --reveal`, a relayer publishing pairs, and an OP_RETURN
 //! deployment that sees none of it.
 
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -109,9 +111,8 @@ impl Drop for KillOnDrop {
 
 #[test]
 fn witness_deployment_end_to_end() {
-    let dir = std::env::temp_dir().join(format!("sb-witness-e2e-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    let tmp = common::TempDir::new("witness-e2e");
+    let dir = tmp.path().to_path_buf();
     std::fs::write(dir.join("pass"), "pw\n").unwrap();
     let mut chain = MockChain::new(10);
     chain.push_block(vec![]);
@@ -433,5 +434,4 @@ fn witness_deployment_end_to_end() {
     shared.mine(16);
     cli.ok(&["sync"]);
     assert_eq!(balance(&cli.ok(&["scan", "--name", "bob"])), 1800);
-    std::fs::remove_dir_all(&dir).unwrap();
 }

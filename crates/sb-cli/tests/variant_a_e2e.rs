@@ -4,6 +4,8 @@
 //! the OP_RETURN carrier and on the witness carrier; the paper profile's
 //! commands stay untouched.
 
+mod common;
+
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -110,9 +112,8 @@ fn balance(text: &str) -> u64 {
 /// once, on the deployment's default carrier, to keep the test's proving
 /// time in bounds.
 fn cycle(carrier: &str, tag: &str, full: bool) {
-    let dir = std::env::temp_dir().join(format!("sb-a-e2e-{tag}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    let tmp = common::TempDir::new(&format!("a-e2e-{tag}"));
+    let dir = tmp.path().to_path_buf();
     std::fs::write(dir.join("pass"), "pw\n").unwrap();
     let mut chain = MockChain::new(10);
     chain.push_block(vec![]);
@@ -328,7 +329,6 @@ fn cycle(carrier: &str, tag: &str, full: bool) {
     );
     assert_eq!(balance(&cli.ok(&["scan", "--name", "operator"])), 1100);
     if !full {
-        let _ = std::fs::remove_dir_all(&dir);
         return;
     }
     // --no-broadcast writes the outbox only; a third party (alice's fee
@@ -615,237 +615,6 @@ fn cycle(carrier: &str, tag: &str, full: bool) {
         "no publisher",
     );
     drop(api);
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join("pass"), "pw\n").unwrap();
-    let mut chain = MockChain::new(10);
-    chain.push_block(vec![]);
-    chain.push_block(vec![]);
-    let shared = Shared::new(chain);
-    let http = FakeHttp::start(shared.clone());
-    let cli = Cli {
-        data: dir.clone(),
-        profile: dir.join("profile-a.json"),
-        chain: format!("esplora:{}", http.esplora_url()),
-    };
-    let mut salt = 100u32;
-    let mut mine = |n: u32| {
-        for _ in 0..n {
-            salt += 1;
-            shared.mine(salt);
-        }
-    };
-
-    // a family-A profile: the operator wallet first for the vault script
-    cli.ok(&[
-        "profile-new",
-        "--family",
-        "a-halo2",
-        "--name",
-        "a-e2e",
-        "--network",
-        "regtest",
-        "--activation",
-        "12",
-    ]);
-    let op = cli.ok(&["wallet-new", "--name", "operator"]);
-    let op_funding = field(&op, "funding address:").to_string();
-    let op_shielded = field(&op, "shielded address:").to_string();
-    assert!(op_shielded.starts_with("rsba1"), "{op_shielded}");
-    let written = cli.ok(&[
-        "profile-new",
-        "--family",
-        "a-halo2",
-        "--name",
-        "a-e2e",
-        "--network",
-        "regtest",
-        "--activation",
-        "12",
-        "--vault-script",
-        &hex::encode(script_of(&op_funding).as_bytes()),
-        "--operator-address",
-        &op_shielded,
-        "--carrier",
-        carrier,
-    ]);
-    assert!(written.contains("\"family\": \"a-halo2\""), "{written}");
-    assert!(written.contains("\"transfer_k\": 14"), "{written}");
-    cli.fails(
-        &[
-            "profile-new",
-            "--family",
-            "b-stark",
-            "--name",
-            "x",
-            "--network",
-            "regtest",
-            "--activation",
-            "12",
-        ],
-        "unknown family",
-    );
-    let alice = cli.ok(&["wallet-new", "--name", "alice"]);
-    let alice_funding = field(&alice, "funding address:").to_string();
-    let bob = cli.ok(&["wallet-new", "--name", "bob"]);
-    let bob_shielded = field(&bob, "shielded address:").to_string();
-    let bob_funding = field(&bob, "funding address:").to_string();
-    assert!(
-        cli.ok(&["address", "--name", "bob", "--new"])
-            .contains("receive path")
-    );
-    // a paper-profile address (HRP `rsb`) is refused by the family's codec
-    let paper_addr = sb_core::keys::WalletKeys::from_seed(&sb_core::keys::Seed([9u8; 32]))
-        .ivk
-        .find_address(0)
-        .1
-        .encode(sb_core::address::Network::Regtest);
-    cli.fails(
-        &[
-            "send",
-            "--name",
-            "alice",
-            "--to",
-            &paper_addr,
-            "--amount",
-            "1",
-        ],
-        "human-readable",
-    );
-
-    assert!(cli.ok(&["status"]).contains("family a-halo2"));
-    mine(1); // 12 = activation
-    assert!(cli.ok(&["sync"]).contains("replayed to Some(12)"));
-    cli.fails(
-        &["mint", "--name", "alice", "--amount", "5000"],
-        "no confirmed coins",
-    );
-    shared.fund(&script_of(&alice_funding), 300_000);
-    mine(1);
-    let minted = cli.ok(&["mint", "--name", "alice", "--amount", "5000"]);
-    assert!(minted.contains("envelope (89 bytes)"), "{minted}");
-    mine(3);
-    let synced = cli.ok(&["sync"]);
-    assert!(synced.contains("accepted: 1"), "{synced}");
-    let scan = cli.ok(&["scan", "--name", "alice"]);
-    assert_eq!(balance(&scan), 5000, "{scan}");
-
-    // alice pays bob 2000 (change 3000)
-    let sent = cli.ok(&[
-        "send",
-        "--name",
-        "alice",
-        "--to",
-        &bob_shielded,
-        "--amount",
-        "2000",
-    ]);
-    assert!(sent.contains("envelope (4924 bytes)"), "{sent}");
-    if carrier == "witness" {
-        assert!(sent.contains("vB for the pair"), "{sent}");
-    } else {
-        assert!(sent.contains("broadcast"), "{sent}");
-    }
-    assert_eq!(
-        balance(&cli.ok(&["scan", "--name", "alice"])),
-        0,
-        "inputs locked while pending"
-    );
-    mine(3);
-    let synced = cli.ok(&["sync"]);
-    assert!(synced.contains("accepted: 1"), "{synced}");
-    assert_eq!(balance(&cli.ok(&["scan", "--name", "alice"])), 3000);
-    assert_eq!(balance(&cli.ok(&["scan", "--name", "bob"])), 2000);
-    // bob pays the operator 500 with change back, his own fee coins paying the carrier
-    shared.fund(&script_of(&bob_funding), 100_000);
-    mine(1);
-    let sent = cli.ok(&[
-        "send",
-        "--name",
-        "bob",
-        "--to",
-        &op_shielded,
-        "--amount",
-        "500",
-    ]);
-    assert!(sent.contains("envelope (4924 bytes)"), "{sent}");
-    mine(3);
-    cli.ok(&["sync"]);
-    assert_eq!(balance(&cli.ok(&["scan", "--name", "bob"])), 1500);
-    assert_eq!(balance(&cli.ok(&["scan", "--name", "operator"])), 500);
-    let status = cli.ok(&["status"]);
-    assert!(status.contains("accepted 3, rejected 0"), "{status}");
-    // the development boundary's exit: bob withdraws 600 to alice's funding
-    // address (dust and a foreign-network address refused first); the
-    // operator finds the request next to the envelope and pays it
-    cli.fails(
-        &[
-            "withdraw",
-            "--name",
-            "bob",
-            "--amount",
-            "100",
-            "--to",
-            &alice_funding,
-        ],
-        "dust",
-    );
-    cli.fails(
-        &[
-            "withdraw",
-            "--name",
-            "bob",
-            "--amount",
-            "600",
-            "--to",
-            "tb1qxtws5pnknuvxqhp9w6uvvcq6uyc3frszw83xjz",
-        ],
-        "not valid on",
-    );
-    let w = cli.ok(&[
-        "withdraw",
-        "--name",
-        "bob",
-        "--amount",
-        "600",
-        "--to",
-        &alice_funding,
-    ]);
-    assert!(w.contains("operator pays"), "{w}");
-    mine(3);
-    cli.ok(&["sync"]);
-    assert_eq!(balance(&cli.ok(&["scan", "--name", "bob"])), 900);
-    let listed = cli.ok(&["payouts", "--name", "operator", "--no-broadcast"]);
-    assert!(listed.contains("1 pending"), "{listed}");
-    let paid = cli.ok(&["payouts", "--name", "operator"]);
-    assert!(paid.contains("paid in"), "{paid}");
-    mine(1);
-    let got: Vec<u64> = shared
-        .utxos(&script_of(&alice_funding))
-        .into_iter()
-        .map(|(_, v, _)| v)
-        .collect();
-    assert!(got.contains(&600), "{got:?}");
-    assert!(
-        cli.ok(&["payouts", "--name", "operator"])
-            .contains("0 pending")
-    );
-    assert_eq!(balance(&cli.ok(&["scan", "--name", "operator"])), 1100);
-    // --no-broadcast writes the outbox only; unlock releases the inputs
-    let out = cli.ok(&[
-        "send",
-        "--name",
-        "bob",
-        "--to",
-        &op_shielded,
-        "--amount",
-        "100",
-        "--no-broadcast",
-    ]);
-    assert!(out.contains("not broadcast"), "{out}");
-    assert_eq!(balance(&cli.ok(&["scan", "--name", "bob"])), 0);
-    assert_eq!(balance(&cli.ok(&["unlock", "--name", "bob"])), 900);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
