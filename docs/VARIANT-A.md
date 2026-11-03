@@ -316,9 +316,11 @@ implementation of the paper? Rules this repository adopts:
   Tests: unit tests per crate, a real transfer proven and verified, a
   mock-chain replay with every rejection class and a reorganisation, a
   wallet flow, and `sb` end to end on the fake node on both carriers
-  (`crates/sb-cli/tests/variant_a_e2e.rs`). The transfer only; swap,
-  batch, fee vault and relayer come after, by the same procedure as for
-  the paper. Test vectors for the family: with S5.
+  (`crates/sb-cli/tests/variant_a_e2e.rs`). The transfer and, since 3
+  November, the development boundary's `withdraw` and `payouts` (the
+  payout memo next to the envelope, as `BOUNDARY.md`); swap, batch, fee
+  vault and relayer come after, by the same procedure as for the paper.
+  Test vectors for the family: with S5.
 * **S5, a run on signet**: done (1 November 2026, `RUNS.md`): deployment
   `signet-a-1` on public signet, witness carrier, a mint and two
   transfers as commit-and-reveal pairs, reveals of 1 356 vB; the
