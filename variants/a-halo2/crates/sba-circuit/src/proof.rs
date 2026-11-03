@@ -80,6 +80,7 @@ impl TransferParams {
         let circuit = TransferCircuit {
             statement: Some(statement.clone()),
             witness: Some(witness.clone()),
+            negate_g_d: false,
         };
         let instance = statement.to_field_elements();
         let mut transcript = Blake2bWrite::<_, vesta::Affine, _>::init(vec![]);

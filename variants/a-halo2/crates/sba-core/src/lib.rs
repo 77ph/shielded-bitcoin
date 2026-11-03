@@ -16,7 +16,7 @@ pub use sba_primitives::{Affine, Fp, Point, Scalar};
 
 /// Version of docs/PROFILE-A.md this code implements; a deployment profile
 /// names it and is refused on mismatch (PROFILE-A.md §13).
-pub const PROFILE_VERSION: &str = "a-0.1";
+pub const PROFILE_VERSION: &str = "a-0.2";
 /// The family name a deployment profile carries (`VARIANT-A.md` §6.2).
 pub const FAMILY: &str = "a-halo2";
 

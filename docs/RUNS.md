@@ -396,8 +396,9 @@ that these four were all of them.
 The first run of a family-A deployment (`VARIANT-A.md`, `PROFILE-A.md`):
 Halo 2 transfer proofs of 4 416 bytes with no trusted setup, 4 924-byte
 envelopes in the witness of a reveal transaction. Profile
-`variants/a-halo2/deployments/signet-a-1.json` (`transfer_vk_id` as
-pinned in `TEST_VECTORS-A.md`), mempool.space Esplora as the chain
+`signet-a-1` (profile a-0.1, `transfer_vk_id` as `TEST_VECTORS-A.md`
+pinned it then; the file is in git history at fa583ff, since the profile
+moved to a-0.2 after the review's parity finding of 3 November), mempool.space Esplora as the chain
 source, 1 sat/vB, anchor depth 3. The development vault is alice's own
 funding script, as in the swap drill, so the mint's vault payment
 returned to her fee coins; those came from the paper deployment's
