@@ -249,6 +249,62 @@ fn cycle(carrier: &str, tag: &str) {
     assert_eq!(balance(&cli.ok(&["scan", "--name", "operator"])), 500);
     let status = cli.ok(&["status"]);
     assert!(status.contains("accepted 3, rejected 0"), "{status}");
+    // the development boundary's exit: bob withdraws 600 to alice's funding
+    // address (dust and a foreign-network address refused first); the
+    // operator finds the request next to the envelope and pays it
+    cli.fails(
+        &[
+            "withdraw",
+            "--name",
+            "bob",
+            "--amount",
+            "100",
+            "--to",
+            &alice_funding,
+        ],
+        "dust",
+    );
+    cli.fails(
+        &[
+            "withdraw",
+            "--name",
+            "bob",
+            "--amount",
+            "600",
+            "--to",
+            "tb1qxtws5pnknuvxqhp9w6uvvcq6uyc3frszw83xjz",
+        ],
+        "not valid on",
+    );
+    let w = cli.ok(&[
+        "withdraw",
+        "--name",
+        "bob",
+        "--amount",
+        "600",
+        "--to",
+        &alice_funding,
+    ]);
+    assert!(w.contains("operator pays"), "{w}");
+    mine(3);
+    cli.ok(&["sync"]);
+    assert_eq!(balance(&cli.ok(&["scan", "--name", "bob"])), 900);
+    let listed = cli.ok(&["payouts", "--name", "operator", "--no-broadcast"]);
+    assert!(listed.contains("1 pending"), "{listed}");
+    let paid = cli.ok(&["payouts", "--name", "operator"]);
+    assert!(paid.contains("paid in"), "{paid}");
+    mine(1);
+    let got: Vec<u64> = shared
+        .utxos(&script_of(&alice_funding))
+        .into_iter()
+        .map(|(_, v, _)| v)
+        .collect();
+    assert!(got.contains(&600), "{got:?}");
+    assert!(
+        cli.ok(&["payouts", "--name", "operator"])
+            .contains("0 pending")
+    );
+    assert_eq!(balance(&cli.ok(&["scan", "--name", "operator"])), 1100);
     // --no-broadcast writes the outbox only; unlock releases the inputs
     let out = cli.ok(&[
         "send",
@@ -262,7 +318,7 @@ fn cycle(carrier: &str, tag: &str) {
     ]);
     assert!(out.contains("not broadcast"), "{out}");
     assert_eq!(balance(&cli.ok(&["scan", "--name", "bob"])), 0);
-    assert_eq!(balance(&cli.ok(&["unlock", "--name", "bob"])), 1500);
+    assert_eq!(balance(&cli.ok(&["unlock", "--name", "bob"])), 900);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
