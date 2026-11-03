@@ -3,6 +3,8 @@
 //! rule, a restart with a pending draw (I3), the operator's backing guard
 //! (I2), a top-up and a reclaim.
 
+mod common;
+
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -242,9 +244,8 @@ fn draw_message(name: &str, h_body: &[u8; 32], max_fee: u64, memo: &[u8]) -> [u8
 
 #[test]
 fn fee_vault_end_to_end() {
-    let dir = std::env::temp_dir().join(format!("sb-fee-vault-e2e-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    let tmp = common::TempDir::new("fee-vault-e2e");
+    let dir = tmp.path().to_path_buf();
     std::fs::write(dir.join("pass"), "pw\n").unwrap();
     let mut chain = MockChain::new(10);
     chain.push_block(vec![]);
@@ -733,5 +734,4 @@ fn fee_vault_end_to_end() {
         status.contains(&format!("earned: {} sat", fee1 + fee2 + est_transfer)),
         "{status}"
     );
-    let _ = std::fs::remove_dir_all(&dir);
 }

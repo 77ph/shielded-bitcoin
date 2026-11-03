@@ -187,7 +187,7 @@ tests best effort, variant A's crates included): **91.7 % of lines,
 variant's crates were at 88.9 % (the fixed-base tables the ECC chip
 requires but the circuit never calls stay uncovered). Since 3 November
 the variant's command-line crate and its end-to-end test (`sb` on both
-carriers, ten minutes of proving) run in their own CI job and are
+carriers, minutes of proving) run in their own CI job and are
 excluded from the measured set. CI fails below 90 % of lines. The ceremony commands on the full-size circuit run only with
 `SB_CEREMONY_FULL=1` (minutes) and are not counted. The in-process fake Esplora / RPC / Electrum servers
 (`sb-indexer/src/chain/fake.rs`) are test support and are excluded. `sb serve` runs in the tests as a subprocess that is stopped by a

@@ -2,6 +2,8 @@
 //! pinned to the ceremony's keys proving a real transfer on the fake node.
 //! Minutes of work, so it runs only with `SB_CEREMONY_FULL` set.
 
+mod common;
+
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -58,9 +60,8 @@ fn ceremony_commands_and_a_ceremony_profile() {
         eprintln!("set SB_CEREMONY_FULL=1 to run the ceremony end to end");
         return;
     }
-    let dir = std::env::temp_dir().join(format!("sb-ceremony-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    let tmp = common::TempDir::new("ceremony");
+    let dir = tmp.path().to_path_buf();
     let p = |name: &str| -> String { dir.join(name).display().to_string() };
 
     // phase 1: two participants
@@ -544,5 +545,4 @@ fn ceremony_commands_and_a_ceremony_profile() {
     );
     // an insecure-seed proof does not verify under the ceremony key
     let _ = PathBuf::from(&profile);
-    std::fs::remove_dir_all(&dir).unwrap();
 }

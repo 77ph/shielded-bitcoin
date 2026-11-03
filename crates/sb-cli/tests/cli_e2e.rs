@@ -2,6 +2,8 @@
 //! Electrum servers over a mock chain: profile, wallets, mint, private
 //! payment, withdraw, operator payout, every backend and the error paths.
 
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -110,9 +112,8 @@ fn balance(text: &str) -> u64 {
 
 #[test]
 fn full_cycle_on_fake_node() {
-    let dir = std::env::temp_dir().join(format!("sb-cli-e2e-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    let tmp = common::TempDir::new("cli-e2e");
+    let dir = tmp.path().to_path_buf();
     std::fs::write(dir.join("pass"), "test passphrase\n").unwrap();
     let mut chain = MockChain::new(10);
     chain.push_block(vec![]);
@@ -960,6 +961,5 @@ fn full_cycle_on_fake_node() {
         assert!(text.contains("SyncReport"));
         assert!(cli.ok(&["--db", &conn, "status"]).contains("Mint"));
     }
-    std::fs::remove_dir_all(&dir).unwrap();
     let _ = Path::new("");
 }

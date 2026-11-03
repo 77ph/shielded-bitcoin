@@ -3,6 +3,8 @@
 //! direct, a proxy that is down fails the command, a separate publication
 //! route, a delayed broadcast, the deployment's anchor depth.
 
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
@@ -128,9 +130,8 @@ fn anchor_of(text: &str) -> u32 {
 
 #[test]
 fn proxy_route_delay_and_anchor_policy() {
-    let dir = std::env::temp_dir().join(format!("sb-publication-e2e-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    let tmp = common::TempDir::new("publication-e2e");
+    let dir = tmp.path().to_path_buf();
     std::fs::write(dir.join("pass"), "pw\n").unwrap();
     let mut chain = MockChain::new(10);
     chain.push_block(vec![]);
@@ -428,5 +429,4 @@ fn proxy_route_delay_and_anchor_policy() {
     direct
         .with(&["--delay", "5-2"])
         .fails(&["status"], "hi below lo");
-    let _ = std::fs::remove_dir_all(&dir);
 }

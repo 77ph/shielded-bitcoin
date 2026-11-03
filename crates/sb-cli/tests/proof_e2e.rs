@@ -4,6 +4,8 @@
 //! same balances, spends from its own note tree, and refuses a tampered
 //! proven block.
 
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -133,9 +135,8 @@ fn client(dir: &Path, name: &str, profile: &Path, chain: String) -> Cli {
 
 #[test]
 fn light_client_syncs_from_proofs() {
-    let dir = std::env::temp_dir().join(format!("sb-proof-e2e-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    let tmp = common::TempDir::new("proof-e2e");
+    let dir = tmp.path().to_path_buf();
     std::fs::write(dir.join("pass"), "pw\n").unwrap();
     let mut chain = MockChain::new(10);
     chain.push_block(vec![]);
@@ -452,5 +453,4 @@ fn light_client_syncs_from_proofs() {
     indexer.ok(&["prove-batches"]);
     light.fails(&["sync"], "diverged");
     drop(server);
-    let _ = std::fs::remove_dir_all(&dir);
 }
