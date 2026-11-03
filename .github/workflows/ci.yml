@@ -25,7 +25,8 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets --release -- -D warnings
       - run: cargo build --release --workspace
-      - run: cargo test --release --workspace
+      # The variant's end-to-end test has its own job below.
+      - run: cargo test --release --workspace -- --skip variant_a_cycle
       # The PostgreSQL store against a real database (ephemeral service above).
       - run: cargo test -p sb-indexer --release --test pg_store -- --ignored
         env:
@@ -39,11 +40,21 @@ jobs:
       - uses: taiki-e/install-action@cargo-llvm-cov
       - run: >-
           cargo llvm-cov --workspace --release --ignore-run-fail
-          --ignore-filename-regex 'chain/fake\.rs'
+          --ignore-filename-regex 'chain/fake\.rs|variants/a-halo2/crates/sba-cli/'
           --fail-under-lines 90
-          -- --include-ignored
+          -- --include-ignored --skip variant_a_cycle
         env:
           SB_TEST_PG: postgresql://postgres:postgres@localhost:5432/shielded_bitcoin
+  # Variant A end to end through `sb` on both carriers (docs/VARIANT-A.md §6.7):
+  # its own job, so the paper's job keeps its length; the variant's crates
+  # are unit-tested and measured in the job above, its CLI only here.
+  variant-a:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --release -p sb-cli --test variant_a_e2e
   # The static binary (README "Static build") must keep building.
   static:
     runs-on: ubuntu-latest

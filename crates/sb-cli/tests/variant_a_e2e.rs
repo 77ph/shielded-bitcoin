@@ -105,7 +105,11 @@ fn balance(text: &str) -> u64 {
         .unwrap()
 }
 
-fn cycle(carrier: &str, tag: &str) {
+/// `full`: also the parts that do not depend on the carrier (third-party
+/// publication, the relayer, the indexer API and the light client); run
+/// once, on the deployment's default carrier, to keep the test's proving
+/// time in bounds.
+fn cycle(carrier: &str, tag: &str, full: bool) {
     let dir = std::env::temp_dir().join(format!("sb-a-e2e-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -323,6 +327,10 @@ fn cycle(carrier: &str, tag: &str) {
             .contains("0 pending")
     );
     assert_eq!(balance(&cli.ok(&["scan", "--name", "operator"])), 1100);
+    if !full {
+        let _ = std::fs::remove_dir_all(&dir);
+        return;
+    }
     // --no-broadcast writes the outbox only; a third party (alice's fee
     // coins) publishes it later; bob's inputs stay locked until then
     let out = cli.ok(&[
@@ -842,10 +850,10 @@ fn cycle(carrier: &str, tag: &str) {
 
 #[test]
 fn variant_a_cycle_on_the_op_return_carrier() {
-    cycle("op-return", "opret");
+    cycle("op-return", "opret", false);
 }
 
 #[test]
 fn variant_a_cycle_on_the_witness_carrier() {
-    cycle("witness", "wit");
+    cycle("witness", "wit", true);
 }

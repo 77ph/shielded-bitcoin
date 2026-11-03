@@ -184,10 +184,11 @@ cargo llvm-cov --workspace --release --ignore-run-fail \
 Measured in CI on 1 November 2026 (PostgreSQL included, live network
 tests best effort, variant A included): **91.6 % of lines, 88.6 % of
 regions**; the paper crates alone stay at about 92 % of lines, the
-variant's 3 580 lines are at 88.9 % (the gaps: `sba-cli` commands the
-end-to-end test does not run, the payout memo module no variant command
-uses yet, and the fixed-base tables the ECC chip requires but the circuit
-never calls). CI fails below 90 % of lines. The ceremony commands on the full-size circuit run only with
+variant's crates were at 88.9 % (the fixed-base tables the ECC chip
+requires but the circuit never calls stay uncovered). Since 3 November
+the variant's command-line crate and its end-to-end test (`sb` on both
+carriers, ten minutes of proving) run in their own CI job and are
+excluded from the measured set. CI fails below 90 % of lines. The ceremony commands on the full-size circuit run only with
 `SB_CEREMONY_FULL=1` (minutes) and are not counted. The in-process fake Esplora / RPC / Electrum servers
 (`sb-indexer/src/chain/fake.rs`) are test support and are excluded. `sb serve` runs in the tests as a subprocess that is stopped by a
 signal, so its lines are not recorded. What stays uncovered otherwise is
