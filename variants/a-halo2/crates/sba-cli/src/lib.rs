@@ -6,6 +6,7 @@
 //! wallet (witness carrier or OP_RETURN) or to the outbox.
 
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Parser, Subcommand, ValueEnum};
@@ -15,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use sb_common::carrier::{CarrierMode, carrier_output, memo_output};
 use sb_common::chain::ChainSource;
 use sb_common::chain::esplora::Esplora;
+use sb_common::chain::light::LightSource;
 use sb_common::chain::rpc::BitcoinCoreRpc;
 use sb_common::funding::{self, FundingState, FundingWallet};
 use sb_common::witness;
@@ -27,6 +29,7 @@ use sba_primitives::encoding::fp_to_bytes;
 use sba_wallet::{Wallet, anchor_for};
 
 mod relay;
+mod serve;
 
 /// The family this crate implements, as a deployment profile names it.
 pub const FAMILY: &str = sba_core::FAMILY;
@@ -75,7 +78,7 @@ struct Cli {
     data_dir: PathBuf,
     #[arg(long, global = true)]
     passphrase_file: Option<PathBuf>,
-    /// Block source: `esplora:<url>`, `electrum:…`, `rpc:<url>:<user>:<pass>`, `rpc-cookie:<url>:<cookie-path>`.
+    /// Block source: `esplora:<url>`, `electrum:…`, `rpc:<url>:<user>:<pass>`, `rpc-cookie:<url>:<cookie-path>`, or verified sync from an `sb serve` indexer of this family: `light:<url>` (`light:<url>|<full source>` also checks block hashes there).
     #[arg(
         long,
         global = true,
@@ -221,6 +224,14 @@ enum Cmd {
         /// Hand the envelope to a sponsored relayer (`http://host:port`) instead of paying the carrier.
         #[arg(long)]
         relay: Option<String>,
+    },
+    /// Serve the indexer API for verified-sync clients (`--chain light:<url>`).
+    Serve {
+        #[arg(long, default_value = "127.0.0.1:8788")]
+        listen: String,
+        /// Exit after this many requests (tests).
+        #[arg(long)]
+        max_requests: Option<u32>,
     },
     /// Run a sponsored relayer: publish other people's transfers from this wallet's fee coins.
     RelayServe {
@@ -374,12 +385,41 @@ impl Ctx {
     }
 
     fn chain_source(&self) -> Result<Box<dyn ChainSource>> {
-        Self::full_source(&self.chain)
+        match self.light_source()? {
+            Some(l) => Ok(Box::new(l)),
+            None => Self::full_source(&self.chain),
+        }
     }
 
-    /// UTXO lookup and broadcast through `--publish-via` or `--chain`.
+    /// `light:<url>[|<full source>]`: verified sync from an `sb serve`
+    /// indexer of this family, with block hashes cross-checked against the
+    /// full source when one is given.
+    fn light_source(&self) -> Result<Option<Rc<LightSource>>> {
+        let Some(rest) = self.chain.strip_prefix("light:") else {
+            return Ok(None);
+        };
+        let (url, headers) = match rest.split_once('|') {
+            Some((u, h)) => (u, Some(Self::full_source(h)?)),
+            None => (rest, None),
+        };
+        Ok(Some(Rc::new(LightSource::new(url, headers))))
+    }
+
+    /// UTXO lookup and broadcast through `--publish-via` or `--chain` (for
+    /// `light:`, through its full source; a relayer needs none).
     fn publisher(&self) -> Result<Box<dyn funding::Publisher>> {
-        let spec = self.publish_via.as_deref().unwrap_or(&self.chain);
+        let spec = match self.publish_via.as_deref() {
+            Some(s) => s,
+            None => match self.chain.strip_prefix("light:") {
+                Some(rest) => match rest.split_once('|') {
+                    Some((_, full)) => full,
+                    None => bail!(
+                        "light:<url> has no publisher: add |<full source>, --publish-via, or publish through --relay"
+                    ),
+                },
+                None => self.chain.as_str(),
+            },
+        };
         if let Some(url) = spec.strip_prefix("esplora:") {
             return Ok(Box::new(funding::EsploraPublisher::new(url)));
         }
@@ -787,10 +827,41 @@ pub fn run(args: Vec<String>) -> Result<()> {
         }
         Cmd::Sync => {
             let (mut idx, mut store) = ctx.indexer()?;
-            let chain = ctx.chain_source()?;
+            let light = ctx.light_source()?;
+            let chain: Box<dyn ChainSource> = match &light {
+                Some(l) => Box::new(l.clone()),
+                None => ctx.chain_source()?,
+            };
             let r = idx.sync_with(chain.as_ref(), Some(store.as_mut()))?;
             println!("{r:?}");
+            if let Some(l) = light {
+                let n =
+                    l.verify_claims(|h| idx.root_at(h).map(|r| hex::encode(fp_to_bytes(&r))))?;
+                println!("the indexer's claimed roots agree with local replay for {n} block(s)");
+            }
             print_status(&idx);
+        }
+        Cmd::Serve {
+            listen,
+            max_requests,
+        } => {
+            let (indexer, store) = ctx.indexer()?;
+            let chain = ctx.chain_source()?;
+            let listener = std::net::TcpListener::bind(&listen)
+                .with_context(|| format!("listen on {listen}"))?;
+            println!(
+                "indexer API on http://{} (deployment {}, family {}): GET /tip, /block/<height|hash>",
+                listener.local_addr()?,
+                ctx.deployment.name,
+                FAMILY
+            );
+            std::io::Write::flush(&mut std::io::stdout())?;
+            serve::Server {
+                indexer,
+                store,
+                chain,
+            }
+            .serve(listener, max_requests)?;
         }
         Cmd::Status => print_status(&ctx.indexer()?.0),
         Cmd::Scan { name } => {

@@ -320,8 +320,10 @@ implementation of the paper? Rules this repository adopts:
   November, the development boundary's `withdraw` and `payouts` (the
   payout memo next to the envelope, as `BOUNDARY.md`), `publish` from the
   outbox (third-party funding) and the sponsored relayer (`relay-serve`,
-  `--relay`, the paper's wire format); swap, batch and the fee vault come
-  after, by the same procedure as for the paper.
+  `--relay`, the paper's wire format), the indexer API and the verified
+  light sync from it (`serve`, `--chain light:<url>[|<full source>]`, the
+  shared `BlockView` and `LightSource` of `sb-common`); swap, batch and
+  the fee vault come after, by the same procedure as for the paper.
   Test vectors for the family: with S5.
 * **S5, a run on signet**: done (1 November 2026, `RUNS.md`): deployment
   `signet-a-1` on public signet, witness carrier, a mint and two
