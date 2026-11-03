@@ -288,3 +288,88 @@ fn mint_spend_reject_reorg_and_persist() {
     // the orphaned transfer is valid again on the new branch
     assert!(idx.check_transfer(&bytes, 1003).unwrap().is_some());
 }
+
+/// A block's transfer proofs are verified as one batch (`REPLAY-PROOF-A.md`
+/// §2); when the batch fails the block is replayed sequentially, so the
+/// outcome is the normative one: the bad proof alone is rejected, with its
+/// reason, and the good transfers around it stand in order.
+#[test]
+fn a_block_with_a_bad_proof_is_replayed_sequentially() {
+    let mut w = World::new();
+    let (_, alice0) = w.alice.ivk.find_address(0);
+    let (_, bob0) = w.bob.ivk.find_address(0);
+    let mut chain = MockChain::new(ACTIVATION);
+    let mut idx = w.indexer();
+
+    // block 1000: two mints to alice (positions 0 and 1); 1001: empty
+    let (m0, _) = w.mint_tx(&alice0, 1000);
+    let (m1, _) = w.mint_tx(&alice0, 500);
+    chain.push_block(vec![m0, m1]);
+    chain.push_block(vec![]);
+    idx.sync(&chain).unwrap();
+    let notes: Vec<(NotePlaintext, Fp)> = idx.state.events[..2]
+        .iter()
+        .map(|ev| {
+            let (pk_eph, ct) = &ev.outputs[0];
+            (
+                decrypt_as_recipient(&w.alice.ivk.sk_view, pk_eph, ct).unwrap(),
+                ev.h_body,
+            )
+        })
+        .collect();
+
+    // block 1002: a valid spend of note 0, a spend of note 1 with a tampered
+    // proof, and a valid dummy-only transfer, all anchored at 1001
+    let a = w.transfer(
+        &idx,
+        1001,
+        Some((notes[0].0, notes[0].1, 0, 0)),
+        [(bob0, 700), (alice0, 300)],
+    );
+    let mut b = w.transfer(
+        &idx,
+        1001,
+        Some((notes[1].0, notes[1].1, 0, 1)),
+        [(bob0, 500), (alice0, 0)],
+    );
+    b.proof[1234] ^= 0x80;
+    let c = w.transfer(&idx, 1001, None, [(bob0, 0), (bob0, 0)]);
+    chain.push_block(vec![
+        tx_with(vec![carrier_output(&a.to_bytes())]),
+        tx_with(vec![carrier_output(&b.to_bytes())]),
+        tx_with(vec![carrier_output(&c.to_bytes())]),
+    ]);
+    let r = idx.sync(&chain).unwrap();
+    assert_eq!((r.accepted, r.rejected), (2, 1));
+    assert_eq!(idx.state.tree.size(), 2 + 4);
+    // the mock chain's coinbase is tx 0: the carriers are 1, 2, 3
+    assert_eq!(idx.state.rejections.len(), 1);
+    assert_eq!(idx.state.rejections[0].tx_index, 2);
+    assert!(
+        idx.state.rejections[0].reason.contains("proof"),
+        "{}",
+        idx.state.rejections[0].reason
+    );
+    assert_eq!(idx.state.events[2].tx_index, 1);
+    assert_eq!(idx.state.events[3].tx_index, 3);
+    // note 1 is still unspent after the undo: the same spend with a good
+    // proof is accepted in the next block, together with another valid one
+    let b_good = w.transfer(
+        &idx,
+        1002,
+        Some((notes[1].0, notes[1].1, 0, 1)),
+        [(bob0, 500), (alice0, 0)],
+    );
+    let d = w.transfer(&idx, 1002, None, [(bob0, 0), (bob0, 0)]);
+    chain.push_block(vec![
+        tx_with(vec![carrier_output(&b_good.to_bytes())]),
+        tx_with(vec![carrier_output(&d.to_bytes())]),
+    ]);
+    let r = idx.sync(&chain).unwrap();
+    assert_eq!((r.accepted, r.rejected), (2, 0));
+    assert_eq!(idx.state.tree.size(), 6 + 4);
+    // a fresh replay of the same chain lands in the same state
+    let mut fresh = w.indexer();
+    fresh.sync(&chain).unwrap();
+    assert_eq!(fresh.state.to_json(), idx.state.to_json());
+}
