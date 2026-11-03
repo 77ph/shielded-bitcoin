@@ -173,7 +173,8 @@ than Groth16 (24.5 ms against 4 ms) and grows with the circuit's rows
 (the inner-product argument's verifier is linear in 2ᵏ): an indexer
 replaying a full block of transfers verifies at ≈ 40 proofs per second
 per core, which is the cost A moves from the prover to every verifier;
-Halo 2's accumulation amortises it when proofs are verified in batches,
+Halo 2's accumulation amortises it when proofs are verified in batches
+(measured: 5.8 ms per proof at 64 proofs, `REPLAY-PROOF-A.md` §2),
 and a smaller circuit (Sinsemilla for the Merkle path, as Orchard, or
 fewer in-circuit hashes) would lower k. Rows are dominated by the
 ≈ 127 Poseidon permutations of the relation (≈ 66 rows each in the
@@ -329,8 +330,11 @@ implementation of the paper? Rules this repository adopts:
   the odd root (`PROFILE-A.md` §4.2 v0.2; `sba-circuit` test
   `the_odd_root_of_g_d_is_refused_by_the_mock_prover`); `k = 14` and the
   proof size are unchanged, `vk_id` moved, profile a-0.2.
-* **Later, the items A reopens**: the accumulated replay proof (§22.2)
-  and lineage feasibility (§22.4), each as its own study first.
+* **Later, the items A reopens**: the accumulated replay proof (§22.2),
+  studied in `REPLAY-PROOF-A.md` (v0.1, 3 November 2026: the recursion
+  shape on the cycle, the native batch verification measured, the
+  verifier gadget as the deciding measurement), and lineage
+  feasibility (§22.4), each as its own study first.
 
 ## 8. Sources
 
