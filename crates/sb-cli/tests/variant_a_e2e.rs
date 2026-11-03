@@ -543,6 +543,12 @@ fn cycle(carrier: &str, tag: &str) {
         };
         let synced = light.ok(&["sync"]);
         assert!(synced.contains("claimed roots agree"), "{synced}");
+        // the trust label at the point of use
+        if spec.contains('|') {
+            assert!(synced.contains("cross-checked against"), "{synced}");
+        } else {
+            assert!(synced.contains("bare light sync"), "{synced}");
+        }
         let a = light.ok(&["status"]);
         assert_eq!(
             a.lines().skip(1).collect::<Vec<_>>(),
