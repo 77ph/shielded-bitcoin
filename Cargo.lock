@@ -2323,6 +2323,7 @@ dependencies = [
  "clap",
  "ff",
  "hex",
+ "log",
  "rand 0.8.8",
  "rpassword",
  "sb-common",

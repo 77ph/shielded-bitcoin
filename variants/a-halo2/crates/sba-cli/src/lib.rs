@@ -26,6 +26,8 @@ use sba_primitives::Fp;
 use sba_primitives::encoding::fp_to_bytes;
 use sba_wallet::{Wallet, anchor_for};
 
+mod relay;
+
 /// The family this crate implements, as a deployment profile names it.
 pub const FAMILY: &str = sba_core::FAMILY;
 
@@ -174,6 +176,9 @@ enum Cmd {
         fee_rate: u64,
         #[arg(long)]
         no_broadcast: bool,
+        /// Hand the envelope to a sponsored relayer (`http://host:port`) instead of paying the carrier.
+        #[arg(long, conflicts_with = "no_broadcast")]
+        relay: Option<String>,
     },
     /// Withdraw `amount` sat to a Bitcoin address through the dev operator
     /// (`docs/BOUNDARY.md`): a transfer to the operator's shielded address
@@ -190,6 +195,9 @@ enum Cmd {
         fee_rate: u64,
         #[arg(long)]
         no_broadcast: bool,
+        /// Hand the envelope to a sponsored relayer (`http://host:port`) instead of paying the carrier.
+        #[arg(long, conflicts_with = "no_broadcast")]
+        relay: Option<String>,
     },
     /// Operator: pay pending withdraw requests from the vault wallet's coins.
     Payouts {
@@ -210,6 +218,30 @@ enum Cmd {
         name: String,
         #[arg(long, default_value = "1")]
         fee_rate: u64,
+        /// Hand the envelope to a sponsored relayer (`http://host:port`) instead of paying the carrier.
+        #[arg(long)]
+        relay: Option<String>,
+    },
+    /// Run a sponsored relayer: publish other people's transfers from this wallet's fee coins.
+    RelayServe {
+        #[arg(long, default_value = "default")]
+        name: String,
+        #[arg(long, default_value = "127.0.0.1:8787")]
+        listen: String,
+        #[arg(long, default_value = "1")]
+        fee_rate: u64,
+        /// Carriers paid per hour at most.
+        #[arg(long, default_value = "20")]
+        max_per_hour: u32,
+        /// Submissions checked per client address per minute at most.
+        #[arg(long, default_value = "6")]
+        max_checks_per_minute: u32,
+        /// Seconds between replays to the chain tip.
+        #[arg(long, default_value = "5")]
+        sync_interval: u64,
+        /// Exit after this many requests (tests).
+        #[arg(long)]
+        max_requests: Option<u32>,
     },
     /// Pay transparent coins from the wallet's funding address.
     FundSend {
@@ -249,6 +281,31 @@ impl OutboxEntry {
                     script_hex: hex::encode(o.script_pubkey.as_bytes()),
                 })
                 .collect(),
+        }
+    }
+
+    /// What a relayer may be handed: no extra output (a transfer) or one
+    /// payout memo (a withdraw); a mint's vault output is refused here.
+    fn relay_memo(&self) -> Result<Option<Vec<u8>>> {
+        use bitcoin::script::Instruction;
+        let extras = self.extra_outputs()?;
+        match extras.as_slice() {
+            [] => Ok(None),
+            [out] if out.value.to_sat() == 0 => {
+                let mut it = out.script_pubkey.instructions();
+                let memo = match (it.next(), it.next(), it.next()) {
+                    (
+                        Some(Ok(Instruction::Op(bitcoin::opcodes::all::OP_RETURN))),
+                        Some(Ok(Instruction::PushBytes(b))),
+                        None,
+                    ) if b.as_bytes().starts_with(&sb_common::carrier::MEMO_MAGIC) => {
+                        b.as_bytes().to_vec()
+                    }
+                    _ => bail!("a relayer only publishes transfers and payout memos"),
+                };
+                Ok(Some(memo))
+            }
+            _ => bail!("a mint pays the vault; a relayer only publishes transfers"),
         }
     }
 
@@ -483,6 +540,7 @@ impl Ctx {
 
     /// Write a carrier to the outbox and, unless `outbox_only`, publish it
     /// from the wallet's fee coins as the deployment's carrier says.
+    #[allow(clippy::too_many_arguments)]
     fn publish(
         &self,
         wallet: &mut Wallet,
@@ -491,6 +549,7 @@ impl Ctx {
         entry: &OutboxEntry,
         fee_rate: u64,
         outbox_only: bool,
+        relay: Option<&str>,
     ) -> Result<()> {
         let outbox = self.data_dir.join("outbox");
         std::fs::create_dir_all(&outbox)?;
@@ -505,6 +564,12 @@ impl Ctx {
         );
         if outbox_only {
             println!("not broadcast (--no-broadcast)");
+            return Ok(());
+        }
+        if let Some(url) = relay {
+            let memo = entry.relay_memo()?;
+            let txid = relay::submit(url, &envelope, memo.as_deref())?;
+            println!("relayed by {url}: {txid}");
             return Ok(());
         }
         match self.deployment.carrier {
@@ -777,7 +842,7 @@ pub fn run(args: Vec<String>) -> Result<()> {
                 hex::encode(&fp_to_bytes(&env.h_body(&ctx.deployment.const_salt))[..8])
             );
             let entry = OutboxEntry::new(&env.to_bytes(), extra);
-            ctx.publish(&mut w, &name, &label, &entry, fee_rate, no_broadcast)?;
+            ctx.publish(&mut w, &name, &label, &entry, fee_rate, no_broadcast, None)?;
         }
         Cmd::Send {
             name,
@@ -785,6 +850,7 @@ pub fn run(args: Vec<String>) -> Result<()> {
             amount,
             fee_rate,
             no_broadcast,
+            relay,
         } => {
             let (net, to_addr) = PaymentAddress::decode(&to)?;
             if net != ctx.deployment.network {
@@ -829,7 +895,15 @@ pub fn run(args: Vec<String>) -> Result<()> {
                 hex::encode(&fp_to_bytes(&built.statement.h_body)[..8])
             );
             let entry = OutboxEntry::new(&built.envelope.to_bytes(), vec![]);
-            ctx.publish(&mut w, &name, &label, &entry, fee_rate, no_broadcast)?;
+            ctx.publish(
+                &mut w,
+                &name,
+                &label,
+                &entry,
+                fee_rate,
+                no_broadcast,
+                relay.as_deref(),
+            )?;
             println!("inputs locked until the transfer is accepted (`sb unlock` to release)");
         }
         Cmd::Withdraw {
@@ -838,6 +912,7 @@ pub fn run(args: Vec<String>) -> Result<()> {
             to,
             fee_rate,
             no_broadcast,
+            relay,
         } => {
             let boundary = ctx
                 .deployment
@@ -896,7 +971,15 @@ pub fn run(args: Vec<String>) -> Result<()> {
                 hex::encode(&fp_to_bytes(&built.statement.h_body)[..8])
             );
             let entry = OutboxEntry::new(&built.envelope.to_bytes(), vec![memo_output(&memo)]);
-            ctx.publish(&mut w, &name, &label, &entry, fee_rate, no_broadcast)?;
+            ctx.publish(
+                &mut w,
+                &name,
+                &label,
+                &entry,
+                fee_rate,
+                no_broadcast,
+                relay.as_deref(),
+            )?;
             println!("the operator pays {dest} after the transfer is accepted");
         }
         Cmd::Payouts {
@@ -948,6 +1031,7 @@ pub fn run(args: Vec<String>) -> Result<()> {
             label,
             name,
             fee_rate,
+            relay,
         } => {
             let path = if label.contains('/') || label.ends_with(".json") {
                 PathBuf::from(&label)
@@ -966,8 +1050,55 @@ pub fn run(args: Vec<String>) -> Result<()> {
                 .and_then(|s| s.to_str())
                 .unwrap_or("carrier")
                 .to_string();
-            let mut w = ctx.wallet(&name)?;
-            ctx.publish(&mut w, &name, &label, &entry, fee_rate, false)?;
+            if let Some(url) = relay.as_deref() {
+                // a relayer pays: no wallet of ours is involved
+                let envelope = hex::decode(&entry.envelope)?;
+                let memo = entry.relay_memo()?;
+                let txid = relay::submit(url, &envelope, memo.as_deref())?;
+                println!("relayed by {url}: {txid}");
+            } else {
+                let mut w = ctx.wallet(&name)?;
+                ctx.publish(&mut w, &name, &label, &entry, fee_rate, false, None)?;
+            }
+        }
+        Cmd::RelayServe {
+            name,
+            listen,
+            fee_rate,
+            max_per_hour,
+            max_checks_per_minute,
+            sync_interval,
+            max_requests,
+        } => {
+            let (idx, store) = ctx.indexer()?;
+            let chain = ctx.chain_source()?;
+            let publisher = ctx.publisher()?;
+            let w = ctx.wallet(&name)?;
+            let fw = ctx.funding(&w)?;
+            let listener = std::net::TcpListener::bind(&listen)
+                .with_context(|| format!("listen on {listen}"))?;
+            println!(
+                "relayer listening on http://{} (deployment {}, family {}, wallet {name}, {fee_rate} sat/vB, {max_per_hour} carriers/hour, {max_checks_per_minute} checks/minute/address)",
+                listener.local_addr()?,
+                ctx.deployment.name,
+                FAMILY
+            );
+            std::io::Write::flush(&mut std::io::stdout())?;
+            let mut r = relay::Relayer::new(
+                idx,
+                store,
+                chain,
+                publisher,
+                fw,
+                w,
+                ctx.wallet_path(&name),
+                ctx.btc_network(),
+                fee_rate,
+                max_per_hour,
+            );
+            r.max_checks_per_minute = max_checks_per_minute;
+            r.sync_interval = std::time::Duration::from_secs(sync_interval);
+            r.serve(listener, max_requests)?;
         }
         Cmd::FundSend {
             name,
