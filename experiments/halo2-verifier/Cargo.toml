@@ -9,6 +9,9 @@ vesta-ecc = { path = "../vesta-ecc" }
 sba-circuit = { path = "../../variants/a-halo2/crates/sba-circuit" }
 sba-primitives = { path = "../../variants/a-halo2/crates/sba-primitives" }
 sba-core = { path = "../../variants/a-halo2/crates/sba-core" }
+sba-indexer = { path = "../../variants/a-halo2/crates/sba-indexer", features = ["testing"] }
+sb-common = { path = "../../crates/sb-common" }
+bitcoin = "0.32"
 halo2_proofs = "0.3"
 halo2_gadgets = "0.5"
 pasta_curves = "0.5"

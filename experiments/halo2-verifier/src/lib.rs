@@ -14,5 +14,6 @@ pub mod sample;
 pub mod shadow;
 pub mod step;
 pub mod step2;
+pub mod step3;
 pub mod transcript;
 pub mod verifier;
