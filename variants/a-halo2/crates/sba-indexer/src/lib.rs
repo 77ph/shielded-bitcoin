@@ -15,3 +15,7 @@ pub use replay::{BlockReport, Indexer, RejectReason, SyncError, SyncReport, Tran
 pub use sb_common::{BlockId, ChainError, ChainSource, carrier, chain, net};
 pub use state::{BlockCheckpoint, Rejection, ReplayState, StateError};
 pub use store::{JsonStore, StateStore, StoreError};
+
+/// The test world (`features = ["testing"]`).
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;

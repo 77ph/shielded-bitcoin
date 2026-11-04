@@ -18,8 +18,17 @@ serde_json.workspace = true
 hex.workspace = true
 thiserror.workspace = true
 log.workspace = true
+rand = { workspace = true, optional = true }
+rand_chacha = { workspace = true, optional = true }
+ff = { workspace = true, optional = true }
+
+[features]
+# the test world (`testing.rs`) for other crates' tests and experiments
+testing = ["dep:rand", "dep:rand_chacha", "dep:ff"]
 
 [dev-dependencies]
+# the crate's own tests use the test world
+sba-indexer = { path = ".", features = ["testing"] }
 rand.workspace = true
 rand_chacha.workspace = true
 ff.workspace = true

@@ -1,4 +1,4 @@
-# Succinct replay proofs for variant A (study, draft v0.6)
+# Succinct replay proofs for variant A (study, draft v0.7)
 
 Status: a study, no code beyond `experiments/halo2-accumulate`. The
 question `VARIANT-A.md` §7 left for after S6: the paper's §22.2 asks
@@ -531,9 +531,30 @@ over the claim's challenges — the field side has to compute it, so a
 proof's field side needs the challenges of every claim that proof
 opened, and the group side verifying such a proof has to carry them
 across (they are, for `T_p(1)`, among the instance values it no longer
-exposes). The fix is in the field side's parser and structure (the
-opened commitments as terms, their evaluations computed from `u`) and a
-list of instance values the group side re-exposes.
+exposes). Fixed the same way: the field side's parser and structure
+take the opened commitments as terms with their values computed from
+`u` in-circuit (14 multiplications per claim), the group side
+re-exposes the instance values that hold a claim's challenges
+(`opened_u_slots`), and `T_q(2)` has 495 public inputs for it.
+
+**The loop closed (5 November 2026, the server)** [measured,
+`step2.rs::two_steps_close_the_loop` with `SB_PROVE_STEP2=1`]. Two
+transfer proofs, two steps: `T_q(1)` and `T_p(1)` as before; `T_q(2)`
+at k = 18 (keygen 277 s, **prove 113 s, 5 792 bytes**); `T_p(2)` — the
+field sides of the second transfer proof and of `T_p(1)` (with its
+opened claim), the `p` group side of `T_q(2)` — 501 public inputs,
+120 528 rows, k = 17 (keygen 130 s, **prove 56 s, 5 664 bytes**); the
+decider verifies `T_q(2)` with `T_q(1)`'s claim and `T_p(2)` with the
+transfer proof's and `T_p(1)`'s, natively, **1.6 s for both** (the
+`2^18` and `2^17` multiplications included), and refuses either with a
+missing or a wrong claim. The whole run: 17.6 minutes and 11.9 GB on
+the container's 8 cores (the keys are made from scratch each time; a
+deployment makes them once). So: every proof of step 1 and both
+transfer proofs are verified by what the decider reads — two proofs of
+11.5 KB, two claims, the public inputs — and a third step would cost
+the same as the second. What the step does not yet contain is the
+batch relation (§3.7, built and measured alone), and what it costs
+more than it should is the crossing of values (§3.6).
 
 **Accumulation, the Halo way** [cited: ePrint 2019/1021 §4 and §5].
 Every verified proof leaves a claim `(G, u_1 … u_k)` on its curve:
@@ -772,13 +793,14 @@ for the light client's own copy of the statements.
   recursive `T` is a slice of ordinary size, on the paper's scale per
   slot, and the design stays the full one: every transfer proof
   verified in-circuit, no trust in the indexer for them.
-* **Next:** the step `T` as §3.4 designs it, in its order of work:
-  the prover's extra openings, one recursive step over two transfer
-  proofs measured, the batch relation ported, the fragment size and
-  the wire format. The cost that recursion does not remove — the
-  binding of the values that cross between the two curves, ≈ 203
-  multiplications per transfer proof in the following step — is stated
-  there with the lever that controls it (the fragment size).
+* **Next:** the step `T` as §3.4 designs it: the recursion loop is
+  closed over two steps (§3.4, 5 November) and the batch relation is
+  built and measured alone (§3.7); what remains is their composition
+  — the relation inside `T_p` with its slots bound to the transfer
+  statements, driven by the indexer's own replayed blocks (its test
+  world is now a module other crates can use) — then the fragment
+  size and the wire format, then the split transcript (§3.6) for the
+  crossing values' cost.
 * **Not now:** porting `T` (piece 3) before the gadget is measured;
   Nova or any folding library, for the reason in §3.2.
 
@@ -815,6 +837,11 @@ for the light client's own copy of the statements.
   limbs, canonicity), and one step measured — the `p` group side of a
   real `T_q` proof at k = 17, then `T_p(1)` whole at k = 17 proven and
   decided: one transfer proof verified recursively end to end.
+* **v0.7** (5 November 2026) — the second step composed and run on the
+  server, the loop closed (§3.4); opened claims through the field side;
+  the batch relation designed (§3.7), ported natively into `sba-core`
+  and the indexer, and built as a circuit, two slots at k = 17; the
+  split transcript as the lever for the crossing values (§3.6).
 * **v0.5** (4 November 2026) — the field side measured on the real
   proof (§3.3: k = 13, 0.6 s); the verification of one transfer proof
   complete in two circuits; the batch step `T` set as the next design.
