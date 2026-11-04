@@ -234,3 +234,18 @@ fn the_odd_root_of_g_d_is_refused_by_the_mock_prover() {
         "{text}"
     );
 }
+
+/// What a verifier of this circuit reads and squeezes (`REPLAY-PROOF-A.md`
+/// §3.4): `cargo test -p sba-circuit --release --test transfer print_verifier_shape -- --ignored --nocapture`.
+#[test]
+#[ignore]
+fn print_verifier_shape() {
+    let params = TransferParams::build().unwrap();
+    println!("k = {K}, rows = {}", 1u64 << K);
+    println!("{:#?}", params.vk().pinned());
+    println!(
+        "proof bytes: {} = {} elements of 32 bytes",
+        PROOF_LEN,
+        PROOF_LEN / 32
+    );
+}
