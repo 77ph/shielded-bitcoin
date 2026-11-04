@@ -448,13 +448,22 @@ inputs, 159 permutations, (101 + 221) · 2 = 644 multiplications, **fits
 k = 17** (mock prover 6.3 s, 1.2 GB for the whole run), and refuses a
 wrong `G` or a wrong limb of a `T_q` instance value. The instance
 commitment of `T_q` is 442 of the 644 multiplications: 221 values, each
-two limbs, each multiplied as a variable base. Two reductions are
-plain: the 217 of those values that are `Fp` elements embedded in `Fq`
-(challenges, scalars, evaluations of the transfer proof) fit one limb;
-and the Lagrange generators are constants, so the chip's fixed-base
-multiplication (3-bit windows, ≈ 90 rows) applies instead of the
-variable-base one (≈ 250 rows). With both, the `T_q` instance costs
-≈ 2^15 rows instead of ≈ 2^17 and the `p` group side ≈ 2^16.
+two limbs, each multiplied as a variable base. Two reductions looked
+plain. The first is done: the 219 of those values that are `Fp`
+elements embedded in `Fq` (challenges, scalars, evaluations of the
+transfer proof, its statement) are carried as one cell each (the
+verified circuit says which of its instance values are such,
+`instance_limbs_when_verified`), leaving 643 public inputs and 425
+multiplications; the `p` group side then uses 70 826 rows [measured,
+`CircuitCost`], still k = 17 (the limit of k = 16 is 65 536 rows), so a
+variable-base multiplication costs ≈ 130 rows here, half the estimate.
+The second — the Lagrange generators as fixed bases with the chip's
+window tables — is therefore worth ≈ 40 rows per value, a tenth of the
+circuit, and its tables cost 64 s of search per generator [measured,
+`find_zs_and_us`], four CPU-hours for 221 of them per (curve, k): a
+build artefact for later, not a lever. The lever is the number of
+values that cross between the curves, and that is a transcript
+question, §3.6.
 
 **One transfer proof verified recursively, end to end (4 November
 2026)** [measured, `step.rs::one_transfer_proof_verified_recursively`,
@@ -585,6 +594,37 @@ working per-batch chain; it is the way the light client gets back to
 a constant-size download.** With it: one `T` proof (≈ 6–7 KB), two
 accumulators (≈ 1 KB), the state opening: independent of the number of
 blocks.
+
+### 3.6 Fewer values across the cycle: the split transcript [design]
+
+Of the 221 values `T_q` exposes for one transfer proof, 83 are the
+proof's evaluations and 93 the scalars of the final multiplication;
+26 are challenges, 2 the claim's `G`, the rest the statement. Pickles
+[cited: o1-labs/proof-systems, the Pickles design] crosses an order of
+magnitude fewer per proof by splitting the transcript by field: the
+group side's sponge (over `Fq`) absorbs the commitments and derives the
+challenges needed before the evaluations, then squeezes its state into
+one digest; the field side's sponge (over `Fp`) starts from that digest,
+absorbs the evaluations natively — they are `Fp` elements — and derives
+the remaining challenges (`x_1`, `x_2`, `x_3`, `x_4`, the inner-product
+`u_j`). The evaluations then never cross; the scalars need not cross
+either if the group side combines the commitments by Horner's rule in
+the 128-bit challenges (`x_1`, `x_4`, `u_j`) rather than taking their
+products as inputs, the few full-width scalars that remain (`u_j^{-1}`
+by the Halo rearrangement, the `x^n` powers of the quotient chunks,
+`-v`, `c`) being prover-claimed values the field side checks. What
+crosses per transfer proof is then ≈ 26 challenges, one digest, a
+handful of claimed scalars and `G`: ≈ 40 values in place of 221, and
+the challenges after the evaluations cross the other way, from the
+field side to the group side of the *following* step (the group side
+of a proof needs `x_1 … x_4`, derived after the evaluations it does not
+absorb), so the group side of a transfer proof moves to `T_q(i+1)` —
+the same delay by one step that Pickles' wrap has. It is a change of
+the family's transcript (a-0.4: two sponges, one per field, with a
+digest between them), of `verifier_body.rs` (Horner in the challenges,
+a 128-bit variable-base multiplication worth adding to the chip) and
+of `fieldside.rs` (the second sponge and the challenge derivation).
+Decided for later: the structure of the step comes first, then this.
 
 ## 4. What this study decides
 

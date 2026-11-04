@@ -96,6 +96,7 @@ pub(crate) mod tests_support {
             params_w: params.get_w(),
             params_u: params.get_u(),
             lagrange: params.get_g_lagrange()[..cap.instance.len()].to_vec(),
+            instance_limbs: vec![1; cap.instance.len()],
             capture: Some(cap.clone()),
         }
     }
