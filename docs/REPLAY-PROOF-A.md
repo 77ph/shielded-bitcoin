@@ -391,9 +391,8 @@ proofs, one per curve, made together by the indexer:
   `REPLAY-PROOF.md` §4.2 over the family's Poseidon: the state opening,
   the `n` statements applied in order through the indexed nullifier
   tree and the note tree, the anchor checks, the digest `D` [estimate
-  from the paper's measured ≈ 217 000 R1CS constraints per slot, mostly
-  Poseidon, at ≈ 66 rows per permutation in the width-3 chip and the
-  transfer circuit's ratio: ≈ 25 000 rows per slot, 2^19 for 16 slots].
+  as §3.2 item 3: ≈ 40 000 rows per slot, 2^20 for 16 slots, 2^18 for
+  4].
   (b) The field side of each of the `n` transfer proofs (§3.3: 3 192
   operations each, 2^16 rows for 16). (c) The field side of the
   previous step's `T_p` proof (the same circuit shape as a transfer
@@ -421,11 +420,24 @@ Vesta claims of the `n` transfer proofs and of the previous `T_p` are
 opened inside `T_p`'s own proof; the Pallas claim of the previous `T_q`
 inside `T_q`'s. The decider (the light client, §3.5) settles the two
 claims it is left with by two multi-scalar multiplications of `2^k`.
-What this needs that `halo2_proofs` does not have: a prover that adds
-external commitments with known polynomials to its multiopen queries
-and a verifier that expects them (`create_proof` and `verify_proof`
-with "extra openings"), a contained change to the vendored crate, and
-the first engineering item of the step. The alternative that needs no
+What this needed that `halo2_proofs` did not have — a prover that
+adds external commitments with known polynomials to its multi-point
+queries and a verifier that expects them — **is done (4 November 2026)
+in the vendored crate** `experiments/halo2_proofs-patched`:
+`poly::commitment::Claim` (`G`, `u`), `Guard::claim()`,
+`create_proof_with_openings` and `verify_proof_with_openings`. Each
+claim's `G` is absorbed as a common point after the instance
+commitments; its `s(X)` is queried at the proof's `x` with zero
+blinding (the crate's default blind is one, the first bug); the
+verifier computes `s(x)` itself in `k` multiplications, so an opened
+claim adds no bytes to the proof (`x` is a point set the proof already
+has). A claim of a smaller `k` opens inside larger parameters because
+the generators are hashed by index and so are a prefix. The test
+`claims_chain_through_proofs_of_two_sizes` chains three proofs over
+k = 5 and k = 6 with the decider at the end, and checks that a
+missing, wrong-point or wrong-challenge claim is rejected, that a false
+claim cannot be laundered through a proof made over it, and that a
+claim larger than the parameters is refused. The alternative that needs no
 prover change — a linear accumulator `G_acc ← α·G_acc + G_new` with
 every accumulated `u` vector carried along — keeps 14 field elements
 per accumulated proof in the state, ≈ 7 KB per 16-transfer block,
@@ -450,7 +462,7 @@ every step) — of the same order as everything else in the step
 together. This is the known cost of the two-curve design (Pickles
 carries its deferred values the same way), and the lever is `n`: a
 fragment of 4 statements makes the binding 2^18 rows and the whole
-step ≈ 2^18–2^19 per side; a fragment of 16 makes it ≈ 2^20–2^21. The
+step ≈ 2^19 per side; a fragment of 16 makes it ≈ 2^21. The
 indexer's memory sets `n` (the k = 14 transfer prover takes 0.5 GB;
 proving scales linearly in rows: ≈ 16 GB at k = 19, which is the
 server's container, not the laptop).
@@ -475,8 +487,8 @@ proof instead; here the transfer proofs are not shipped at all, the
 step having verified them.
 
 **Order of work:** the prover change (extra openings) in the vendored
-crate with a test that a claim opened in a following proof settles;
-then one recursive step over two transfer proofs in `experiments/`
+crate with a test that a claim opened in a following proof settles
+(done, above); then one recursive step over two transfer proofs in `experiments/`
 (`T_p` without the batch relation: the field sides, the group side of
 a previous `T_q`; `T_q`: the group sides, the field side of a previous
 `T_p`), measured; then the batch relation ported from
@@ -552,8 +564,10 @@ blocks.
 
 * **v0.6** (4 November 2026) — §3.4, the step `T` designed: the two
   circuits of a step, Halo-style accumulation by re-opening (and the
-  prover change it needs), the cross-circuit binding and its cost, the
-  proven block's wire format, the order of work.
+  prover change it needs, done the same day in the vendored crate:
+  claims opened inside a later proof, tested over two sizes), the
+  cross-circuit binding and its cost, the proven block's wire format,
+  the order of work.
 * **v0.5** (4 November 2026) — the field side measured on the real
   proof (§3.3: k = 13, 0.6 s); the verification of one transfer proof
   complete in two circuits; the batch step `T` set as the next design.
