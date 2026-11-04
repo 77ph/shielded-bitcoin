@@ -1,4 +1,4 @@
-# Succinct replay proofs for variant A (study, draft v0.2)
+# Succinct replay proofs for variant A (study, draft v0.3)
 
 Status: a study, no code beyond `experiments/halo2-accumulate`. The
 question `VARIANT-A.md` §7 left for after S6: the paper's §22.2 asks
@@ -55,21 +55,24 @@ settle any number of such claims at once with one `2^k`
 multi-scalar multiplication of a random linear combination.
 
 `experiments/halo2-accumulate` verifies `n` proofs of the family's
-transfer circuit (k = 14, 4 416-byte proofs, the Blake2b transcript of
-the profile) in the three modes, on the laptop (release, 20 threads
+transfer circuit (k = 14, 4 416-byte proofs, the Poseidon transcript of
+profile a-0.3) in the three modes, on the laptop (release, 20 threads
 for the multi-scalar multiplications):
 
 | n | one by one, per proof | batched into one MSM (`Guard::use_challenges`), per proof | accumulated: succinct part per proof + one final MSM for all claims, per proof |
 |---|---|---|---|
-| 1 | 29.7 ms | 29.1 ms | 8.4 ms + 26.3 ms = 34.7 ms |
-| 4 | 31.2 ms | 11.6 ms | (23.6 ms + 27.7 ms) / 4 = 12.8 ms |
-| 16 | 30.7 ms | 7.2 ms | (83.2 ms + 32.2 ms) / 16 = 7.2 ms |
-| 64 | 30.5 ms | 5.8 ms | (309.8 ms + 55.6 ms) / 64 = 5.7 ms |
+| 1 | 31.3 ms | 31.2 ms | 10.2 ms + 24.3 ms = 34.4 ms |
+| 4 | 33.0 ms | 13.4 ms | (40.2 ms + 24.9 ms) / 4 = 16.3 ms |
+| 16 | 33.0 ms | 8.8 ms | (111.5 ms + 30.3 ms) / 16 = 8.9 ms |
+| 64 | 32.6 ms | 7.5 ms | (454.8 ms + 49.0 ms) / 64 = 7.9 ms |
 
-[measured, 3 November 2026; keygen 1.1 s, 64 proofs in 152 s, peak
-531 MB]. The prover-side `G` (what a prover ships with an
-accumulated proof) costs 30 ms per proof to compute, the same MSM the
-verifier saves. The accumulator per proof is `G` (32 bytes) plus the
+[measured, 4 November 2026; 64 proofs in 146 s]. Under the Blake2b
+transcript of a-0.2 the same run gave 30.5 / 5.8 / 5.7 ms at n = 64
+[measured, 3 November]: the algebraic transcript costs about 2 ms of
+native Poseidon per verification (≈ 135 permutations), the price of
+being computable inside a circuit. The prover-side `G` (what a prover
+ships with an accumulated proof) costs 32 ms per proof to compute, the
+same MSM the verifier saves. The accumulator per proof is `G` (32 bytes) plus the
 `k = 14` challenges (32 bytes each), 480 bytes, all of it
 recomputable from the proof: nothing new goes on chain.
 
@@ -84,7 +87,7 @@ What the table says:
   block's set and fall back to one-by-one verification to find the
   culprit when the batch fails), with no profile change and no new
   assumption [computed from the table].
-* **The succinct part is ≈ 5 ms of native work per proof** (309.8 ms /
+* **The succinct part is ≈ 7 ms of native work per proof** (454.8 ms /
   64), against ≈ 25 ms of deferred MSM. That ratio is the point of
   accumulation: a recursive verifier carries the 5 ms part in-circuit
   and the 25 ms part as a 480-byte claim folded into the next
@@ -206,7 +209,69 @@ Alternatives, and why they do not shortcut the three pieces:
   pairing-friendly cycle): that is `REMAINING.md` §2.3(a) again, MNT
   at 753 bits, and the reason A exists is to have no setup.
 
-### 3.3 Sizes on the light client's side [computed]
+### 3.3 The verifier split by field: what each circuit computes
+
+What a verifier of one transfer proof does, read off `halo2_proofs`'
+verifier for this circuit (`print_verifier_shape` in
+`sba-circuit/tests/transfer.rs`: 1 instance column, 10 advice, 21
+fixed, 1 lookup, 15 permutation columns, 25 advice and 21 fixed
+queries, k = 14; the proof's 138 elements are about 55 Vesta points and
+83 `Fp` scalars):
+
+1. **Transcript** (`Fq` sponge, §3.2 piece 2, done): absorb the key's
+   representative, the instance commitment, the 10 advice commitments,
+   the lookup's 3 and the permutation's product commitments, the
+   quotient chunks, then the 83 evaluations, the multiopen's and the
+   inner product's 29 points; squeeze ≈ 30 challenges (theta, beta,
+   gamma, y, x, x_1…x_4, xi, z, the 14 round challenges). About 135
+   permutations.
+2. **Group arithmetic** (Vesta points, coordinates in `Fq`, native in
+   the `Fq` circuit): the instance commitment (17 fixed-base
+   multiplications over the Lagrange generators), the multiopen's
+   combination of ≈ 50 commitments with scalars that are powers and
+   products of `x_1`, `x_2`, `x_4` (full-width `Fp` scalars), the inner
+   product's 28 `L_j`, `R_j` multiplications by `u_j` and `u_j^{-1}`
+   (128-bit challenges, but the inverses are full-width), and the
+   accumulator fold. Scalars live in `Fp`: the `Fq` circuit cannot
+   compute them, so it takes them as witnesses, embedded in `Fq`
+   (`p < q`), and the **`Fp` circuit** of the next step checks that
+   they are the right functions of the challenges — the 128-bit
+   challenges are the only values both circuits derive themselves (the
+   `Fq` one from its sponge, the `Fp` one as public inputs it is handed),
+   which is why they are 128-bit.
+3. **Field algebra** (`Fp`, native in the `Fp` circuit, i.e. inside `T`
+   of the next batch): the gate polynomials evaluated at `x` (every
+   constraint of the transfer circuit, a few hundred multiplications),
+   the permutation and lookup expressions, `l_0`, `l_last`, `l_blind`,
+   the vanishing check, the multiopen scalars, `b = Π(1 + u_j x^{2^j})`,
+   the inverses `u_j^{-1}`, and the equation the final MSM must satisfy
+   (`c`, `f`, the `[-v] G_0` term). A few thousand rows.
+
+Rows of the `Fq` circuit per verified proof [estimate from the ECC
+chip's costs in `halo2_gadgets`: a variable-base multiplication by a
+full-width scalar ≈ 2–3 rows per bit, so ≈ 700 rows; the width-3
+Poseidon ≈ 66 rows per permutation]: ≈ 50 × 700 + 28 × 700 ≈ 55 000
+for the multiplications, ≈ 9 000 for the transcript, ≈ 2 000 for the
+17 fixed-base ones and the additions — of the order of **2^16 per
+transfer proof**, k = 17 for one, k ≈ 21 for a batch of 16. That is
+the same order as the paper's `T` costs per slot in R1CS (≈ 217 000
+constraints, `REPLAY-PROOF.md` §6), which is to say: a batch step of A
+with its transfer proofs verified in-circuit is not smaller than the
+paper's, it is merely possible. The first measurement to make is this
+circuit for one proof.
+
+What has to exist for it: `halo2_gadgets`' ECC chip is written for
+Pallas points in an `Fp` circuit (5 800 lines naming `pallas`); the
+`Fq` circuit needs the same chip for **Vesta** points, which the crate
+does not have — the mirror image, with the variable-base
+multiplication's constants recomputed for the scalar field `Fp`
+(`T_Q` → `T_P`, the 255-bit decomposition unchanged in shape). A port
+of the chip to Vesta, with the crate's own tests, is the first
+experiment (`experiments/vesta-ecc`); the transcript gadget is the
+gadget crate's `Pow5Chip` over `Fq` with the sponge rule of
+`PROFILE-A.md` §1.1; the verifier gadget composes the two.
+
+### 3.4 Sizes on the light client's side [computed]
 
 Today, without recursion, A's light client would download a **chain
 of `T` proofs** like the paper's (`REPLAY-PROOF.md` §4.5): one per
@@ -233,17 +298,18 @@ blocks.
   (§3.2 piece 2), as `a-0.x`, with the vectors regenerated; the rest
   of the circuit untouched. Done: a-0.3, 4 November 2026.
 * **The measurement that decides the rest:** the succinct-verifier
-  gadget prototype (§3.2 piece 1) in `experiments/`, over `Fq` with the
-  ECC chip, verifying one transfer proof made under a Poseidon
-  transcript: rows, k, proving time. If it lands near the estimate
-  (2^15–2^16 rows per proof), the recursive `T` is a slice of ordinary
-  size; if it is an order of magnitude worse, a batch of 16 transfer
+  gadget prototype (§3.2 piece 1, §3.3) in `experiments/`, over `Fq`
+  with a Vesta ECC chip, verifying one transfer proof: rows, k, proving
+  time. If it lands near the estimate (≈ 2^16 rows per proof), the
+  recursive `T` is a slice of ordinary size, on the paper's scale per
+  slot; if it is an order of magnitude worse, a batch of 16 transfer
   proofs does not fit a circuit the laptop can prove, and the design
   moves to verifying transfer proofs natively per block (the batched
   mode of §2) with recursion only over the `T` chain, which keeps the
   light client's constant size but trusts the indexer for the transfer
   proofs it did not verify — a weaker statement that must be said as
-  such.
+  such. Steps: the Vesta chip port with the gadget crate's tests, the
+  transcript gadget, the verifier gadget, each measured.
 * **Not now:** porting `T` (piece 3) before the gadget is measured;
   Nova or any folding library, for the reason in §3.2.
 
@@ -270,6 +336,10 @@ blocks.
 
 ## 6. Changelog
 
+* **v0.3** (4 November 2026) — §2 re-measured under the a-0.3
+  transcript; §3.4, the verifier split by field with the message
+  inventory of this circuit and the row estimate; §4's third decision
+  made concrete.
 * **v0.2** (4 November 2026) — §3.2 piece 2 and §4's second decision
   done (the Poseidon transcript, a-0.3).
 * **v0.1** (3 November 2026) — the three questions under A, the
