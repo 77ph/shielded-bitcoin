@@ -15,8 +15,8 @@ use halo2_proofs::plonk::{Circuit, ConstraintSystem, Error};
 use pasta_curves::vesta;
 
 use crate::capture::{Capture, Event};
-use crate::field::{FieldChip, FieldConfig};
-use crate::fieldside::FieldSideCircuit;
+use crate::field::fp::{FieldChip, FieldConfig};
+use crate::fieldside::fp::FieldSideCircuit;
 use crate::verifier::p;
 use sba_primitives::Fp;
 
@@ -111,24 +111,19 @@ impl Circuit<Fp> for StepP {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
+pub(crate) mod tests_support {
     use crate::capture::{capture, Capture, Event};
-    use crate::fieldside::Structure;
     use crate::native::{PoseidonRead, PoseidonWrite};
-    use crate::verifier::tests_support::{q_circuit, real};
-    use crate::verifier::{p, q};
-    use ff::Field;
-    use halo2_proofs::dev::MockProver;
+    use crate::verifier::tests_support::q_circuit;
     use halo2_proofs::plonk::{self, Circuit, VerifyingKey};
-    use halo2_proofs::poly::commitment::{Claim, Params};
-    use pasta_curves::pallas;
+    use halo2_proofs::poly::commitment::Params;
+    use pasta_curves::{pallas, vesta};
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 
     /// `T_q` over a real transfer proof: keys, a Pallas-committed proof
     /// under the Poseidon transcript, its capture.
-    fn tq(
+    pub(crate) fn tq(
         params: &Params<vesta::Affine>,
         vk: &VerifyingKey<vesta::Affine>,
         cap: &Capture<vesta::Affine>,
@@ -192,6 +187,22 @@ mod tests {
         );
         (outer, ovk, instance, proof, cap_q)
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tests_support::tq;
+    use super::*;
+    use crate::fieldside::fp::Structure;
+    use crate::native::{PoseidonRead, PoseidonWrite};
+    use crate::verifier::tests_support::{q_circuit, real};
+    use crate::verifier::{p, q};
+    use ff::Field;
+    use halo2_proofs::dev::MockProver;
+    use halo2_proofs::plonk::{self, Circuit};
+    use halo2_proofs::poly::commitment::{Claim, Params};
+    use rand::rngs::StdRng;
+    use rand::SeedableRng;
 
     /// `cargo test --release the_p_group_side_of_a_tq_proof -- --ignored --nocapture`
     #[test]
