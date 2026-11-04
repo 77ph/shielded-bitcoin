@@ -40,6 +40,9 @@ tags! {
     t_aux = "sb-a/v1/aux";
     t_nflock = "sb-a/v1/nflock";
     t_feeauth = "sb-a/v1/feeauth";
+    t_imt = "sb-a/v1/imt";
+    t_state = "sb-a/v1/state";
+    t_batch = "sb-a/v1/batch";
 }
 
 #[cfg(test)]

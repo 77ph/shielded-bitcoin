@@ -93,6 +93,31 @@ impl NoteTree {
         pos as u64
     }
 
+    /// Overwrite the leaf at `pos` (an indexed tree's low-leaf update,
+    /// `docs/REPLAY-PROOF.md` §4.1); the note tree itself never does this.
+    pub fn set(&mut self, pos: u64, leaf: Fp) {
+        let pos = pos as usize;
+        assert!(pos < self.levels[0].len(), "no leaf at {pos}");
+        self.levels[0][pos] = leaf;
+        self.recompute(pos);
+    }
+
+    /// The path of the next empty slot (position `size`): what an append
+    /// proof needs, in the tree before the append (`docs/REPLAY-PROOF.md`
+    /// §4.2). Recomputing the root with leaf `0` over it gives the current
+    /// root; with the new leaf, the root after the append.
+    pub fn append_path(&self) -> MerklePath {
+        let size = self.size();
+        let mut siblings = [Fp::ZERO; DEPTH];
+        for (k, s) in siblings.iter_mut().enumerate() {
+            *s = self.node_at(k, (size >> k) ^ 1, size);
+        }
+        MerklePath {
+            position: size,
+            siblings,
+        }
+    }
+
     fn recompute(&mut self, pos: usize) {
         let mut idx = pos;
         for k in 0..DEPTH {
