@@ -1,0 +1,31 @@
+[package]
+name = "vesta-ecc"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "halo2_gadgets' ECC chip ported from Pallas points in an Fp circuit to Vesta points in an Fq circuit (docs/REPLAY-PROOF-A.md 3.3)"
+
+[dependencies]
+halo2_proofs = "0.3"
+pasta_curves = "0.5"
+ff = "0.13"
+group = "0.13"
+arrayvec = "0.7"
+lazy_static = "1"
+uint = "0.9"
+bitvec = "1"
+subtle = "2"
+rand = "0.8"
+
+[dev-dependencies]
+proptest = "1"
+
+[features]
+# the gadget crate's plotting test is kept under its feature; never enabled here
+test-dev-graph = []
+test-dependencies = []
+
+[profile.release]
+debug = false
+
+[workspace]
