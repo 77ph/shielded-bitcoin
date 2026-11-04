@@ -307,23 +307,26 @@ and absorbed as `x, y`; every scalar is witnessed as the embedded `Fq`
 element and absorbed; every challenge is squeezed as a constrained
 128-bit cell; then each of the 93 points is multiplied by its witnessed
 scalar (the key's commitments, `G_0`, `W`, `U` pinned as constants) and
-the sum is constrained to the identity. Public inputs (206): the
-scalars and challenges in transcript order, the 93 multiplication
-scalars, and `G`. What it proves: these proof bytes bind these
-challenges, and with these scalars the group equation holds; the field
-side (that the scalars are the right functions of the challenges and
-evaluations) is the `Fp` circuit's, not yet written.
+the sum is constrained to the identity. The instance commitment is
+recomputed from the statement's 17 values as the native verifier does
+(`Σ instance_i · G_lagrange[i] + [1] W`, the default blind being one),
+17 more multiplications by pinned constants, so the statement itself is
+a public input and not an opaque point. Public inputs (221): the
+statement, the proof's scalars and the challenges in transcript order,
+the 93 multiplication scalars, and `G`. What it proves: these proof
+bytes and this statement bind these challenges, and with these scalars
+the group equation holds; the field side (that the scalars are the
+right functions of the challenges and evaluations) is the `Fp`
+circuit's, not yet written.
 
 [measured, 4 November 2026, laptop]: **k = 15** (32 768 rows): 101
-transcript permutations, 93 variable-base multiplications; the mock
-prover accepts the real proof's capture in 0.7 s and refuses a
-tampered scalar; as a Pallas-committed proof of its own: key
-generation 11.1 s, proving **4.2 s**, verification 55 ms, 4 416 bytes,
-1.0 GB peak. That is a quarter of the ≈ 2^17 estimated in §3.3: the
-chip's variable-base multiplication costs ≈ 260 rows, not 700. Not yet
-in: the instance commitment recomputed from the instance values
-(witnessed and exposed instead; 17 fixed-base multiplications), and
-the `Fp` side. Vendored for it, in `experiments/halo2_proofs-patched`:
+transcript permutations, 110 variable-base multiplications; the mock
+prover accepts the real proof's capture in 0.9 s and refuses a
+tampered multiplication scalar and a tampered statement value; as a
+Pallas-committed proof of its own: key generation 13.1 s, proving
+**4.5 s**, verification 50 ms, 4 416 bytes, 1.1 GB peak. That is a
+quarter of the ≈ 2^17 estimated in §3.3: the chip's variable-base
+multiplication costs ≈ 260 rows, not 700. Not yet in: the `Fp` side. Vendored for it, in `experiments/halo2_proofs-patched`:
 `halo2_proofs` 0.3.5 with five read-only accessors made public (the
 MSM's terms, the parameters' `W`, `U` and Lagrange generators, the
 key's commitments), used through `[patch.crates-io]` by that experiment
@@ -363,13 +366,11 @@ blocks.
   recursive `T` is a slice of ordinary size, on the paper's scale per
   slot, and the design stays the full one: every transfer proof
   verified in-circuit, no trust in the indexer for them.
-* **Next, in order:** the instance commitment inside the verifier
-  gadget (fixed-base multiplications over the Lagrange generators); the
-  `Fp` circuit that checks the multiplication scalars against the
-  challenges and evaluations (the gate polynomials of the transfer
-  circuit evaluated at `x`, the permutation and lookup expressions, the
-  multiopen and inner-product scalars); then `T` in Halo 2 carrying both
-  accumulators.
+* **Next, in order:** the `Fp` circuit that checks the multiplication
+  scalars against the challenges and evaluations (the gate polynomials
+  of the transfer circuit evaluated at `x`, the permutation and lookup
+  expressions, the multiopen and inner-product scalars); then `T` in
+  Halo 2 carrying both accumulators.
 * **Not now:** porting `T` (piece 3) before the gadget is measured;
   Nova or any folding library, for the reason in §3.2.
 
@@ -397,8 +398,8 @@ blocks.
 ## 6. Changelog
 
 * **v0.4** (4 November 2026) — the verifier gadget measured on a real
-  proof (§3.3: k = 15, 4.2 s), §4's deciding measurement made and the
-  next steps set.
+  proof (§3.3: k = 15, 4.5 s with the instance commitment recomputed
+  in-circuit), §4's deciding measurement made and the next steps set.
 * **v0.3** (4 November 2026) — §2 re-measured under the a-0.3
   transcript; §3.3, the verifier split by field with the message
   inventory of this circuit and the row estimate; §4's third decision

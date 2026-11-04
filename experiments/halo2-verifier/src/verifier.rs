@@ -11,8 +11,10 @@
 //! this circuit therefore proves: *these* proof bytes bind *these*
 //! challenges, and with *these* scalars the group equation holds.
 //!
-//! Not yet in: the instance commitment is witnessed and exposed rather than
-//! recomputed from the instance values (17 fixed-base multiplications).
+//! The instance commitment is recomputed in-circuit from the statement's
+//! values as `halo2_proofs`' verifier does: `Σ instance_i · G_lagrange[i] +
+//! [1] W` (the default blind is one), so the statement itself is the
+//! public input, not an opaque point.
 
 use ff::{Field, PrimeField};
 use halo2_gadgets::poseidon::primitives as poseidon;
@@ -68,6 +70,8 @@ pub struct VerifierCircuit {
     /// The parameters' `W` and `U` (constants of the circuit).
     pub params_w: vesta::Affine,
     pub params_u: vesta::Affine,
+    /// The Lagrange generators of the instance values (constants).
+    pub lagrange: Vec<vesta::Affine>,
     pub capture: Option<Capture>,
 }
 
@@ -189,10 +193,10 @@ impl VerifierCircuit {
         for e in &cap.events {
             match e {
                 Event::CommonScalar(s) | Event::ReadScalar(s) | Event::Squeeze(s) => v.push(embed(s)),
-                Event::CommonPoint(p) => {
-                    let (x, y) = coords(p);
-                    v.push(x);
-                    v.push(y);
+                Event::CommonPoint(_) => {
+                    for s in &cap.instance {
+                        v.push(embed(s));
+                    }
                 }
                 Event::ReadPoint(_) => {}
             }
@@ -223,6 +227,19 @@ fn expose<L: Layouter<Fq>>(cfg: &VerifierConfig, layouter: &mut L, c: &Cell, row
     Ok(())
 }
 
+/// A constant point as a non-identity point of the chip: witnessed, then
+/// pinned to the constant.
+fn pinned<L: Layouter<Fq>>(
+    ecc: &Ecc,
+    layouter: &mut L,
+    c: vesta::Affine,
+) -> Result<NonIdentityPoint<vesta::Affine, Ecc>, Error> {
+    let w = NonIdentityPoint::new(ecc.clone(), layouter.namespace(|| "constant"), Value::known(c))?;
+    let k = Point::new_from_constant(ecc.clone(), layouter.namespace(|| "constant"), c)?;
+    w.constrain_equal(layouter.namespace(|| "pin"), &k)?;
+    Ok(w)
+}
+
 /// Witness one `Fq` value.
 fn witness<L: Layouter<Fq>>(cfg: &VerifierConfig, layouter: &mut L, v: Value<Fq>) -> Result<Cell, Error> {
     layouter.assign_region(
@@ -241,6 +258,7 @@ impl Circuit<Fq> for VerifierCircuit {
             sources: self.sources.clone(),
             params_w: self.params_w,
             params_u: self.params_u,
+            lagrange: self.lagrange.clone(),
             capture: None,
         }
     }
@@ -310,28 +328,53 @@ impl Circuit<Fq> for VerifierCircuit {
                     t.absorb(&mut layouter, cell)?;
                     scalar_i += 1;
                 }
-                Kind::CommonPoint | Kind::ReadPoint => {
+                Kind::CommonPoint => {
+                    // the instance commitment from the statement's values:
+                    // Σ instance_i · G_lagrange[i] + [1] W
+                    let mut acc: Option<Point<vesta::Affine, Ecc>> = None;
+                    for (j, g) in self.lagrange.iter().enumerate() {
+                        let v = cap
+                            .map(|c| Value::known(embed(&c.instance[j])))
+                            .unwrap_or(Value::unknown());
+                        let cell = witness(&cfg, &mut layouter, v)?;
+                        expose(&cfg, &mut layouter, &cell, &mut row)?;
+                        let base = pinned(&ecc, &mut layouter, *g)?;
+                        let scalar = ScalarVar::from_base(ecc.clone(), layouter.namespace(|| "instance scalar"), &cell)?;
+                        let (prod, _) = base.mul(layouter.namespace(|| "instance mul"), scalar)?;
+                        acc = Some(match acc {
+                            None => prod,
+                            Some(a) => a.add(layouter.namespace(|| "instance add"), &prod)?,
+                        });
+                    }
+                    let w = Point::new_from_constant(ecc.clone(), layouter.namespace(|| "W"), self.params_w)?;
+                    let commitment = acc.expect("instance values").add(layouter.namespace(|| "blind"), &w)?;
+                    // as a non-identity point: witnessed and pinned to the sum
+                    let p = NonIdentityPoint::new(
+                        ecc.clone(),
+                        layouter.namespace(|| "instance commitment"),
+                        commitment.inner().point(),
+                    )?;
+                    p.constrain_equal(layouter.namespace(|| "pin commitment"), &commitment)?;
+                    let x = p.inner().x();
+                    let y = p.inner().y();
+                    t.absorb(&mut layouter, x)?;
+                    t.absorb(&mut layouter, y)?;
+                    common_point = Some(p);
+                }
+                Kind::ReadPoint => {
                     let v = cap
                         .map(|c| match &c.events[i] {
-                            Event::CommonPoint(p) | Event::ReadPoint(p) => Value::known(*p),
+                            Event::ReadPoint(p) => Value::known(*p),
                             _ => unreachable!(),
                         })
                         .unwrap_or(Value::unknown());
                     let p = NonIdentityPoint::new(ecc.clone(), layouter.namespace(|| "point"), v)?;
                     let x = p.inner().x();
                     let y = p.inner().y();
-                    if *kind == Kind::CommonPoint {
-                        expose(&cfg, &mut layouter, &x, &mut row)?;
-                        expose(&cfg, &mut layouter, &y, &mut row)?;
-                    }
                     t.absorb(&mut layouter, x)?;
                     t.absorb(&mut layouter, y)?;
-                    if *kind == Kind::CommonPoint {
-                        common_point = Some(p);
-                    } else {
-                        read_points.push(p);
-                        read_i += 1;
-                    }
+                    read_points.push(p);
+                    read_i += 1;
                 }
                 Kind::Squeeze => {
                     let (_, c) = t.squeeze(&mut layouter)?;
@@ -355,12 +398,7 @@ impl Circuit<Fq> for VerifierCircuit {
             let base: NonIdentityPoint<vesta::Affine, Ecc> = match source {
                 Source::Read(i) => read_points[*i].clone(),
                 Source::Common => common_point.clone().expect("absorbed before the MSM"),
-                Source::Constant(c) => {
-                    let w = NonIdentityPoint::new(ecc.clone(), layouter.namespace(|| "constant"), Value::known(*c))?;
-                    let k = Point::new_from_constant(ecc.clone(), layouter.namespace(|| "constant"), *c)?;
-                    w.constrain_equal(layouter.namespace(|| "pin"), &k)?;
-                    w
-                }
+                Source::Constant(c) => pinned(&ecc, &mut layouter, *c)?,
                 Source::Claim => {
                     let v = cap.map(|c| Value::known(c.g)).unwrap_or(Value::unknown());
                     let g = NonIdentityPoint::new(ecc.clone(), layouter.namespace(|| "G"), v)?;
@@ -381,9 +419,7 @@ impl Circuit<Fq> for VerifierCircuit {
         ] {
             let s_cell = witness(&cfg, &mut layouter, value.map(|v| Value::known(embed(&v))).unwrap_or(Value::unknown()))?;
             expose(&cfg, &mut layouter, &s_cell, &mut row)?;
-            let w = NonIdentityPoint::new(ecc.clone(), layouter.namespace(|| "W/U"), Value::known(point))?;
-            let k = Point::new_from_constant(ecc.clone(), layouter.namespace(|| "W/U const"), point)?;
-            w.constrain_equal(layouter.namespace(|| "pin"), &k)?;
+            let w = pinned(&ecc, &mut layouter, point)?;
             let scalar = ScalarVar::from_base(ecc.clone(), layouter.namespace(|| "scalar var"), &s_cell)?;
             let (prod, _) = w.mul(layouter.namespace(|| "mul"), scalar)?;
             sum = Some(sum.expect("terms").add(layouter.namespace(|| "add"), &prod)?);
@@ -446,6 +482,7 @@ mod tests {
             sources,
             params_w: params.get_w(),
             params_u: params.get_u(),
+            lagrange: params.get_g_lagrange()[..cap.instance.len()].to_vec(),
             capture: Some(cap.clone()),
         };
         // every MSM term found a source
@@ -470,8 +507,12 @@ mod tests {
         prover.assert_satisfied();
         // a wrong scalar for one term is refused
         let mut bad = instance.clone();
-        let first_scalar = cap.events.iter().filter(|e| !matches!(e, Event::ReadPoint(_))).map(|e| if matches!(e, Event::CommonPoint(_)) { 2 } else { 1 }).sum::<usize>();
-        bad[first_scalar] += Fq::ONE;
+        let n_transcript = cap.events.iter().filter(|e| !matches!(e, Event::ReadPoint(_))).map(|e| if matches!(e, Event::CommonPoint(_)) { cap.instance.len() } else { 1 }).sum::<usize>();
+        bad[n_transcript] += Fq::ONE;
+        assert!(MockProver::run(k, &circuit, vec![bad]).unwrap().verify().is_err());
+        // a wrong statement value is refused too (the commitment moves)
+        let mut bad = instance.clone();
+        bad[1] += Fq::ONE;
         assert!(MockProver::run(k, &circuit, vec![bad]).unwrap().verify().is_err());
     }
 }
@@ -500,6 +541,7 @@ mod prove_tests {
             sources,
             params_w: params.get_w(),
             params_u: params.get_u(),
+            lagrange: params.get_g_lagrange()[..cap.instance.len()].to_vec(),
             capture: Some(cap.clone()),
         };
         let instance = circuit.instance(&cap, &params);

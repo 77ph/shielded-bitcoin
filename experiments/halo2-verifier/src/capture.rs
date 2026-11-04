@@ -81,6 +81,8 @@ impl<R: Read> TranscriptRead<vesta::Affine, Challenge128> for Recorder<R> {
 /// The accumulated final MSM and the claim.
 #[derive(Clone, Debug)]
 pub struct Capture {
+    /// The transfer statement (the instance column's values).
+    pub instance: Vec<Fp>,
     pub events: Vec<Event>,
     /// `(scalar, point)` over the commitments, `[-c] G` included.
     pub terms: Vec<(Fp, vesta::Affine)>,
@@ -153,6 +155,7 @@ pub fn capture(
         }
     }
     Ok(Capture {
+        instance: instance.to_vec(),
         events: transcript.events,
         terms,
         w_scalar: w_scalar.unwrap_or(Fp::zero()),
