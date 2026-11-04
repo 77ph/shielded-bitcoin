@@ -782,8 +782,11 @@ for the light client's own copy of the statements.
   — the relation's 75 478 rows sit beside the verifier parts in their
   own columns (26 advice columns in all), so the rows do not add; a slot
   whose `r_anchor` is not the proof's is refused; `s_prev` and `s_next`
-  are the indexer's openings. A block with more transfer proofs needs
-  as many group and field sides, which is the fragment size's cost.
+  are the indexer's openings. Proven for real on the server: keygen
+  156 s, **prove 79 s, 8 256 bytes** (the extra columns' commitments
+  and evaluations), the decider 0.7 s with the transfer proof's claim,
+  9.8 GB for the run. A block with more transfer proofs needs as many
+  group and field sides, which is the fragment size's cost.
 
 ## 4. What this study decides
 
