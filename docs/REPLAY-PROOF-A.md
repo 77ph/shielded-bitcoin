@@ -520,7 +520,20 @@ the transfer proof and of `T_p(1)`, bound to the two parts of `T_q(2)`'s
 instance values the `p` group side of `T_q(2)` witnesses (not exposed).
 The chain test proves both for real and decides them with `T_q(1)`'s
 claim opened in `T_q(2)` and the transfer proof's and `T_p(1)`'s in
-`T_p(2)`; k = 18 is the server's job, its figures below once run.
+`T_p(2)`; k = 18 is the server's job. Run there (8 cores, the
+container's): `T_q(2)` for real — **keygen 299 s, prove 113 s, 5 792
+bytes**, the whole run's peak 11.8 GB; its capture 71 points and 110
+scalars read, 29 challenges, 121 terms (the opened claim's `G` among
+them). `T_p(2)` then stopped at the field side of `T_p(1)`: a proof that
+opened a claim has one more commitment in its multi-point argument,
+the claim's `G`, whose value at `x` is `b(x, u) = Π (1 + u_j x^{2^j})`
+over the claim's challenges — the field side has to compute it, so a
+proof's field side needs the challenges of every claim that proof
+opened, and the group side verifying such a proof has to carry them
+across (they are, for `T_p(1)`, among the instance values it no longer
+exposes). The fix is in the field side's parser and structure (the
+opened commitments as terms, their evaluations computed from `u`) and a
+list of instance values the group side re-exposes.
 
 **Accumulation, the Halo way** [cited: ePrint 2019/1021 §4 and §5].
 Every verified proof leaves a claim `(G, u_1 … u_k)` on its curve:
@@ -719,10 +732,28 @@ for the light client's own copy of the statements.
   same day**, every replayed block's witness accepted by the check and
   chained through the openings in the indexer's tests; the circuit in
   `experiments/halo2-verifier/src/batch.rs` over the Poseidon chip (a
-  Merkle gadget, the indexed insertion, the slot rules) measured alone
-  with the mock prover; then into `StepP2` with the links to the
-  transfer statements; then the chain test with real statements from a
-  replayed signet history.
+  Merkle gadget, the indexed insertion, the slot rules) — **done the
+  same day** [measured]: two slots (a transfer anchored in the root
+  tree and a mint, over a synthetic two-block history driven as the
+  indexer drives the trees) in **75 478 rows, k = 17**, ≈ 37 000 rows
+  per slot (the estimate above assumed one permutation per node hash;
+  `PH_A(T_NODE, l, r)` is three inputs and two permutations, and a
+  path of depth 32 is ≈ 4 400 rows; the comparisons through limbs are
+  the smaller part); a wrong `D` or `s_next`, a nullifier below its low
+  leaf, an anchor outside the window are refused; every single-slot
+  kind (a mint, a transfer anchored before activation, one anchored in
+  the tree in an open block, an empty slot) is accepted; the hash
+  gadget is checked against the native `PH_A` per input length. Two
+  things the build taught: the family's leaf is `PH_A` over ten
+  inputs (`h_aux = 0` last, `sba-core/src/note.rs`), and a circuit
+  that shares the Poseidon chip's columns with its own gadgets is fine
+  — the first failure was the leaf's input count, not the columns.
+  Then into `StepP2` with the links to the transfer statements (a slot's
+  `r_anchor`, nullifiers, keys, ciphertexts and `h_body` are the
+  statement `T_q` exposes; `h_anchor` and the kind are the slot's own,
+  bound by the root tree and the rules); then the chain test with real
+  statements from a replayed history — the indexer's test world, moved
+  where the experiment can drive it.
 
 ## 4. What this study decides
 
