@@ -109,6 +109,7 @@ pub(crate) mod tests_support {
             lagrange: params.get_g_lagrange()[..cap.instance.len()].to_vec(),
             instance_limbs: vec![1; cap.instance.len()],
             expose_instance: true,
+            opened_u_slots: vec![],
             capture: Some(cap.clone()),
         }
     }

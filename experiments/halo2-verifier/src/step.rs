@@ -202,6 +202,7 @@ pub(crate) mod tests_support {
             lagrange: outer.get_g_lagrange()[..instance_q.len()].to_vec(),
             instance_limbs: q_circuit(params, vk, cap).instance_limbs_when_verified(),
             expose_instance: true,
+            opened_u_slots: vec![],
             capture: Some(cap_q.clone()),
         };
         let (_, sources) = q::VerifierCircuit::shape(
@@ -298,6 +299,7 @@ mod tests {
             lagrange: outer.get_g_lagrange()[..instance_q.len()].to_vec(),
             instance_limbs: q_circuit(&params, &vk, &cap).instance_limbs_when_verified(),
             expose_instance: true,
+            opened_u_slots: vec![],
             capture: Some(cap_q.clone()),
         };
         let nonzero = circuit
@@ -373,6 +375,7 @@ mod tests {
             lagrange: outer.get_g_lagrange()[..instance_q.len()].to_vec(),
             instance_limbs: q_circuit(&params, &vk, &cap).instance_limbs_when_verified(),
             expose_instance: true,
+            opened_u_slots: vec![],
             capture: Some(cap_q.clone()),
         };
         // the field side of the transfer proof, over the q circuit's sources
@@ -529,6 +532,7 @@ mod second_step {
             lagrange: pparams.get_g_lagrange()[..instance_p.len()].to_vec(),
             instance_limbs: vec![1; instance_p.len()],
             expose_instance: false,
+            opened_u_slots: vec![],
             capture: Some(cap_p.clone()),
         };
         let nonzero = circuit

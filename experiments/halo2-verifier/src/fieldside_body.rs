@@ -42,6 +42,8 @@ pub enum EvalSrc {
     /// (lookup, 0 product, 1 product_next, 2 permuted_input, 3 permuted_input_inv, 4 permuted_table)
     Lookup(usize, usize),
     ExpectedH,
+    /// The i-th opened claim's value at x, computed from its challenges.
+    Opened(usize),
 }
 
 /// A term of the final MSM, by what it multiplies.
@@ -91,6 +93,8 @@ pub struct Structure {
     /// Per output scalar (the group circuit's source order): the terms summed.
     pub outputs: Vec<Vec<Term>>,
     pub omega: F,
+    /// Challenges per opened claim.
+    pub opened_k: Vec<usize>,
 }
 
 fn rot_of(
@@ -197,6 +201,7 @@ impl Structure {
                     EvalSrc::Lookup(i, which)
                 }
                 CRef::H => EvalSrc::ExpectedH,
+                CRef::Opened(i) => EvalSrc::Opened(i),
             }
         };
         let x1_exp = |p: F| -> usize {
@@ -296,6 +301,7 @@ impl Structure {
             refs,
             outputs,
             omega: domain.get_omega(),
+            opened_k: cap.opened.iter().map(|u| u.len()).collect(),
         };
         (st, sh)
     }
@@ -369,6 +375,9 @@ fn transcript_order(t: &shadow::Typed) -> Vec<F> {
     }
     v.push(t.c);
     v.push(t.f);
+    for u in &t.opened_u {
+        v.extend(u);
+    }
     v
 }
 
@@ -525,6 +534,7 @@ impl FieldSideCircuit {
         let u = take(st.k_inner as usize);
         let c = take(1).remove(0);
         let f = take(1).remove(0);
+        let opened_u: Vec<Vec<Cell>> = st.opened_k.iter().map(|k| take(*k)).collect();
         assert!(it.next().is_none());
 
         // x^n and (x^n - 1)
@@ -710,6 +720,18 @@ impl FieldSideCircuit {
 
         // the multiopen argument: evals per set slot, interpolation, v
         let max_exp = st.refs.iter().map(|r| r.2).max().unwrap_or(0);
+        // each opened claim's value at x: b(x, u) = Π (1 + u_j x^{2^j})
+        let mut opened_evals: Vec<Cell> = Vec::with_capacity(opened_u.len());
+        for cells in &opened_u {
+            let mut b = one.clone();
+            let mut cur = x.clone();
+            for uj in cells.iter().rev() {
+                let t = ch.mul_add(l, uj, &cur, &one)?;
+                b = ch.mul(l, &b, &t)?;
+                cur = ch.mul(l, &cur, &cur)?;
+            }
+            opened_evals.push(b);
+        }
         let mut x1_pows = vec![one.clone()];
         for _ in 0..max_exp {
             let next = ch.mul(l, x1_pows.last().unwrap(), &x_1)?;
@@ -729,6 +751,7 @@ impl FieldSideCircuit {
                 },
                 EvalSrc::Lookup(i, w) => lookup_evals[*i][*w].clone(),
                 EvalSrc::ExpectedH => expected_h_eval.clone(),
+                EvalSrc::Opened(i) => opened_evals[*i].clone(),
             }
         };
         let mut q_eval_sets: Vec<Vec<Option<Cell>>> =
@@ -881,5 +904,6 @@ pub fn st_transcript_len(st: &Structure) -> usize {
         + 3
         + st.k_inner as usize
         + 2
+        + st.opened_k.iter().sum::<usize>()
 }
 

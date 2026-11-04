@@ -102,6 +102,8 @@ pub struct Capture<C: CurveAffine> {
     /// The prover's `G` and the inner-product challenges.
     pub g: C,
     pub u: Vec<C::Scalar>,
+    /// The challenges of each claim the proof opened, in order.
+    pub opened: Vec<Vec<C::Scalar>>,
 }
 
 impl<C: CurveAffine> Capture<C> {
@@ -213,6 +215,7 @@ where
         u_scalar: u_scalar.unwrap_or(C::Scalar::ZERO),
         g: out.g,
         u: out.u,
+        opened: claims.iter().map(|c| c.u.clone()).collect(),
     })
 }
 

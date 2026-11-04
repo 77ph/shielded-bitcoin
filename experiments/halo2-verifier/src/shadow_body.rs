@@ -24,6 +24,10 @@ use crate::capture::{Capture, Event};
 pub struct Typed {
     pub vk_repr: F,
     pub instance_commitment: curve::Affine,
+    /// The `G` of each claim the proof opened, absorbed after the
+    /// instance commitment, and that claim's challenges.
+    pub opened_g: Vec<curve::Affine>,
+    pub opened_u: Vec<Vec<F>>,
     pub advice_commitments: Vec<curve::Affine>,
     pub theta: F,
     pub lookups_permuted: Vec<(curve::Affine, curve::Affine)>,
@@ -118,6 +122,11 @@ impl Typed {
         };
         let vk_repr = r.common_scalar();
         let instance_commitment = r.common_point();
+        let mut opened_g = Vec::new();
+        while matches!(r.events[r.i], Event::CommonPoint(_)) {
+            opened_g.push(r.common_point());
+        }
+        assert_eq!(opened_g.len(), cap.opened.len(), "one G per opened claim");
         let advice_commitments = r.points(cs.num_advice_columns());
         let theta = r.challenge();
         let lookups_permuted = cs
@@ -180,6 +189,8 @@ impl Typed {
         Typed {
             vk_repr,
             instance_commitment,
+            opened_g,
+            opened_u: cap.opened.clone(),
             advice_commitments,
             theta,
             lookups_permuted,
@@ -246,6 +257,8 @@ pub enum CRef {
     PermCommon(usize),
     H,
     Random,
+    /// The `G` of the i-th claim the proof opened.
+    Opened(usize),
 }
 
 /// The scalars, as the verifier computes them.
@@ -266,6 +279,8 @@ pub struct Shadow {
     pub msm_eval: F,
     pub v: F,
     pub b: F,
+    /// The value each opened claim's `G` opens to at `x`: `b(x, u)`.
+    pub opened_evals: Vec<F>,
     /// `(scalar, point)` of the final MSM, before merging equal points.
     pub terms: Vec<(F, curve::Affine)>,
     pub w_scalar: F,
@@ -284,6 +299,17 @@ fn eval_at(e: &Expression<F>, fixed: &[F], advice: &[F], instance: &[F]) -> F {
         &|a, b| a * b,
         &|a, s| a * s,
     )
+}
+
+/// `b(x, u) = Π_j (1 + u_{k−1−j} x^{2^j})`, the value `⟨s(u), g⟩` opens to.
+pub fn b_of(x: F, u: &[F]) -> F {
+    let mut b = F::ONE;
+    let mut cur = x;
+    for uj in u.iter().rev() {
+        b *= F::ONE + *uj * cur;
+        cur = cur.square();
+    }
+    b
 }
 
 /// Lagrange interpolation through `(points[i], evals[i])`, evaluated at `at`.
@@ -581,6 +607,16 @@ impl Shadow {
             point: t.x,
             eval: t.random_eval,
         });
+        // the opened claims: each G a commitment to s(X), queried at x
+        let opened_evals: Vec<F> = t.opened_u.iter().map(|u| b_of(t.x, u)).collect();
+        for (i, (g, e)) in t.opened_g.iter().zip(&opened_evals).enumerate() {
+            let ci = index_of(CRef::Opened(i), Commitment::Point(*g), &mut commitments);
+            queries.push(Query {
+                commitment: ci,
+                point: t.x,
+                eval: *e,
+            });
+        }
 
         // intermediate sets, as `construct_intermediate_sets`
         let mut point_index: BTreeMap<[u8; 32], usize> = BTreeMap::new();
@@ -710,6 +746,7 @@ impl Shadow {
             msm_eval,
             v,
             b,
+            opened_evals,
             terms,
             w_scalar,
             u_scalar,

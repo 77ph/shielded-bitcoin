@@ -78,6 +78,11 @@ pub struct VerifierCircuit {
     /// instead when nothing later needs them; they are witnessed and
     /// bound by the instance commitment either way).
     pub expose_instance: bool,
+    /// Per claim the verified proof opened: the indices of its instance
+    /// values holding that claim's challenges, which this circuit exposes
+    /// even when `expose_instance` is off (the field side of the verified
+    /// proof needs them for the claim's value at `x`).
+    pub opened_u_slots: Vec<Vec<usize>>,
     pub capture: Option<Capture<C>>,
 }
 
@@ -195,8 +200,10 @@ impl VerifierCircuit {
                 Event::CommonPoint(p) => {
                     commons += 1;
                     if commons == 1 {
-                        if self.expose_instance {
-                            for (s, limbs) in cap.instance.iter().zip(&self.instance_limbs) {
+                        for (j, (s, limbs)) in
+                            cap.instance.iter().zip(&self.instance_limbs).enumerate()
+                        {
+                            if self.exposes_value(j) {
                                 v.extend(C::cells(s, *limbs));
                             }
                         }
@@ -242,6 +249,37 @@ pub enum Slot {
 }
 
 impl VerifierCircuit {
+    /// Whether the j-th instance value of the verified proof is a public
+    /// input of this circuit.
+    pub fn exposes_value(&self, j: usize) -> bool {
+        self.expose_instance || self.opened_u_slots.iter().any(|s| s.contains(&j))
+    }
+
+    /// Positions in the layout of the last `k` challenges: the inner-product
+    /// challenges `u_1 … u_k` of the verified proof, its claim's.
+    pub fn ipa_challenge_slots(&self, k: usize) -> Vec<usize> {
+        let layout = self.layout();
+        let n = self.kinds.iter().filter(|k| matches!(k, Kind::Squeeze)).count();
+        (n - k..n)
+            .map(|c| {
+                layout
+                    .iter()
+                    .position(|s| matches!(s, Slot::Challenge(i) if *i == c))
+                    .expect("exposed")
+            })
+            .collect()
+    }
+
+    /// Positions in the layout of the j-th instance value's cells.
+    pub fn instance_value_slots(&self, j: usize) -> Vec<usize> {
+        self.layout()
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| matches!(s, Slot::InstanceValue(i, _) if *i == j))
+            .map(|(p, _)| p)
+            .collect()
+    }
+
     /// The public inputs' layout: what each one is.
     pub fn layout(&self) -> Vec<Slot> {
         let mut v = Vec::new();
@@ -259,8 +297,8 @@ impl VerifierCircuit {
                     challenges += 1;
                 }
                 Kind::CommonPoint => {
-                    if self.expose_instance {
-                        for (j, limbs) in self.instance_limbs.iter().enumerate() {
+                    for (j, limbs) in self.instance_limbs.iter().enumerate() {
+                        if self.exposes_value(j) {
                             for l in 0..*limbs {
                                 v.push(Slot::InstanceValue(j, l));
                             }
@@ -336,6 +374,11 @@ impl VerifierCircuit {
                     challenges += 1;
                 }
                 _ => {}
+            }
+        }
+        for slots in &self.opened_u_slots {
+            for j in slots {
+                links.push(find(&|s| matches!(s, Slot::InstanceValue(i, _) if *i == *j)));
             }
         }
         for j in 0..self.sources.len() {
@@ -499,6 +542,7 @@ impl Circuit<F> for VerifierCircuit {
             lagrange: self.lagrange.clone(),
             instance_limbs: self.instance_limbs.clone(),
             expose_instance: self.expose_instance,
+            opened_u_slots: self.opened_u_slots.clone(),
             capture: None,
         }
     }
@@ -613,7 +657,7 @@ impl VerifierCircuit {
                             layouter,
                             s,
                             self.instance_limbs[j],
-                            self.expose_instance.then_some(&mut exposed),
+                            self.exposes_value(j).then_some(&mut exposed),
                         )?;
                         let base = pinned(&ecc, layouter, *g)?;
                         acc.add_term(&ecc, layouter, &base, &limbs)?;
