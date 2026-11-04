@@ -108,8 +108,11 @@ Tags (replaces the table of `PROFILE.md` §2.1): `tag = LE_int(ASCII)` as
 `sb-a/v1/view`, `sb-a/v1/div`, `sb-a/v1/kdf`, `sb-a/v1/stream`,
 `sb-a/v1/mac`, `sb-a/v1/aux`, `sb-a/v1/nflock` (the last two reserved for
 the swap extension), `sb-a/v1/feeauth` (reserved for the fee vault's
-slice; the HKDF info of the same name derives the authorization secret). Distinct from the paper profile's `sb/v1/…` labels
-by construction.
+slice; the HKDF info of the same name derives the authorization secret),
+`sb-a/v1/imt`, `sb-a/v1/state`, `sb-a/v1/batch` (the accumulated replay
+proof's nullifier tree, state opening and batch digest,
+`REPLAY-PROOF-A.md` §3.7). Distinct from the paper profile's `sb/v1/…`
+labels by construction.
 
 ### 2.2 Byte-oriented hashes
 

@@ -668,7 +668,7 @@ relation over the family's own state, with one change of role: there
 the batch circuit takes the statements on trust (their proofs being the
 client's business, §4.3); here the same circuit holds, in the same
 proof, the field sides of those statements' proofs and the group side
-of the `T_q` that did the rest, so a slot's 23 statement elements are
+of the `T_q` that did the rest, so a slot's statement elements are
 not free witnesses but copies, bound in-circuit, of the transfer
 statement `T_q(i)` exposed as that proof's instance (the `q` group side
 recomputes the instance commitment from them: a statement is bound to
@@ -689,9 +689,9 @@ for the light client's own copy of the statements.
   the CLI reads; the trees are what the proof opens), and the
   checkpoints extended so that a reorganisation rolls the trees back
   as it rolls the set back.
-* **Slot.** The paper's 18 elements become the family's: `h_anchor`,
+* **Slot.** The paper's 18 elements become the family's 16: `h_anchor`,
   `r_anchor`, 2 nullifiers, 2 × (`pk_eph` as two coordinates, `ct_note`
-  as its 6 elements), `h_body`, the kind — 23, with no `h_aux` (the
+  as its 3 elements), `h_body`, the kind — with no `h_aux` (the
   family's leaf is `note_leaf(const_salt, h_body, j, pk_eph, ct)`,
   `sba-core/src/note.rs`, which the circuit recomputes with the
   Poseidon chip). The transfer statement's `const_salt` and arities are

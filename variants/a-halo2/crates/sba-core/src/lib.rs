@@ -1,12 +1,15 @@
 //! Variant A core (`docs/PROFILE-A.md` §3–§7): keys, addresses, notes,
-//! encryption, leaves, nullifiers, the envelope codec and the note tree,
+//! encryption, leaves, nullifiers, the envelope codec, the note tree, the
+//! indexed nullifier tree and the replay batch (`docs/REPLAY-PROOF-A.md`),
 //! over the Pasta field and the Pallas curve. The design is the paper's
 //! (`sb-core`), the field, curve, hash mode and wire version are the
 //! family's; the two never share a value.
 
 pub mod address;
+pub mod batch;
 pub mod envelope;
 pub mod event;
+pub mod imt;
 pub mod keys;
 pub mod note;
 pub mod recovery;
