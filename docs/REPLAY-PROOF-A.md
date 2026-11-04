@@ -1,4 +1,4 @@
-# Succinct replay proofs for variant A (study, draft v0.3)
+# Succinct replay proofs for variant A (study, draft v0.4)
 
 Status: a study, no code beyond `experiments/halo2-accumulate`. The
 question `VARIANT-A.md` §7 left for after S6: the paper's §22.2 asks
@@ -288,8 +288,46 @@ prover refuses a wrong challenge), the 128-bit challenge is a
 constrained cell (`s0 = c + 2^128 h`, `c < 2^128`, `h < 2^127` through
 the 10-bit table), and a transcript of the shape of a transfer proof's
 (201 absorbed elements, 25 challenges, 104 permutations) fits
-**k = 13** on its own, below the ≈ 9 000 rows estimated above. The
-verifier gadget composing the two over `vesta-ecc` is the next step.
+**k = 13** on its own, below the ≈ 9 000 rows estimated above.
+
+**The verifier gadget, measured the same day**
+(`experiments/halo2-verifier/src/{capture,verifier}.rs`). The native
+verifier is run first with a recording Poseidon transcript and a
+strategy that keeps the guard's deferred form (`Guard::use_g`, the
+accumulated mode of §2), which yields for one real transfer proof: 1
+instance commitment and the key's representative absorbed, 55 points
+and 83 scalars read, 25 challenges, and a final multi-scalar
+multiplication of **91 distinct points** (the proof's 55, the instance
+commitment, the key's 21 fixed and 13 permutation commitments — three of
+which coincide, as identical fixed columns commit to the same point and
+`halo2_proofs` merges equal bases — `G_0`, and the prover's accumulator
+`G`) plus `W` and `U`. The circuit over `Fq` walks the events: every
+point is witnessed on the Vesta chip (on the curve, not the identity)
+and absorbed as `x, y`; every scalar is witnessed as the embedded `Fq`
+element and absorbed; every challenge is squeezed as a constrained
+128-bit cell; then each of the 93 points is multiplied by its witnessed
+scalar (the key's commitments, `G_0`, `W`, `U` pinned as constants) and
+the sum is constrained to the identity. Public inputs (206): the
+scalars and challenges in transcript order, the 93 multiplication
+scalars, and `G`. What it proves: these proof bytes bind these
+challenges, and with these scalars the group equation holds; the field
+side (that the scalars are the right functions of the challenges and
+evaluations) is the `Fp` circuit's, not yet written.
+
+[measured, 4 November 2026, laptop]: **k = 15** (32 768 rows): 101
+transcript permutations, 93 variable-base multiplications; the mock
+prover accepts the real proof's capture in 0.7 s and refuses a
+tampered scalar; as a Pallas-committed proof of its own: key
+generation 11.1 s, proving **4.2 s**, verification 55 ms, 4 416 bytes,
+1.0 GB peak. That is a quarter of the ≈ 2^17 estimated in §3.3: the
+chip's variable-base multiplication costs ≈ 260 rows, not 700. Not yet
+in: the instance commitment recomputed from the instance values
+(witnessed and exposed instead; 17 fixed-base multiplications), and
+the `Fp` side. Vendored for it, in `experiments/halo2_proofs-patched`:
+`halo2_proofs` 0.3.5 with five read-only accessors made public (the
+MSM's terms, the parameters' `W`, `U` and Lagrange generators, the
+key's commitments), used through `[patch.crates-io]` by that experiment
+alone.
 
 ### 3.4 Sizes on the light client's side [computed]
 
@@ -317,19 +355,21 @@ blocks.
 * **Before any accumulable deployment:** the algebraic transcript
   (§3.2 piece 2), as `a-0.x`, with the vectors regenerated; the rest
   of the circuit untouched. Done: a-0.3, 4 November 2026.
-* **The measurement that decides the rest:** the succinct-verifier
-  gadget prototype (§3.2 piece 1, §3.3) in `experiments/`, over `Fq`
-  with a Vesta ECC chip, verifying one transfer proof: rows, k, proving
-  time. If it lands near the estimate (≈ 2^16 rows per proof), the
+* **The measurement that decides the rest: made.** The succinct-verifier
+  gadget (§3.3) verifies the group part of one transfer proof at k = 15,
+  2^15 rows, a quarter of the estimate; a batch of 16 transfer proofs
+  is ≈ 2^19 rows of verification, which the laptop proves (the k = 14
+  transfer takes 2 s; k = 19 of the order of a minute). So the
   recursive `T` is a slice of ordinary size, on the paper's scale per
-  slot; if it is an order of magnitude worse, a batch of 16 transfer
-  proofs does not fit a circuit the laptop can prove, and the design
-  moves to verifying transfer proofs natively per block (the batched
-  mode of §2) with recursion only over the `T` chain, which keeps the
-  light client's constant size but trusts the indexer for the transfer
-  proofs it did not verify — a weaker statement that must be said as
-  such. Steps: the Vesta chip port with the gadget crate's tests, the
-  transcript gadget, the verifier gadget, each measured.
+  slot, and the design stays the full one: every transfer proof
+  verified in-circuit, no trust in the indexer for them.
+* **Next, in order:** the instance commitment inside the verifier
+  gadget (fixed-base multiplications over the Lagrange generators); the
+  `Fp` circuit that checks the multiplication scalars against the
+  challenges and evaluations (the gate polynomials of the transfer
+  circuit evaluated at `x`, the permutation and lookup expressions, the
+  multiopen and inner-product scalars); then `T` in Halo 2 carrying both
+  accumulators.
 * **Not now:** porting `T` (piece 3) before the gadget is measured;
   Nova or any folding library, for the reason in §3.2.
 
@@ -356,6 +396,9 @@ blocks.
 
 ## 6. Changelog
 
+* **v0.4** (4 November 2026) — the verifier gadget measured on a real
+  proof (§3.3: k = 15, 4.2 s), §4's deciding measurement made and the
+  next steps set.
 * **v0.3** (4 November 2026) — §2 re-measured under the a-0.3
   transcript; §3.3, the verifier split by field with the message
   inventory of this circuit and the row estimate; §4's third decision

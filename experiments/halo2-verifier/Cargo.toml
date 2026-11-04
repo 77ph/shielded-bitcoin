@@ -8,12 +8,17 @@ description = "The in-circuit pieces of a verifier of variant A's proofs, over F
 vesta-ecc = { path = "../vesta-ecc" }
 sba-circuit = { path = "../../variants/a-halo2/crates/sba-circuit" }
 sba-primitives = { path = "../../variants/a-halo2/crates/sba-primitives" }
+sba-core = { path = "../../variants/a-halo2/crates/sba-core" }
 halo2_proofs = "0.3"
 halo2_gadgets = "0.5"
 pasta_curves = "0.5"
 ff = "0.13"
 group = "0.13"
 rand = "0.8"
+
+[patch.crates-io]
+# the vendored copy with three read-only accessors (see its Cargo.toml)
+halo2_proofs = { path = "../halo2_proofs-patched" }
 
 [profile.release]
 debug = false
