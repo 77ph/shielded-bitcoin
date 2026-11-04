@@ -364,7 +364,9 @@ implementation of the paper? Rules this repository adopts:
 
 * **v0.9** (4 November 2026) — the recursion study's deciding
   measurement made (`REPLAY-PROOF-A.md` §3.3–§4: the group part of a
-  transfer proof verifies in an `Fq` circuit at k = 15).
+  transfer proof verifies in an `Fq` circuit at k = 15, the field part
+  in an `Fp` circuit at k = 13: one transfer proof verified entirely
+  in-circuit).
 * **v0.8** (4 November 2026) — profile a-0.3: the Poseidon transcript
   (`PROFILE-A.md` §1.1, `REPLAY-PROOF-A.md` §4), the first step towards
   the accumulated replay proof.

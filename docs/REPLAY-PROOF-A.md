@@ -1,4 +1,4 @@
-# Succinct replay proofs for variant A (study, draft v0.4)
+# Succinct replay proofs for variant A (study, draft v0.5)
 
 Status: a study, no code beyond `experiments/halo2-accumulate`. The
 question `VARIANT-A.md` §7 left for after S6: the paper's §22.2 asks
@@ -342,8 +342,41 @@ each set at `x_3`, `v`, `b`, and the inner product's scalars — and is
 checked term by term against the captured MSM [measured: every scalar
 equal]. `src/field.rs` is the `Fp` chip the circuit will use (one row
 per operation: `a·b·m + a·sa + b·sb + c·sc + k = d`, with inversion as a
-witnessed inverse and an expression-tree evaluator). The circuit that
-mirrors the shadow is the remaining step of piece 3. Vendored for it, in `experiments/halo2_proofs-patched`:
+witnessed inverse and an expression-tree evaluator).
+
+**The field side, measured the same day**
+(`experiments/halo2-verifier/src/fieldside.rs`): the circuit over `Fp`
+that mirrors the shadow step by step with that chip. Its structure
+(the gate polynomials, the permutation columns and their query indices,
+the lookup expressions, the evaluation points as rotations of `x`, the
+point sets, each commitment reference's set and `x_1` exponent, and
+which references share a point) is built once from the key and one
+capture; its public inputs are the challenges and the proof's
+evaluations in transcript order (107), then the 93 scalars in the group
+circuit's source order, then the `W` and `U` scalars (202 in all). It
+recomputes `x^n`, the Lagrange evaluations `l_0`, `l_last`, `l_blind`
+(one inversion each), every gate polynomial at `x`, the permutation and
+lookup expressions, the expected quotient evaluation, the multiopen
+combination (the interpolation of each point set at `x_3` with the
+inversions it needs), `v`, `b`, the inner product's scalars, and the
+sums over coinciding points, and constrains the results to the
+exposed scalars [measured: the mock prover accepts the real proof's
+values and refuses a wrong challenge and a wrong output scalar]:
+**3 192 field operations, k = 13**; as a Vesta-committed proof of its
+own: key generation 2.5 s, proving **0.6 s**, verification 17 ms,
+2 272 bytes.
+
+**So the whole verification of one transfer proof is in two circuits:**
+the group side over `Fq` (k = 15, 4.5 s to prove) and the field side
+over `Fp` (k = 13, 0.6 s), joined by their shared public inputs (the
+challenges, the evaluations, the 93 scalars, `W`, `U`). What a batch
+step `T` adds is the accumulation itself: it carries the two
+accumulators (one per curve), absorbs each new transfer proof's claim
+`(G, u_1 … u_14)` into the Vesta one and the field circuit's proof's
+claim into the Pallas one, and is verified in turn the same way; for 16
+transfers per step that is ≈ 2^19 rows on the `Fq` side and ≈ 2^17 on
+the `Fp` side, a minute of proving on the laptop by the scaling of the
+transfer circuit (2 s at k = 14). Vendored for it, in `experiments/halo2_proofs-patched`:
 `halo2_proofs` 0.3.5 with five read-only accessors made public (the
 MSM's terms, the parameters' `W`, `U` and Lagrange generators, the
 key's commitments), used through `[patch.crates-io]` by that experiment
@@ -383,11 +416,15 @@ blocks.
   recursive `T` is a slice of ordinary size, on the paper's scale per
   slot, and the design stays the full one: every transfer proof
   verified in-circuit, no trust in the indexer for them.
-* **Next, in order:** the `Fp` circuit that checks the multiplication
-  scalars against the challenges and evaluations (the gate polynomials
-  of the transfer circuit evaluated at `x`, the permutation and lookup
-  expressions, the multiopen and inner-product scalars); then `T` in
-  Halo 2 carrying both accumulators.
+* **Next:** `T` in Halo 2 carrying both accumulators (§3.3's last
+  paragraph): the batch relation of `REPLAY-PROOF.md` §4.2 over the
+  family's Poseidon, plus the two circuits above applied to each
+  transfer proof of the batch and to the previous step's proofs, with
+  the accumulators' claims settled by the light client at the end with
+  two multi-scalar multiplications. Design first (what each of the two
+  circuits of a step contains, what crosses between them as public
+  inputs, the wire format of a proven block), then the port of
+  `batch.rs`.
 * **Not now:** porting `T` (piece 3) before the gadget is measured;
   Nova or any folding library, for the reason in §3.2.
 
@@ -414,6 +451,9 @@ blocks.
 
 ## 6. Changelog
 
+* **v0.5** (4 November 2026) — the field side measured on the real
+  proof (§3.3: k = 13, 0.6 s); the verification of one transfer proof
+  complete in two circuits; the batch step `T` set as the next design.
 * **v0.4** (4 November 2026) — the verifier gadget measured on a real
   proof (§3.3: k = 15, 4.5 s with the instance commitment recomputed
   in-circuit), §4's deciding measurement made and the next steps set.
