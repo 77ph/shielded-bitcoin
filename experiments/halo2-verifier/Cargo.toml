@@ -15,6 +15,7 @@ pasta_curves = "0.5"
 ff = "0.13"
 group = "0.13"
 rand = "0.8"
+hex = "0.4"
 
 [patch.crates-io]
 # the vendored copy with three read-only accessors (see its Cargo.toml)

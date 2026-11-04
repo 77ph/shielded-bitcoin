@@ -4,6 +4,7 @@
 //! (`transcript`), the group side (`verifier`, one body for both sides) and
 //! the field side (`fieldside`), each measured.
 
+pub mod batch;
 pub mod capture;
 pub mod field;
 pub mod fieldside;
