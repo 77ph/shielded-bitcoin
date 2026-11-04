@@ -9,15 +9,12 @@
 //! The decider — the native verifier of `T_q` and of `T_p` with that claim
 //! — never touches the transfer proof.
 
-use ff::PrimeField;
-use halo2_proofs::circuit::{Layouter, SimpleFloorPlanner};
-use halo2_proofs::plonk::{Circuit, ConstraintSystem, Error};
-use pasta_curves::vesta;
-
-use crate::capture::{Capture, Event};
 use crate::field::fp::{FieldChip, FieldConfig};
 use crate::fieldside::fp::FieldSideCircuit;
 use crate::verifier::p;
+use ff::PrimeField;
+use halo2_proofs::circuit::{Layouter, SimpleFloorPlanner};
+use halo2_proofs::plonk::{Circuit, ConstraintSystem, Error};
 use sba_primitives::Fp;
 
 /// `T_p` without the batch relation: the `p` group side of a `T_q` proof
@@ -26,9 +23,9 @@ use sba_primitives::Fp;
 pub struct StepP {
     pub group: p::VerifierCircuit,
     pub field: FieldSideCircuit,
-    /// For each of the field side's inputs and outputs, the index of the
-    /// `T_q` instance value it must equal.
-    pub link: Vec<usize>,
+    /// For each of the field side's inputs and outputs, the indices of the
+    /// `T_q` instance values (its limbs) it must equal.
+    pub link: Vec<Vec<usize>>,
 }
 
 impl std::fmt::Debug for StepP {
@@ -41,31 +38,6 @@ impl std::fmt::Debug for StepP {
 pub struct StepPConfig {
     pub group: p::VerifierConfig,
     pub field: FieldConfig,
-}
-
-impl StepP {
-    /// The link from the field side's cells to `T_q`'s instance values
-    /// (`q::VerifierCircuit::instance`'s order): the scalar events in
-    /// transcript order, skipping the transfer statement's values, then
-    /// the MSM scalars, `W`'s and `U`'s.
-    pub fn link(cap_pi: &Capture<vesta::Affine>, n_outputs: usize) -> Vec<usize> {
-        let mut map = Vec::new();
-        let mut q = 0usize;
-        for e in &cap_pi.events {
-            match e {
-                Event::CommonScalar(_) | Event::ReadScalar(_) | Event::Squeeze(_) => {
-                    map.push(q);
-                    q += 1;
-                }
-                Event::CommonPoint(_) => q += cap_pi.instance.len(),
-                Event::ReadPoint(_) => {}
-            }
-        }
-        for i in 0..n_outputs + 2 {
-            map.push(q + i);
-        }
-        map
-    }
 }
 
 impl Circuit<Fp> for StepP {
@@ -88,7 +60,8 @@ impl Circuit<Fp> for StepP {
     }
 
     fn synthesize(&self, cfg: StepPConfig, mut layouter: impl Layouter<Fp>) -> Result<(), Error> {
-        let exposed = self.group.synthesize_core(&cfg.group, &mut layouter)?;
+        cfg.group.assign_table(&mut layouter)?;
+        let exposed = self.group.synthesize_core(&cfg.group, &mut layouter, 0)?;
         let (inputs, outputs) = self
             .field
             .synthesize_core(&cfg.field, None, &mut layouter)?;
@@ -97,11 +70,15 @@ impl Circuit<Fp> for StepP {
         let l = &mut layouter;
         let two_128 = ch.constant(l, Fp::from_u128(1u128 << 64).square())?;
         for (cell, m) in inputs.iter().chain(outputs.iter()).zip(&self.link) {
-            let limbs = &exposed.instance_values[*m];
-            let value = if limbs.len() == 1 {
-                limbs[0].clone()
-            } else {
-                ch.mul_add(l, &limbs[1], &two_128, &limbs[0])?
+            // the T_q instance values at `m`, each as the cells T_p carries it in
+            let limbs: Vec<_> = m
+                .iter()
+                .flat_map(|i| exposed.instance_values[*i].iter().cloned())
+                .collect();
+            let value = match limbs.len() {
+                1 => limbs[0].clone(),
+                2 => ch.mul_add(l, &limbs[1], &two_128, &limbs[0])?,
+                n => panic!("{n} limbs"),
             };
             ch.assert_equal(l, cell, &value)?;
         }
@@ -223,7 +200,7 @@ pub(crate) mod tests_support {
             params_w: outer.get_w(),
             params_u: outer.get_u(),
             lagrange: outer.get_g_lagrange()[..instance_q.len()].to_vec(),
-            instance_limbs: q_circuit(params, vk, cap).instance_limbs_when_verified(cap),
+            instance_limbs: q_circuit(params, vk, cap).instance_limbs_when_verified(),
             expose_instance: true,
             capture: Some(cap_q.clone()),
         };
@@ -234,7 +211,7 @@ pub(crate) mod tests_support {
             vk.permutation_commitments(),
         );
         let (structure, shadow) = Structure::build(params, vk, cap, &sources);
-        let link = super::StepP::link(cap, structure.outputs.len());
+        let link = q_circuit(params, vk, cap).links_for_field_side();
         let field = FieldSideCircuit {
             structure,
             shadow: Some(shadow),
@@ -297,6 +274,7 @@ mod tests {
     use halo2_proofs::dev::MockProver;
     use halo2_proofs::plonk::{self, Circuit};
     use halo2_proofs::poly::commitment::{Claim, Params};
+    use pasta_curves::vesta;
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 
@@ -318,7 +296,7 @@ mod tests {
             params_w: outer.get_w(),
             params_u: outer.get_u(),
             lagrange: outer.get_g_lagrange()[..instance_q.len()].to_vec(),
-            instance_limbs: q_circuit(&params, &vk, &cap).instance_limbs_when_verified(&cap),
+            instance_limbs: q_circuit(&params, &vk, &cap).instance_limbs_when_verified(),
             expose_instance: true,
             capture: Some(cap_q.clone()),
         };
@@ -393,7 +371,7 @@ mod tests {
             params_w: outer.get_w(),
             params_u: outer.get_u(),
             lagrange: outer.get_g_lagrange()[..instance_q.len()].to_vec(),
-            instance_limbs: q_circuit(&params, &vk, &cap).instance_limbs_when_verified(&cap),
+            instance_limbs: q_circuit(&params, &vk, &cap).instance_limbs_when_verified(),
             expose_instance: true,
             capture: Some(cap_q.clone()),
         };
@@ -405,7 +383,7 @@ mod tests {
             vk.permutation_commitments(),
         );
         let (structure, shadow) = Structure::build(&params, &vk, &cap, &sources);
-        let link = StepP::link(&cap, structure.outputs.len());
+        let link = q_circuit(&params, &vk, &cap).links_for_field_side();
         let field = FieldSideCircuit {
             structure,
             shadow: Some(shadow),
@@ -414,8 +392,9 @@ mod tests {
         let field_values = field.instance();
         assert_eq!(field_values.len(), link.len());
         for (v, m) in field_values.iter().zip(&link) {
-            // the same integer in both fields
-            assert_eq!(v.to_repr(), instance_q[*m].to_repr(), "link {m}");
+            // the same integer in both fields (one limb on this side)
+            assert_eq!(m.len(), 1);
+            assert_eq!(v.to_repr(), instance_q[m[0]].to_repr(), "link {m:?}");
         }
         let step = StepP { group, field, link };
         let instance = step.group.instance(&cap_q);
