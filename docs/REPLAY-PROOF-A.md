@@ -281,8 +281,15 @@ is exactly what a verifier multiplies by (challenges and evaluation
 scalars live in `Fp`) — and the crate's tests that drew scalars as
 random base-field elements or `−1` were changed to draw them in `Fp`.
 The transcript gadget is the gadget crate's `Pow5Chip` over `Fq` with
-the sponge rule of `PROFILE-A.md` §1.1; the verifier gadget composes
-the two: the next two steps.
+the sponge rule of `PROFILE-A.md` §1.1: **done the same day,
+`experiments/halo2-verifier/src/transcript.rs`** [measured]: the gadget
+reproduces the native sponge's challenges on random scripts (the mock
+prover refuses a wrong challenge), the 128-bit challenge is a
+constrained cell (`s0 = c + 2^128 h`, `c < 2^128`, `h < 2^127` through
+the 10-bit table), and a transcript of the shape of a transfer proof's
+(201 absorbed elements, 25 challenges, 104 permutations) fits
+**k = 13** on its own, below the ≈ 9 000 rows estimated above. The
+verifier gadget composing the two over `vesta-ecc` is the next step.
 
 ### 3.4 Sizes on the light client's side [computed]
 
@@ -350,9 +357,10 @@ blocks.
 ## 6. Changelog
 
 * **v0.3** (4 November 2026) — §2 re-measured under the a-0.3
-  transcript; §3.4, the verifier split by field with the message
+  transcript; §3.3, the verifier split by field with the message
   inventory of this circuit and the row estimate; §4's third decision
-  made concrete.
+  made concrete; the Vesta chip port and the transcript gadget done and
+  measured (§3.3).
 * **v0.2** (4 November 2026) — §3.2 piece 2 and §4's second decision
   done (the Poseidon transcript, a-0.3).
 * **v0.1** (3 November 2026) — the three questions under A, the

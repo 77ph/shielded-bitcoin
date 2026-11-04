@@ -1,0 +1,21 @@
+[package]
+name = "halo2-verifier"
+version = "0.1.0"
+edition = "2021"
+description = "The in-circuit pieces of a verifier of variant A's proofs, over Fq with Vesta points (docs/REPLAY-PROOF-A.md 3.3): the transcript gadget first"
+
+[dependencies]
+vesta-ecc = { path = "../vesta-ecc" }
+sba-circuit = { path = "../../variants/a-halo2/crates/sba-circuit" }
+sba-primitives = { path = "../../variants/a-halo2/crates/sba-primitives" }
+halo2_proofs = "0.3"
+halo2_gadgets = "0.5"
+pasta_curves = "0.5"
+ff = "0.13"
+group = "0.13"
+rand = "0.8"
+
+[profile.release]
+debug = false
+
+[workspace]
