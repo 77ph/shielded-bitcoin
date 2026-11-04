@@ -446,3 +446,90 @@ fn two_bad_proofs_in_one_block_are_both_rejected() {
     assert_eq!(idx.state.events[1].tx_index, 2);
     assert_eq!(idx.state.tree.size(), 1 + 2);
 }
+
+/// Every replayed block leaves a batch witness (`REPLAY-PROOF-A.md` §3.7)
+/// that the relation accepts natively, and the witnesses chain through
+/// the state openings: a block's `s_next` is the next block's `s_prev`,
+/// the last one opens to the state as it stands; a reorganisation drops
+/// them with their blocks.
+#[test]
+fn batch_witnesses_chain_through_the_openings() {
+    use sba_core::batch::batch_digest;
+    let mut w = World::new();
+    let (_, alice0) = w.alice.ivk.find_address(0);
+    let (_, bob0) = w.bob.ivk.find_address(0);
+    let mut chain = MockChain::new(ACTIVATION);
+    let mut idx = w.indexer();
+    let (mint_tx, _) = w.mint_tx(&alice0, 1000);
+    chain.push_block(vec![mint_tx]);
+    chain.push_block(vec![]);
+    idx.sync(&chain).unwrap();
+    let ev = &idx.state.events[0];
+    let (pk_eph, ct) = &ev.outputs[0];
+    let pt = decrypt_as_recipient(&w.alice.ivk.sk_view, pk_eph, ct).unwrap();
+    let mint_hb = ev.h_body;
+    let env = w.transfer(
+        &idx,
+        1001,
+        Some((pt, mint_hb, 0, 0)),
+        [(bob0, 700), (alice0, 300)],
+    );
+    let bytes = env.to_bytes();
+    let (mint2, _) = w.mint_tx(&alice0, 5);
+    chain.push_block(vec![
+        tx_with(vec![carrier_output(&bytes)]),
+        tx_with(vec![carrier_output(&bytes)]),
+        mint2,
+    ]);
+    idx.sync(&chain).unwrap();
+    assert_eq!(idx.state.batches.len(), 3);
+    let params = idx.batch_params();
+    let mut prev_next = idx.state.batches[0].prev.digest();
+    let mut last = None;
+    for (i, wit) in idx.state.batches.iter().enumerate() {
+        let st = wit
+            .check(&params)
+            .unwrap_or_else(|| panic!("block {i} witness refused"));
+        assert_eq!(st.s_prev, prev_next, "block {i} chains");
+        let slots: Vec<_> = wit
+            .slots
+            .iter()
+            .map(|s| s.as_ref().map(|s| s.statement))
+            .collect();
+        assert_eq!(st.d, batch_digest(&slots));
+        prev_next = st.s_next;
+        last = Some(st);
+    }
+    // block 1002: the transfer and the mint, the duplicate rejected
+    let b = &idx.state.batches[2];
+    assert_eq!(b.slots.len(), 2);
+    assert!(!b.slots[0].as_ref().unwrap().statement.mint);
+    assert!(b.slots[1].as_ref().unwrap().statement.mint);
+    assert_eq!(
+        last.unwrap().s_next,
+        idx.state.opening(idx.next_height()).digest()
+    );
+    assert_eq!(idx.state.nf_tree.len(), 2);
+    assert_eq!(idx.state.h_tree.size(), 4);
+    // a tampered witness is refused
+    let mut bad = b.clone();
+    bad.slots[0].as_mut().unwrap().statement.nullifiers[0] += Fp::one();
+    assert!(bad.check(&params).is_none());
+    let mut bad = b.clone();
+    bad.slots[0].as_mut().unwrap().statement.h_anchor = 0;
+    assert!(bad.check(&params).is_none(), "window");
+    // persistence keeps the trees; a reorganisation drops the witnesses
+    let again = ReplayState::from_json(&idx.state.to_json()).unwrap();
+    assert_eq!(again.nf_tree.root(), idx.state.nf_tree.root());
+    assert_eq!(again.h_tree.root(), idx.state.h_tree.root());
+    chain.reorg_to(1001);
+    chain.push_block(vec![]);
+    idx.sync(&chain).unwrap();
+    assert_eq!(idx.state.batches.len(), 3);
+    assert_eq!(idx.state.nf_tree.len(), 0);
+    assert_eq!(idx.state.h_tree.size(), 4);
+    assert_eq!(
+        idx.state.batches[2].check(&params).unwrap().s_next,
+        idx.state.opening(idx.next_height()).digest()
+    );
+}
