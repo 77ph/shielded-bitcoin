@@ -112,12 +112,19 @@ impl Typed {
     /// Parse the events in the verifier's order (`plonk::verify_proof`).
     pub fn parse(vk: &VerifyingKey<vesta::Affine>, cap: &Capture, k: u32) -> Typed {
         let cs = vk.cs();
-        let mut r = Reader { events: &cap.events, i: 0 };
+        let mut r = Reader {
+            events: &cap.events,
+            i: 0,
+        };
         let vk_repr = r.common_scalar();
         let instance_commitment = r.common_point();
         let advice_commitments = r.points(cs.num_advice_columns());
         let theta = r.challenge();
-        let lookups_permuted = cs.lookups().iter().map(|_| (r.point(), r.point())).collect();
+        let lookups_permuted = cs
+            .lookups()
+            .iter()
+            .map(|_| (r.point(), r.point()))
+            .collect();
         let beta = r.challenge();
         let gamma = r.challenge();
         let chunk_len = cs.degree() - 2;
@@ -137,7 +144,11 @@ impl Typed {
             .map(|i| {
                 let e = r.scalar();
                 let n = r.scalar();
-                let l = if i + 1 < n_chunks { Some(r.scalar()) } else { None };
+                let l = if i + 1 < n_chunks {
+                    Some(r.scalar())
+                } else {
+                    None
+                };
                 (e, n, l)
             })
             .collect();
@@ -160,7 +171,9 @@ impl Typed {
         let s_poly = r.point();
         let xi = r.challenge();
         let z = r.challenge();
-        let rounds = (0..k as usize).map(|_| (r.point(), r.point(), r.challenge())).collect();
+        let rounds = (0..k as usize)
+            .map(|_| (r.point(), r.point(), r.challenge()))
+            .collect();
         let c = r.scalar();
         let f = r.scalar();
         assert_eq!(r.i, cap.events.len(), "every event consumed");
@@ -289,7 +302,11 @@ pub fn interpolate_at(points: &[Fp], evals: &[Fp], at: Fp) -> Fp {
 }
 
 impl Shadow {
-    pub fn compute(params: &Params<vesta::Affine>, vk: &VerifyingKey<vesta::Affine>, cap: &Capture) -> Shadow {
+    pub fn compute(
+        params: &Params<vesta::Affine>,
+        vk: &VerifyingKey<vesta::Affine>,
+        cap: &Capture,
+    ) -> Shadow {
         let t = Typed::parse(vk, cap, params.k());
         let cs = vk.cs();
         let domain = vk.get_domain();
@@ -305,7 +322,12 @@ impl Shadow {
         let mut expressions: Vec<Fp> = Vec::new();
         for gate in cs.gates() {
             for poly in gate.polynomials() {
-                expressions.push(eval_at(poly, &t.fixed_evals, &t.advice_evals, &t.instance_evals));
+                expressions.push(eval_at(
+                    poly,
+                    &t.fixed_evals,
+                    &t.advice_evals,
+                    &t.instance_evals,
+                ));
             }
         }
         // permutation
@@ -325,7 +347,12 @@ impl Shadow {
         if let Some(last) = t.permutation_sets.last() {
             expressions.push((last.0.square() - last.0) * l_last);
         }
-        for (set, prev) in t.permutation_sets.iter().skip(1).zip(t.permutation_sets.iter()) {
+        for (set, prev) in t
+            .permutation_sets
+            .iter()
+            .skip(1)
+            .zip(t.permutation_sets.iter())
+        {
             expressions.push((set.0 - prev.2.unwrap()) * l_0);
         }
         for (chunk_index, ((set, cols), perm_evals)) in t
@@ -340,7 +367,8 @@ impl Shadow {
                 left *= eval_of(*col) + t.beta * pe + t.gamma;
             }
             let mut right = set.0;
-            let mut current_delta = (t.beta * t.x) * Fp::DELTA.pow_vartime([(chunk_index * chunk_len) as u64]);
+            let mut current_delta =
+                (t.beta * t.x) * Fp::DELTA.pow_vartime([(chunk_index * chunk_len) as u64]);
             for col in cols {
                 right *= eval_of(*col) + current_delta + t.gamma;
                 current_delta *= Fp::DELTA;
@@ -358,75 +386,201 @@ impl Shadow {
                     .fold(Fp::ZERO, |acc, e| acc * t.theta + e)
             };
             let left = product_next * (pin + t.beta) * (ptable + t.gamma);
-            let right = product * (compress(&arg.input_expressions) + t.beta) * (compress(&arg.table_expressions) + t.gamma);
+            let right = product
+                * (compress(&arg.input_expressions) + t.beta)
+                * (compress(&arg.table_expressions) + t.gamma);
             expressions.push(l_0 * (Fp::ONE - product));
             expressions.push(l_last * (product.square() - product));
             expressions.push((left - right) * active_rows);
             expressions.push(l_0 * (pin - ptable));
             expressions.push((pin - ptable) * (pin - pin_inv) * active_rows);
         }
-        let expected_h_eval =
-            expressions.iter().fold(Fp::ZERO, |h, v| h * t.y + v) * (xn - Fp::ONE).invert().unwrap();
+        let expected_h_eval = expressions.iter().fold(Fp::ZERO, |h, v| h * t.y + v)
+            * (xn - Fp::ONE).invert().unwrap();
 
         // the queries, in the verifier's order
         let mut commitments: Vec<(CRef, Commitment)> = Vec::new();
         let mut queries: Vec<Query> = Vec::new();
-        let index_of = |r: CRef, c: Commitment, commitments: &mut Vec<(CRef, Commitment)>| -> usize {
-            if let Some(i) = commitments.iter().position(|(x, _)| *x == r) {
-                return i;
-            }
-            commitments.push((r, c));
-            commitments.len() - 1
-        };
+        let index_of =
+            |r: CRef, c: Commitment, commitments: &mut Vec<(CRef, Commitment)>| -> usize {
+                if let Some(i) = commitments.iter().position(|(x, _)| *x == r) {
+                    return i;
+                }
+                commitments.push((r, c));
+                commitments.len() - 1
+            };
         let rot = |r: Rotation| domain.rotate_omega(t.x, r);
         for (qi, (col, at)) in cs.instance_queries().iter().enumerate() {
-            let ci = index_of(CRef::Instance(col.index()), Commitment::Point(t.instance_commitment), &mut commitments);
-            queries.push(Query { commitment: ci, point: rot(*at), eval: t.instance_evals[qi] });
+            let ci = index_of(
+                CRef::Instance(col.index()),
+                Commitment::Point(t.instance_commitment),
+                &mut commitments,
+            );
+            queries.push(Query {
+                commitment: ci,
+                point: rot(*at),
+                eval: t.instance_evals[qi],
+            });
         }
         for (qi, (col, at)) in cs.advice_queries().iter().enumerate() {
-            let ci = index_of(CRef::Advice(col.index()), Commitment::Point(t.advice_commitments[col.index()]), &mut commitments);
-            queries.push(Query { commitment: ci, point: rot(*at), eval: t.advice_evals[qi] });
+            let ci = index_of(
+                CRef::Advice(col.index()),
+                Commitment::Point(t.advice_commitments[col.index()]),
+                &mut commitments,
+            );
+            queries.push(Query {
+                commitment: ci,
+                point: rot(*at),
+                eval: t.advice_evals[qi],
+            });
         }
         // permutation queries
         let x_next = rot(Rotation::next());
         let x_last = rot(Rotation(-((blinding + 1) as i32)));
-        for (i, (set, pc)) in t.permutation_sets.iter().zip(&t.permutation_products).enumerate() {
-            let ci = index_of(CRef::PermProduct(i), Commitment::Point(*pc), &mut commitments);
-            queries.push(Query { commitment: ci, point: t.x, eval: set.0 });
-            queries.push(Query { commitment: ci, point: x_next, eval: set.1 });
+        for (i, (set, pc)) in t
+            .permutation_sets
+            .iter()
+            .zip(&t.permutation_products)
+            .enumerate()
+        {
+            let ci = index_of(
+                CRef::PermProduct(i),
+                Commitment::Point(*pc),
+                &mut commitments,
+            );
+            queries.push(Query {
+                commitment: ci,
+                point: t.x,
+                eval: set.0,
+            });
+            queries.push(Query {
+                commitment: ci,
+                point: x_next,
+                eval: set.1,
+            });
         }
-        for (i, (set, pc)) in t.permutation_sets.iter().zip(&t.permutation_products).enumerate().rev().skip(1) {
-            let ci = index_of(CRef::PermProduct(i), Commitment::Point(*pc), &mut commitments);
-            queries.push(Query { commitment: ci, point: x_last, eval: set.2.unwrap() });
+        for (i, (set, pc)) in t
+            .permutation_sets
+            .iter()
+            .zip(&t.permutation_products)
+            .enumerate()
+            .rev()
+            .skip(1)
+        {
+            let ci = index_of(
+                CRef::PermProduct(i),
+                Commitment::Point(*pc),
+                &mut commitments,
+            );
+            queries.push(Query {
+                commitment: ci,
+                point: x_last,
+                eval: set.2.unwrap(),
+            });
         }
         // lookup queries
         let x_inv = rot(Rotation::prev());
-        for (i, (((pin_c, ptable_c), prod_c), ev)) in t.lookups_permuted.iter().zip(&t.lookup_products).zip(&t.lookup_evals).enumerate() {
+        for (i, (((pin_c, ptable_c), prod_c), ev)) in t
+            .lookups_permuted
+            .iter()
+            .zip(&t.lookup_products)
+            .zip(&t.lookup_evals)
+            .enumerate()
+        {
             let (product, product_next, pin, pin_inv, ptable) = *ev;
-            let cp = index_of(CRef::LookupProduct(i), Commitment::Point(*prod_c), &mut commitments);
-            let cpi = index_of(CRef::LookupPermutedInput(i), Commitment::Point(*pin_c), &mut commitments);
-            let cpt = index_of(CRef::LookupPermutedTable(i), Commitment::Point(*ptable_c), &mut commitments);
-            queries.push(Query { commitment: cp, point: t.x, eval: product });
-            queries.push(Query { commitment: cpi, point: t.x, eval: pin });
-            queries.push(Query { commitment: cpt, point: t.x, eval: ptable });
-            queries.push(Query { commitment: cpi, point: x_inv, eval: pin_inv });
-            queries.push(Query { commitment: cp, point: x_next, eval: product_next });
+            let cp = index_of(
+                CRef::LookupProduct(i),
+                Commitment::Point(*prod_c),
+                &mut commitments,
+            );
+            let cpi = index_of(
+                CRef::LookupPermutedInput(i),
+                Commitment::Point(*pin_c),
+                &mut commitments,
+            );
+            let cpt = index_of(
+                CRef::LookupPermutedTable(i),
+                Commitment::Point(*ptable_c),
+                &mut commitments,
+            );
+            queries.push(Query {
+                commitment: cp,
+                point: t.x,
+                eval: product,
+            });
+            queries.push(Query {
+                commitment: cpi,
+                point: t.x,
+                eval: pin,
+            });
+            queries.push(Query {
+                commitment: cpt,
+                point: t.x,
+                eval: ptable,
+            });
+            queries.push(Query {
+                commitment: cpi,
+                point: x_inv,
+                eval: pin_inv,
+            });
+            queries.push(Query {
+                commitment: cp,
+                point: x_next,
+                eval: product_next,
+            });
         }
         // fixed queries
         for (qi, (col, at)) in cs.fixed_queries().iter().enumerate() {
-            let ci = index_of(CRef::Fixed(col.index()), Commitment::Point(vk.fixed_commitments()[col.index()]), &mut commitments);
-            queries.push(Query { commitment: ci, point: rot(*at), eval: t.fixed_evals[qi] });
+            let ci = index_of(
+                CRef::Fixed(col.index()),
+                Commitment::Point(vk.fixed_commitments()[col.index()]),
+                &mut commitments,
+            );
+            queries.push(Query {
+                commitment: ci,
+                point: rot(*at),
+                eval: t.fixed_evals[qi],
+            });
         }
         // permutation common queries
-        for (i, (pc, pe)) in vk.permutation_commitments().iter().zip(&t.permutation_common_evals).enumerate() {
-            let ci = index_of(CRef::PermCommon(i), Commitment::Point(*pc), &mut commitments);
-            queries.push(Query { commitment: ci, point: t.x, eval: *pe });
+        for (i, (pc, pe)) in vk
+            .permutation_commitments()
+            .iter()
+            .zip(&t.permutation_common_evals)
+            .enumerate()
+        {
+            let ci = index_of(
+                CRef::PermCommon(i),
+                Commitment::Point(*pc),
+                &mut commitments,
+            );
+            queries.push(Query {
+                commitment: ci,
+                point: t.x,
+                eval: *pe,
+            });
         }
         // vanishing: h chunks (as one MSM) and the random polynomial
-        let ch = index_of(CRef::H, Commitment::HChunks(t.h_commitments.clone()), &mut commitments);
-        queries.push(Query { commitment: ch, point: t.x, eval: expected_h_eval });
-        let cr = index_of(CRef::Random, Commitment::Point(t.random_commitment), &mut commitments);
-        queries.push(Query { commitment: cr, point: t.x, eval: t.random_eval });
+        let ch = index_of(
+            CRef::H,
+            Commitment::HChunks(t.h_commitments.clone()),
+            &mut commitments,
+        );
+        queries.push(Query {
+            commitment: ch,
+            point: t.x,
+            eval: expected_h_eval,
+        });
+        let cr = index_of(
+            CRef::Random,
+            Commitment::Point(t.random_commitment),
+            &mut commitments,
+        );
+        queries.push(Query {
+            commitment: cr,
+            point: t.x,
+            eval: t.random_eval,
+        });
 
         // intermediate sets, as `construct_intermediate_sets`
         let mut point_index: BTreeMap<[u8; 32], usize> = BTreeMap::new();
@@ -462,12 +616,20 @@ impl Shadow {
             };
             set_of[ci] = si;
         }
-        let point_sets: Vec<Vec<Fp>> = sets.iter().map(|s| s.iter().map(|&i| points_by_index[i]).collect()).collect();
+        let point_sets: Vec<Vec<Fp>> = sets
+            .iter()
+            .map(|s| s.iter().map(|&i| points_by_index[i]).collect())
+            .collect();
         // evals of each commitment at its set's points, in the set's order
-        let mut comm_evals: Vec<Vec<Fp>> = (0..n_comm).map(|ci| vec![Fp::ZERO; sets[set_of[ci]].len()]).collect();
+        let mut comm_evals: Vec<Vec<Fp>> = (0..n_comm)
+            .map(|ci| vec![Fp::ZERO; sets[set_of[ci]].len()])
+            .collect();
         for q in &queries {
             let pi = point_index[&q.point.to_repr()];
-            let pos = sets[set_of[q.commitment]].iter().position(|&i| i == pi).unwrap();
+            let pos = sets[set_of[q.commitment]]
+                .iter()
+                .position(|&i| i == pi)
+                .unwrap();
             comm_evals[q.commitment][pos] = q.eval;
         }
         // accumulation in reverse commitment order with per-set x_1 powers
@@ -484,7 +646,8 @@ impl Shadow {
         }
         assert_eq!(t.multiopen_u.len(), sets.len(), "one u per point set");
         let mut msm_eval = Fp::ZERO;
-        for ((points, evals), proof_eval) in point_sets.iter().zip(&q_eval_sets).zip(&t.multiopen_u) {
+        for ((points, evals), proof_eval) in point_sets.iter().zip(&q_eval_sets).zip(&t.multiopen_u)
+        {
             let r_eval = interpolate_at(points, evals, t.x_3);
             let mut eval = *proof_eval - r_eval;
             for p in points {
@@ -605,20 +768,70 @@ mod tests {
                 let c = p.coordinates().unwrap();
                 key[..32] == c.x().to_repr()[..] && key[32..] == c.y().to_repr()[..]
             };
-            if same(&t.q_prime) { return "q_prime".into(); }
-            if same(&t.s_poly) { return "s_poly".into(); }
-            if same(&t.random_commitment) { return "random".into(); }
-            if same(&t.instance_commitment) { return "instance".into(); }
-            if same(&cap.g) { return "G".into(); }
-            if same(&params.get_g()[0]) { return "G_0".into(); }
-            for (i, p) in t.advice_commitments.iter().enumerate() { if same(p) { return format!("advice[{i}]"); } }
-            for (i, p) in t.h_commitments.iter().enumerate() { if same(p) { return format!("h[{i}]"); } }
-            for (i, p) in t.permutation_products.iter().enumerate() { if same(p) { return format!("perm_product[{i}]"); } }
-            for (i, p) in t.lookup_products.iter().enumerate() { if same(p) { return format!("lookup_product[{i}]"); } }
-            for (i, (a, b)) in t.lookups_permuted.iter().enumerate() { if same(a) { return format!("lookup_permuted_input[{i}]"); } if same(b) { return format!("lookup_permuted_table[{i}]"); } }
-            for (i, (l, r, _)) in t.rounds.iter().enumerate() { if same(l) { return format!("L[{i}]"); } if same(r) { return format!("R[{i}]"); } }
-            for (i, p) in vk.fixed_commitments().iter().enumerate() { if same(p) { return format!("fixed[{i}]"); } }
-            for (i, p) in vk.permutation_commitments().iter().enumerate() { if same(p) { return format!("perm_common[{i}]"); } }
+            if same(&t.q_prime) {
+                return "q_prime".into();
+            }
+            if same(&t.s_poly) {
+                return "s_poly".into();
+            }
+            if same(&t.random_commitment) {
+                return "random".into();
+            }
+            if same(&t.instance_commitment) {
+                return "instance".into();
+            }
+            if same(&cap.g) {
+                return "G".into();
+            }
+            if same(&params.get_g()[0]) {
+                return "G_0".into();
+            }
+            for (i, p) in t.advice_commitments.iter().enumerate() {
+                if same(p) {
+                    return format!("advice[{i}]");
+                }
+            }
+            for (i, p) in t.h_commitments.iter().enumerate() {
+                if same(p) {
+                    return format!("h[{i}]");
+                }
+            }
+            for (i, p) in t.permutation_products.iter().enumerate() {
+                if same(p) {
+                    return format!("perm_product[{i}]");
+                }
+            }
+            for (i, p) in t.lookup_products.iter().enumerate() {
+                if same(p) {
+                    return format!("lookup_product[{i}]");
+                }
+            }
+            for (i, (a, b)) in t.lookups_permuted.iter().enumerate() {
+                if same(a) {
+                    return format!("lookup_permuted_input[{i}]");
+                }
+                if same(b) {
+                    return format!("lookup_permuted_table[{i}]");
+                }
+            }
+            for (i, (l, r, _)) in t.rounds.iter().enumerate() {
+                if same(l) {
+                    return format!("L[{i}]");
+                }
+                if same(r) {
+                    return format!("R[{i}]");
+                }
+            }
+            for (i, p) in vk.fixed_commitments().iter().enumerate() {
+                if same(p) {
+                    return format!("fixed[{i}]");
+                }
+            }
+            for (i, p) in vk.permutation_commitments().iter().enumerate() {
+                if same(p) {
+                    return format!("perm_common[{i}]");
+                }
+            }
             "?".into()
         };
         for (k, s) in &ours {
@@ -628,10 +841,18 @@ mod tests {
                 let ratio = th * s.invert().unwrap_or(Fp::ZERO);
                 let mut note = String::new();
                 for e in 0..8u64 {
-                    if ratio == sh.typed.x_1.pow_vartime([e]) { note = format!("theirs = ours * x_1^{e}"); }
-                    if ratio == sh.typed.x_4.pow_vartime([e]) { note = format!("theirs = ours * x_4^{e}"); }
-                    if ratio == sh.typed.x_1.pow_vartime([e]).invert().unwrap() { note = format!("theirs = ours / x_1^{e}"); }
-                    if ratio == sh.typed.x_4.pow_vartime([e]).invert().unwrap() { note = format!("theirs = ours / x_4^{e}"); }
+                    if ratio == sh.typed.x_1.pow_vartime([e]) {
+                        note = format!("theirs = ours * x_1^{e}");
+                    }
+                    if ratio == sh.typed.x_4.pow_vartime([e]) {
+                        note = format!("theirs = ours * x_4^{e}");
+                    }
+                    if ratio == sh.typed.x_1.pow_vartime([e]).invert().unwrap() {
+                        note = format!("theirs = ours / x_1^{e}");
+                    }
+                    if ratio == sh.typed.x_4.pow_vartime([e]).invert().unwrap() {
+                        note = format!("theirs = ours / x_4^{e}");
+                    }
                 }
                 println!("mismatch {}: {note}", label(k));
             }

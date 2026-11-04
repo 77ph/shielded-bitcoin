@@ -10,8 +10,12 @@
 # See Cargo.toml.orig for the original contents.
 
 [package]
-# Vendored from crates.io 0.3.5 for experiments/halo2-verifier: three read-only
-# accessors made public (MSM::fingerprint_terms, Params::get_w/get_u/get_g_lagrange).
+# Vendored from crates.io 0.3.5 for experiments/halo2-verifier: read-only
+# accessors made public (the MSM's terms, W, U, the Lagrange generators, the
+# key's commitments and constraint system, the queries' indices) and, for the
+# accumulated replay proof, earlier claims opened inside a later proof
+# (poly::commitment::Claim, create_proof_with_openings,
+# verify_proof_with_openings). Its own workspace: `cargo test` here.
 edition = "2021"
 rust-version = "1.60"
 name = "halo2_proofs"
@@ -43,6 +47,8 @@ categories = ["cryptography"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/zcash/halo2"
 resolver = "1"
+
+[workspace]
 
 [package.metadata.docs.rs]
 all-features = true
@@ -84,28 +90,6 @@ unstable-verifier-fingerprint = []
 name = "halo2_proofs"
 path = "src/lib.rs"
 bench = false
-
-[[example]]
-name = "circuit-layout"
-path = "examples/circuit-layout.rs"
-required-features = ["test-dev-graph"]
-
-
-
-
-[[test]]
-name = "fingerprint_export"
-path = "tests/fingerprint_export.rs"
-
-[[test]]
-name = "plonk_api"
-path = "tests/plonk_api.rs"
-
-
-
-
-
-
 
 [dependencies.backtrace]
 version = "0.3"
@@ -154,18 +138,6 @@ version = "0.1"
 [dev-dependencies.assert_matches]
 version = "1.5"
 
-[dev-dependencies.criterion]
-version = "0.3"
-
-[dev-dependencies.dashmap]
-version = ">=5, <5.5.0"
-
-[dev-dependencies.gumdrop]
-version = "0.8"
-
-[dev-dependencies.image]
-version = ">=0.24, <0.24.5"
-
 [dev-dependencies.proptest]
 version = "1"
 
@@ -173,9 +145,6 @@ version = "1"
 version = "0.6"
 features = ["getrandom"]
 default-features = false
-
-[dev-dependencies.tempfile]
-version = ">=3, <3.7.0"
 
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dev-dependencies.getrandom]
 version = "0.2"

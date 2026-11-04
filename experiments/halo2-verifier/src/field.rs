@@ -102,10 +102,18 @@ impl<'c> FieldChip<'c> {
         FieldChip { cfg, rows: 0 }
     }
 
-    fn row(&mut self, layouter: &mut impl Layouter<Fp>, name: &'static str, r: Row) -> Result<Cell, Error> {
+    fn row(
+        &mut self,
+        layouter: &mut impl Layouter<Fp>,
+        name: &'static str,
+        r: Row,
+    ) -> Result<Cell, Error> {
         let cfg = self.cfg;
         self.rows += 1;
-        let v = |x: Option<&Cell>| x.map(|c| c.value().copied()).unwrap_or(Value::known(Fp::ZERO));
+        let v = |x: Option<&Cell>| {
+            x.map(|c| c.value().copied())
+                .unwrap_or(Value::known(Fp::ZERO))
+        };
         let (va, vb, vc) = (v(r.a), v(r.b), v(r.c));
         let d = va
             .zip(vb)
@@ -125,7 +133,13 @@ impl<'c> FieldChip<'c> {
                         }
                     }
                 }
-                for (col, val) in [(cfg.m, r.m), (cfg.sa, r.sa), (cfg.sb, r.sb), (cfg.sc, r.sc), (cfg.k, r.k)] {
+                for (col, val) in [
+                    (cfg.m, r.m),
+                    (cfg.sa, r.sa),
+                    (cfg.sb, r.sb),
+                    (cfg.sc, r.sc),
+                    (cfg.k, r.k),
+                ] {
                     region.assign_fixed(|| "coef", col, 0, || Value::known(val))?;
                 }
                 region.assign_advice(|| "d", cfg.d, 0, || d)
@@ -134,7 +148,20 @@ impl<'c> FieldChip<'c> {
     }
 
     pub fn constant(&mut self, l: &mut impl Layouter<Fp>, k: Fp) -> Result<Cell, Error> {
-        self.row(l, "constant", Row { a: None, b: None, c: None, m: Fp::ZERO, sa: Fp::ZERO, sb: Fp::ZERO, sc: Fp::ZERO, k })
+        self.row(
+            l,
+            "constant",
+            Row {
+                a: None,
+                b: None,
+                c: None,
+                m: Fp::ZERO,
+                sa: Fp::ZERO,
+                sb: Fp::ZERO,
+                sc: Fp::ZERO,
+                k,
+            },
+        )
     }
 
     /// A witnessed value (a public input to be, or a proof scalar).
@@ -144,25 +171,102 @@ impl<'c> FieldChip<'c> {
     }
 
     pub fn add(&mut self, l: &mut impl Layouter<Fp>, a: &Cell, b: &Cell) -> Result<Cell, Error> {
-        self.row(l, "add", Row { a: Some(a), b: Some(b), c: None, m: Fp::ZERO, sa: Fp::ONE, sb: Fp::ONE, sc: Fp::ZERO, k: Fp::ZERO })
+        self.row(
+            l,
+            "add",
+            Row {
+                a: Some(a),
+                b: Some(b),
+                c: None,
+                m: Fp::ZERO,
+                sa: Fp::ONE,
+                sb: Fp::ONE,
+                sc: Fp::ZERO,
+                k: Fp::ZERO,
+            },
+        )
     }
 
     pub fn sub(&mut self, l: &mut impl Layouter<Fp>, a: &Cell, b: &Cell) -> Result<Cell, Error> {
-        self.row(l, "sub", Row { a: Some(a), b: Some(b), c: None, m: Fp::ZERO, sa: Fp::ONE, sb: -Fp::ONE, sc: Fp::ZERO, k: Fp::ZERO })
+        self.row(
+            l,
+            "sub",
+            Row {
+                a: Some(a),
+                b: Some(b),
+                c: None,
+                m: Fp::ZERO,
+                sa: Fp::ONE,
+                sb: -Fp::ONE,
+                sc: Fp::ZERO,
+                k: Fp::ZERO,
+            },
+        )
     }
 
     pub fn mul(&mut self, l: &mut impl Layouter<Fp>, a: &Cell, b: &Cell) -> Result<Cell, Error> {
-        self.row(l, "mul", Row { a: Some(a), b: Some(b), c: None, m: Fp::ONE, sa: Fp::ZERO, sb: Fp::ZERO, sc: Fp::ZERO, k: Fp::ZERO })
+        self.row(
+            l,
+            "mul",
+            Row {
+                a: Some(a),
+                b: Some(b),
+                c: None,
+                m: Fp::ONE,
+                sa: Fp::ZERO,
+                sb: Fp::ZERO,
+                sc: Fp::ZERO,
+                k: Fp::ZERO,
+            },
+        )
     }
 
     /// `a · b + c`.
-    pub fn mul_add(&mut self, l: &mut impl Layouter<Fp>, a: &Cell, b: &Cell, c: &Cell) -> Result<Cell, Error> {
-        self.row(l, "mul_add", Row { a: Some(a), b: Some(b), c: Some(c), m: Fp::ONE, sa: Fp::ZERO, sb: Fp::ZERO, sc: Fp::ONE, k: Fp::ZERO })
+    pub fn mul_add(
+        &mut self,
+        l: &mut impl Layouter<Fp>,
+        a: &Cell,
+        b: &Cell,
+        c: &Cell,
+    ) -> Result<Cell, Error> {
+        self.row(
+            l,
+            "mul_add",
+            Row {
+                a: Some(a),
+                b: Some(b),
+                c: Some(c),
+                m: Fp::ONE,
+                sa: Fp::ZERO,
+                sb: Fp::ZERO,
+                sc: Fp::ONE,
+                k: Fp::ZERO,
+            },
+        )
     }
 
     /// `s · a + k`.
-    pub fn affine(&mut self, l: &mut impl Layouter<Fp>, a: &Cell, s: Fp, k: Fp) -> Result<Cell, Error> {
-        self.row(l, "affine", Row { a: Some(a), b: None, c: None, m: Fp::ZERO, sa: s, sb: Fp::ZERO, sc: Fp::ZERO, k })
+    pub fn affine(
+        &mut self,
+        l: &mut impl Layouter<Fp>,
+        a: &Cell,
+        s: Fp,
+        k: Fp,
+    ) -> Result<Cell, Error> {
+        self.row(
+            l,
+            "affine",
+            Row {
+                a: Some(a),
+                b: None,
+                c: None,
+                m: Fp::ZERO,
+                sa: s,
+                sb: Fp::ZERO,
+                sc: Fp::ZERO,
+                k,
+            },
+        )
     }
 
     pub fn neg(&mut self, l: &mut impl Layouter<Fp>, a: &Cell) -> Result<Cell, Error> {
@@ -178,14 +282,24 @@ impl<'c> FieldChip<'c> {
     }
 
     /// `a == k`.
-    pub fn assert_constant(&mut self, l: &mut impl Layouter<Fp>, a: &Cell, k: Fp) -> Result<(), Error> {
+    pub fn assert_constant(
+        &mut self,
+        l: &mut impl Layouter<Fp>,
+        a: &Cell,
+        k: Fp,
+    ) -> Result<(), Error> {
         let cfg = self.cfg;
         self.rows += 1;
         layouter_region_constant(l, cfg, a, k)
     }
 
     /// `a == b`.
-    pub fn assert_equal(&mut self, l: &mut impl Layouter<Fp>, a: &Cell, b: &Cell) -> Result<(), Error> {
+    pub fn assert_equal(
+        &mut self,
+        l: &mut impl Layouter<Fp>,
+        a: &Cell,
+        b: &Cell,
+    ) -> Result<(), Error> {
         l.assign_region(|| "eq", |mut r| r.constrain_equal(a.cell(), b.cell()))
     }
 
@@ -226,11 +340,20 @@ impl<'c> FieldChip<'c> {
     }
 }
 
-fn layouter_assign(l: &mut impl Layouter<Fp>, col: Column<Advice>, v: Value<Fp>) -> Result<Cell, Error> {
+fn layouter_assign(
+    l: &mut impl Layouter<Fp>,
+    col: Column<Advice>,
+    v: Value<Fp>,
+) -> Result<Cell, Error> {
     l.assign_region(|| "witness", |mut r| r.assign_advice(|| "w", col, 0, || v))
 }
 
-fn layouter_region_constant(l: &mut impl Layouter<Fp>, cfg: &FieldConfig, a: &Cell, k: Fp) -> Result<(), Error> {
+fn layouter_region_constant(
+    l: &mut impl Layouter<Fp>,
+    cfg: &FieldConfig,
+    a: &Cell,
+    k: Fp,
+) -> Result<(), Error> {
     l.assign_region(
         || "assert constant",
         |mut r| {

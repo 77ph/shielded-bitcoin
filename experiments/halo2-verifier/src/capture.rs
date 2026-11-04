@@ -12,7 +12,7 @@ use std::io::{self, Read};
 use ff::Field;
 use halo2_proofs::arithmetic::CurveAffine;
 use halo2_proofs::plonk::{self, Error, VerificationStrategy, VerifyingKey};
-use halo2_proofs::poly::commitment::{Guard, MSM, Params};
+use halo2_proofs::poly::commitment::{Guard, Params, MSM};
 use halo2_proofs::transcript::{EncodedChallenge, Transcript, TranscriptRead};
 use pasta_curves::vesta;
 
@@ -137,7 +137,13 @@ pub fn capture(
     proof: &[u8],
 ) -> Result<Capture, Error> {
     let mut transcript = Recorder::init(proof);
-    let out = plonk::verify_proof(params, vk, Deferred(params), &[&[instance]], &mut transcript)?;
+    let out = plonk::verify_proof(
+        params,
+        vk,
+        Deferred(params),
+        &[&[instance]],
+        &mut transcript,
+    )?;
     let (g_scalars, w_scalar, u_scalar, other) = out.msm.fingerprint_terms();
     let mut terms: Vec<(Fp, vesta::Affine)> = other
         .into_iter()
