@@ -265,11 +265,24 @@ Pallas points in an `Fp` circuit (5 800 lines naming `pallas`); the
 `Fq` circuit needs the same chip for **Vesta** points, which the crate
 does not have — the mirror image, with the variable-base
 multiplication's constants recomputed for the scalar field `Fp`
-(`T_Q` → `T_P`, the 255-bit decomposition unchanged in shape). A port
-of the chip to Vesta, with the crate's own tests, is the first
-experiment (`experiments/vesta-ecc`); the transcript gadget is the
-gadget crate's `Pow5Chip` over `Fq` with the sponge rule of
-`PROFILE-A.md` §1.1; the verifier gadget composes the two.
+(`T_Q` → `T_P`, the 255-bit decomposition unchanged in shape). **Done,
+4 November 2026: `experiments/vesta-ecc`**, the crate's `ecc` and
+`utilities` modules copied with `pallas` → `vesta`, the two constants
+swapped (`T_Q = p − 2^254`, `T_P = q − 2^254`), the Sinsemilla
+dependency of the lookup table reduced to its constant, the
+stored-circuit regression tests replaced by mock-prover runs; the
+chip's own tests pass (add, variable-base and fixed-base multiplication,
+range checks, the 4.5-bit variant). One asymmetry the port makes
+explicit: the Pallas chip takes a base-field element as a scalar
+because `p < q` makes every `Fp` element a valid `Fq` scalar; on Vesta
+a base-field element (`Fq`) is a valid scalar only when it is `< p`, so
+the Vesta chip's scalars are **`Fp` elements embedded in `Fq`** — which
+is exactly what a verifier multiplies by (challenges and evaluation
+scalars live in `Fp`) — and the crate's tests that drew scalars as
+random base-field elements or `−1` were changed to draw them in `Fp`.
+The transcript gadget is the gadget crate's `Pow5Chip` over `Fq` with
+the sponge rule of `PROFILE-A.md` §1.1; the verifier gadget composes
+the two: the next two steps.
 
 ### 3.4 Sizes on the light client's side [computed]
 
