@@ -18,6 +18,7 @@ pub type Affine = pallas::Affine;
 pub mod diversify;
 pub mod encoding;
 pub mod poseidon;
+pub mod poseidon_fq;
 pub mod poseidon_params;
 pub mod scalar;
 pub mod tags;

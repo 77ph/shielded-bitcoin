@@ -1,4 +1,4 @@
-# Variant A implementation profile: Halo 2 over Pasta (draft v0.2)
+# Variant A implementation profile: Halo 2 over Pasta (draft v0.3)
 
 Status: **draft, not frozen**; the normative profile of variant A
 (`VARIANT-A.md`), the paper's transfer protocol with a transparent proof
@@ -29,11 +29,41 @@ signature scheme (`FEE-VAULT.md`, unchanged in principle: it signs
 | Scalars of Pallas | `Fq` elements; the protocol uses only scalars that are hash outputs in `Fp`, interpreted as integers (§3) |
 | Public parameters | `Params::new(k)` of `halo2_proofs`: `2^k` generators of Vesta derived deterministically by hashing to the curve; nothing secret, nothing to trust, no ceremony |
 | Circuit size | `k = 14` (`2^14` rows) for the transfer circuit of §8 |
-| Proof encoding | the byte string of the Blake2b-transcript proof of one instance of the transfer circuit: **4 416 bytes**, fixed by the circuit and `k` |
+| Proof encoding | the byte string of the proof of one instance of the transfer circuit under the transcript of §1.1: **4 416 bytes**, fixed by the circuit and `k` (the same point and scalar encodings as `halo2_proofs`' Blake2b transcript writes; only the challenge derivation differs) |
 
 (Vesta's own base field is `Fq`; the only role of Vesta here is to carry the
 commitments of the proof system, and nothing of the protocol is written in
 `Fq`.)
+
+### 1.1 Proof transcript
+
+The Fiat–Shamir transcript of a proof is a duplex Poseidon sponge over
+`Fq` (Vesta's base field, where the commitments' coordinates live), so
+that a verifier written as a circuit over `Fq` recomputes every
+challenge natively (`REPLAY-PROOF-A.md` §3.2): the `P128Pow5T3`
+instance for `Fq` (width 3, rate 2, `x^5`, 8 full and 56 partial
+rounds, constants pinned and re-derived like §2.1's), state
+`[s_0, s_1, s_2]` with `s_2 = LE_int("sb-a/v1/transcript")` at the
+start and `s_0 = s_1 = 0`.
+
+* **absorb(v)**: if both rate slots hold a pending value, add them into
+  `s_0, s_1` and permute; then store `v` in the first free slot.
+* **squeeze**: add the pending values into `s_0, s_1` (none if there are
+  none), permute, clear the slots, output `s_0`; the challenge is the
+  low 128 bits of `s_0`, used as the same integer in `Fp` (the scalar
+  field of the commitments). Two squeezes in a row permute twice.
+* A Vesta point is absorbed as `x` then `y`; an `Fp` element (an
+  evaluation, or the verifying key's transcript representative that
+  `halo2_proofs` absorbs first) as the same integer in `Fq` (`p < q`).
+  The identity cannot be absorbed; a proof containing it is invalid.
+
+128-bit challenges are the size Halo's recursion uses [cited: ePrint
+2019/1021 §5]; every challenge of the argument (`theta`, `beta`,
+`gamma`, `y`, `x`, `v`, `u`, the `k` inner-product challenges) is drawn
+this way. The verifying-key identifier of §8.4 is not a proof transcript
+and keeps its Blake2b definition. Before v0.3 the transcript was
+`halo2_proofs`' Blake2b one; proofs made under it do not verify under
+this profile.
 
 Field elements on the wire: **32-byte little-endian canonical** (`value < p`,
 else reject).
@@ -309,7 +339,7 @@ The table of `PROFILE.md` §12 applies, plus:
 ## 13. Versioning (amends `PROFILE.md` §13)
 
 The family's profile version is `a-MAJOR.MINOR` (this document's title,
-`a-0.2`); its wire version byte is `0x02`. The rules of `PROFILE.md` §13
+`a-0.3`); its wire version byte is `0x02`. The rules of `PROFILE.md` §13
 apply within the family: while the profile is a draft, every
 incompatible change bumps MINOR and old envelopes are rejected; from
 `a-1.0` on, changes bump the wire version byte. Family bytes are
@@ -318,6 +348,10 @@ families take the next values (`VARIANT-A.md` §6.2).
 
 ### Changelog
 
+* **v0.3** (4 November 2026) — the proof transcript is a duplex Poseidon
+  sponge over `Fq` with 128-bit challenges (§1.1), the prerequisite of an
+  in-circuit verifier; proof bytes keep their length, `vk_id` is
+  unchanged, proofs of a-0.2 are rejected.
 * **v0.2** (3 November 2026) — the parity rule of DiversifyHash bounds
   `h ≤ (p − 1)/2` (§4.2, §8.3); the verifying key and `vk_id` change,
   `TEST_VECTORS-A.md` regenerated, envelopes of a-0.1 are rejected.

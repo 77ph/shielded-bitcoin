@@ -7,6 +7,7 @@
 pub mod circuit;
 pub mod fixed;
 pub mod proof;
+pub mod transcript;
 
 pub use circuit::{
     InputWitness, K, NUM_PUBLIC_INPUTS, OutputWitness, TransferCircuit, TransferStatement,
