@@ -507,6 +507,21 @@ values and ≈ 120 terms, ≈ 80 000) + the field side of `T_p(i−1)`
 (≈ 5 000) ≈ 2^17. The server's container for a k = 18 prover
 (≈ 10 GB).
 
+**The second step composed (4 November 2026)** [measured,
+`step2.rs`]. `T_q(2)` as one circuit over `Fq`: the `q` group side of a
+second transfer proof, the `q` group side of `T_p(1)` (sharing the first
+one's chip and columns, its public inputs after the first one's), and
+the field side of `T_q(1)` bound by 222 links to the `T_p(1)` instance
+values the second group side witnessed — a value `T_p(1)` carried as
+two limbs is rebuilt in `Fq` as `lo + 2^128 · hi` before the equality.
+481 public inputs, 140 846 rows, **k = 18**, mock-satisfied on the
+laptop (15 s). `T_p(2)` as one circuit over `Fp`: the field sides of
+the transfer proof and of `T_p(1)`, bound to the two parts of `T_q(2)`'s
+instance values the `p` group side of `T_q(2)` witnesses (not exposed).
+The chain test proves both for real and decides them with `T_q(1)`'s
+claim opened in `T_q(2)` and the transfer proof's and `T_p(1)`'s in
+`T_p(2)`; k = 18 is the server's job, its figures below once run.
+
 **Accumulation, the Halo way** [cited: ePrint 2019/1021 §4 and §5].
 Every verified proof leaves a claim `(G, u_1 … u_k)` on its curve:
 the deferred assertion `G = ⟨s(u), params.g⟩`. The claim is settled
