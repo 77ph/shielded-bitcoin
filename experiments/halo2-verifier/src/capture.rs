@@ -1,43 +1,50 @@
-//! What the native verifier does with one proof, captured for the circuit:
-//! the transcript's events in order (points and scalars absorbed, challenges
-//! squeezed), the accumulated final multi-scalar multiplication (the ≈ 55
-//! commitments with their combined scalars, the `W` and `U` terms, and
-//! `[-c] G` for the prover-supplied `G`), and the claim `(G, u_1 … u_k)`
-//! that the next circuit accumulates. Built on `halo2_proofs`' own verifier
-//! through a `VerificationStrategy` that keeps the guard's deferred form
-//! (`Guard::use_g`), exactly `REPLAY-PROOF-A.md` §2's accumulated mode.
+//! What the native verifier does with one proof, captured for the circuit
+//! that verifies its group side: the transcript's events in order (points
+//! and scalars absorbed, challenges squeezed), the accumulated final
+//! multi-scalar multiplication (every commitment with its combined scalar,
+//! the `W` and `U` terms, `[-c] G` for the prover-supplied `G`), and the
+//! claim `(G, u_1 … u_k)` a later proof on the same curve opens. Built on
+//! `halo2_proofs`' own verifier through a `VerificationStrategy` that keeps
+//! the guard's deferred form (`Guard::use_g`), `REPLAY-PROOF-A.md` §2's
+//! accumulated mode. Generic over the curve: Vesta for the family's
+//! transfer proofs, Pallas for the recursion's own.
 
 use std::io::{self, Read};
 
 use ff::Field;
 use halo2_proofs::arithmetic::CurveAffine;
 use halo2_proofs::plonk::{self, Error, VerificationStrategy, VerifyingKey};
-use halo2_proofs::poly::commitment::{Guard, Params, MSM};
+use halo2_proofs::poly::commitment::{Claim, Guard, Params, MSM};
 use halo2_proofs::transcript::{EncodedChallenge, Transcript, TranscriptRead};
-use pasta_curves::vesta;
 
-use sba_circuit::transcript::{Challenge128, PoseidonRead};
-use sba_primitives::Fp;
+use crate::native::{Challenge, Limbs, PoseidonField, PoseidonRead};
 
 #[derive(Clone, Debug)]
-pub enum Event {
-    /// A point absorbed without being read (the instance commitment).
-    CommonPoint(vesta::Affine),
+pub enum Event<C: CurveAffine> {
+    /// A point absorbed without being read: the instance commitment, then
+    /// the `G` of every claim the proof opens.
+    CommonPoint(C),
     /// A scalar absorbed without being read (the key's representative).
-    CommonScalar(Fp),
-    ReadPoint(vesta::Affine),
-    ReadScalar(Fp),
-    /// A squeezed 128-bit challenge, as the `Fp` integer.
-    Squeeze(Fp),
+    CommonScalar(C::Scalar),
+    ReadPoint(C),
+    ReadScalar(C::Scalar),
+    /// A squeezed 128-bit challenge, as the scalar-field integer.
+    Squeeze(C::Scalar),
 }
 
 /// The Poseidon transcript, recording.
-pub struct Recorder<R: Read> {
-    inner: PoseidonRead<R>,
-    pub events: Vec<Event>,
+pub struct Recorder<R: Read, C: Limbs>
+where
+    C::Base: PoseidonField,
+{
+    inner: PoseidonRead<R, C>,
+    pub events: Vec<Event<C>>,
 }
 
-impl<R: Read> Recorder<R> {
+impl<R: Read, C: Limbs> Recorder<R, C>
+where
+    C::Base: PoseidonField,
+{
     pub fn init(reader: R) -> Self {
         Recorder {
             inner: PoseidonRead::init(reader),
@@ -46,32 +53,35 @@ impl<R: Read> Recorder<R> {
     }
 }
 
-impl<R: Read> Transcript<vesta::Affine, Challenge128> for Recorder<R> {
-    fn squeeze_challenge(&mut self) -> Challenge128 {
+impl<R: Read, C: Limbs> Transcript<C, Challenge<C>> for Recorder<R, C>
+where
+    C::Base: PoseidonField,
+{
+    fn squeeze_challenge(&mut self) -> Challenge<C> {
         let c = self.inner.squeeze_challenge();
         self.events.push(Event::Squeeze(c.get_scalar()));
         c
     }
-
-    fn common_point(&mut self, point: vesta::Affine) -> io::Result<()> {
+    fn common_point(&mut self, point: C) -> io::Result<()> {
         self.events.push(Event::CommonPoint(point));
         self.inner.common_point(point)
     }
-
-    fn common_scalar(&mut self, scalar: Fp) -> io::Result<()> {
+    fn common_scalar(&mut self, scalar: C::Scalar) -> io::Result<()> {
         self.events.push(Event::CommonScalar(scalar));
         self.inner.common_scalar(scalar)
     }
 }
 
-impl<R: Read> TranscriptRead<vesta::Affine, Challenge128> for Recorder<R> {
-    fn read_point(&mut self) -> io::Result<vesta::Affine> {
+impl<R: Read, C: Limbs> TranscriptRead<C, Challenge<C>> for Recorder<R, C>
+where
+    C::Base: PoseidonField,
+{
+    fn read_point(&mut self) -> io::Result<C> {
         let p = self.inner.read_point()?;
         self.events.push(Event::ReadPoint(p));
         Ok(p)
     }
-
-    fn read_scalar(&mut self) -> io::Result<Fp> {
+    fn read_scalar(&mut self) -> io::Result<C::Scalar> {
         let s = self.inner.read_scalar()?;
         self.events.push(Event::ReadScalar(s));
         Ok(s)
@@ -80,24 +90,24 @@ impl<R: Read> TranscriptRead<vesta::Affine, Challenge128> for Recorder<R> {
 
 /// The accumulated final MSM and the claim.
 #[derive(Clone, Debug)]
-pub struct Capture {
-    /// The transfer statement (the instance column's values).
-    pub instance: Vec<Fp>,
-    pub events: Vec<Event>,
+pub struct Capture<C: CurveAffine> {
+    /// The instance column's values.
+    pub instance: Vec<C::Scalar>,
+    pub events: Vec<Event<C>>,
     /// `(scalar, point)` over the commitments, `[-c] G` included.
-    pub terms: Vec<(Fp, vesta::Affine)>,
+    pub terms: Vec<(C::Scalar, C)>,
     /// Scalars of the parameters' `W` and `U`.
-    pub w_scalar: Fp,
-    pub u_scalar: Fp,
+    pub w_scalar: C::Scalar,
+    pub u_scalar: C::Scalar,
     /// The prover's `G` and the inner-product challenges.
-    pub g: vesta::Affine,
-    pub u: Vec<Fp>,
+    pub g: C,
+    pub u: Vec<C::Scalar>,
 }
 
-impl Capture {
+impl<C: CurveAffine> Capture<C> {
     /// The sum the circuit must find to be the identity.
-    pub fn sum(&self, params: &Params<vesta::Affine>) -> vesta::Point {
-        let mut acc = vesta::Point::default();
+    pub fn sum(&self, params: &Params<C>) -> C::Curve {
+        let mut acc = C::Curve::default();
         for (s, p) in &self.terms {
             acc += *p * s;
         }
@@ -105,21 +115,51 @@ impl Capture {
         acc += params.get_u() * self.u_scalar;
         acc
     }
+
+    /// The claim this proof leaves for a later proof on its curve.
+    pub fn claim(&self) -> Claim<C> {
+        Claim {
+            g: self.g,
+            u: self.u.clone(),
+        }
+    }
+
+    pub fn points_read(&self) -> Vec<C> {
+        self.events
+            .iter()
+            .filter_map(|e| match e {
+                Event::ReadPoint(p) => Some(*p),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The common points in order: the instance commitment, then the
+    /// opened claims' `G`.
+    pub fn common_points(&self) -> Vec<C> {
+        self.events
+            .iter()
+            .filter_map(|e| match e {
+                Event::CommonPoint(p) => Some(*p),
+                _ => None,
+            })
+            .collect()
+    }
 }
 
-struct Deferred<'p>(&'p Params<vesta::Affine>);
+struct Deferred<'p, C: CurveAffine>(&'p Params<C>);
 
-struct Out<'p> {
-    msm: MSM<'p, vesta::Affine>,
-    g: vesta::Affine,
-    u: Vec<Fp>,
+struct Out<'p, C: CurveAffine> {
+    msm: MSM<'p, C>,
+    g: C,
+    u: Vec<C::Scalar>,
 }
 
-impl<'p> VerificationStrategy<'p, vesta::Affine> for Deferred<'p> {
-    type Output = Out<'p>;
-    fn process<E: EncodedChallenge<vesta::Affine>>(
+impl<'p, C: CurveAffine> VerificationStrategy<'p, C> for Deferred<'p, C> {
+    type Output = Out<'p, C>;
+    fn process<E: EncodedChallenge<C>>(
         self,
-        f: impl FnOnce(MSM<'p, vesta::Affine>) -> Result<Guard<'p, vesta::Affine, E>, Error>,
+        f: impl FnOnce(MSM<'p, C>) -> Result<Guard<'p, C, E>, Error>,
     ) -> Result<Self::Output, Error> {
         let guard = f(MSM::new(self.0))?;
         let g = guard.compute_g();
@@ -129,29 +169,34 @@ impl<'p> VerificationStrategy<'p, vesta::Affine> for Deferred<'p> {
     }
 }
 
-/// Run the verifier on `proof` and capture everything the circuit needs.
-pub fn capture(
-    params: &Params<vesta::Affine>,
-    vk: &VerifyingKey<vesta::Affine>,
-    instance: &[Fp],
+/// Run the verifier on `proof` (made over `claims`, possibly none) and
+/// capture everything the circuit needs.
+pub fn capture<C: Limbs>(
+    params: &Params<C>,
+    vk: &VerifyingKey<C>,
+    instance: &[C::Scalar],
     proof: &[u8],
-) -> Result<Capture, Error> {
-    let mut transcript = Recorder::init(proof);
-    let out = plonk::verify_proof(
+    claims: &[Claim<C>],
+) -> Result<Capture<C>, Error>
+where
+    C::Base: PoseidonField,
+{
+    let mut transcript = Recorder::<_, C>::init(proof);
+    let out = plonk::verify_proof_with_openings(
         params,
         vk,
         Deferred(params),
         &[&[instance]],
         &mut transcript,
+        claims,
     )?;
     let (g_scalars, w_scalar, u_scalar, other) = out.msm.fingerprint_terms();
-    let mut terms: Vec<(Fp, vesta::Affine)> = other
+    let mut terms: Vec<(C::Scalar, C)> = other
         .into_iter()
-        .map(|(s, x, y)| (s, vesta::Affine::from_xy(x, y).unwrap()))
+        .map(|(s, x, y)| (s, C::from_xy(x, y).unwrap()))
         .collect();
     // the deferred form keeps no generator vector except the constant term
-    // `[-v] G_0` the verifier adds before the inner product (and whatever
-    // else is non-zero: none for this circuit, asserted by the test)
+    // `[-v] G_0` the verifier adds before the inner product
     if let Some(gs) = g_scalars {
         let g = params.get_g();
         for (i, s) in gs.iter().enumerate() {
@@ -164,8 +209,8 @@ pub fn capture(
         instance: instance.to_vec(),
         events: transcript.events,
         terms,
-        w_scalar: w_scalar.unwrap_or(Fp::zero()),
-        u_scalar: u_scalar.unwrap_or(Fp::zero()),
+        w_scalar: w_scalar.unwrap_or(C::Scalar::ZERO),
+        u_scalar: u_scalar.unwrap_or(C::Scalar::ZERO),
         g: out.g,
         u: out.u,
     })
@@ -177,6 +222,7 @@ mod tests {
     use group::prime::PrimeCurveAffine;
     use group::Curve;
     use halo2_proofs::poly::commitment::Params;
+    use pasta_curves::vesta;
     use rand::rngs::StdRng;
     use rand::SeedableRng;
     use sba_circuit::{TransferCircuit, TransferParams, K};
@@ -189,8 +235,9 @@ mod tests {
         let proof = params.prove(&st, &w, &mut rng).unwrap();
         let halo_params: Params<vesta::Affine> = Params::new(K);
         let vk = plonk::keygen_vk(&halo_params, &TransferCircuit::default()).unwrap();
-        let cap = capture(&halo_params, &vk, &st.to_field_elements(), &proof).unwrap();
-        let n = |f: &dyn Fn(&Event) -> bool| cap.events.iter().filter(|e| f(e)).count();
+        let cap = capture(&halo_params, &vk, &st.to_field_elements(), &proof, &[]).unwrap();
+        let n =
+            |f: &dyn Fn(&Event<vesta::Affine>) -> bool| cap.events.iter().filter(|e| f(e)).count();
         println!(
             "events: {} common points, {} common scalars, {} points read, {} scalars read, {} challenges; msm terms {} (+ W, U); claim u's {}",
             n(&|e| matches!(e, Event::CommonPoint(_))),
@@ -206,7 +253,7 @@ mod tests {
         // a tampered proof captures to a non-identity sum (or fails to parse)
         let mut bad = proof.clone();
         bad[100] ^= 1;
-        if let Ok(c) = capture(&halo_params, &vk, &st.to_field_elements(), &bad) {
+        if let Ok(c) = capture(&halo_params, &vk, &st.to_field_elements(), &bad, &[]) {
             assert!(!bool::from(c.sum(&halo_params).to_affine().is_identity()));
         }
     }

@@ -1,51 +1,61 @@
 //! The proof transcript of `PROFILE-A.md` §1.1 as a gadget: the same duplex
-//! Poseidon sponge over `Fq`, driven through `halo2_gadgets`' `Pow5Chip`,
-//! squeezing 128-bit challenges as constrained cells. A circuit over `Fq`
-//! that absorbs the elements of a proof in the verifier's order obtains
-//! exactly the challenges the native verifier derives, which is the first
-//! requirement of verifying such a proof in-circuit.
+//! Poseidon sponge, driven through `halo2_gadgets`' `Pow5Chip`, squeezing
+//! 128-bit challenges as constrained cells. A circuit over the commitment
+//! curve's base field that absorbs the elements of a proof in the
+//! verifier's order obtains exactly the challenges the native verifier
+//! derives (`native.rs`), which is the first requirement of verifying such
+//! a proof in-circuit. Generic over the field: `Fq` for the family's
+//! Vesta-committed proofs, `Fp` for the recursion's Pallas-committed ones.
 //!
-//! Rule (as the native `sba_circuit::transcript::Sponge`): state
-//! `[s0, s1, s2]` with `s2 = T_TRANSCRIPT`; absorb stores into a pending
-//! rate slot, permuting first when both slots are taken; squeeze adds the
-//! pending slots (zero for an empty one), permutes, clears them and returns
-//! `s0`; the challenge is `s0 mod 2^128`, constrained by `s0 = c + 2^128 h`
-//! with `c < 2^128` and `h < 2^127` through the 10-bit lookup table.
+//! Rule (as the native sponge): state `[s0, s1, s2]` with `s2 =
+//! T_TRANSCRIPT`; absorb stores into a pending rate slot, permuting first
+//! when both slots are taken; squeeze adds the pending slots (zero for an
+//! empty one), permutes, clears them and returns `s0`; the challenge is
+//! `s0 mod 2^128`, constrained by `s0 = c + 2^128 h` with `c < 2^128` and
+//! `h < 2^127` through the 10-bit lookup table.
 
 use std::iter;
 
-use ff::{Field, PrimeField};
-use halo2_gadgets::poseidon::primitives::{Absorbing, Domain, P128Pow5T3, State};
+use ff::{FromUniformBytes, PrimeFieldBits};
+use halo2_gadgets::poseidon::primitives::{Absorbing, Domain, P128Pow5T3, Spec, State};
 use halo2_gadgets::poseidon::{
     PaddedWord, PoseidonInstructions, PoseidonSpongeInstructions, Pow5Chip, Pow5Config,
 };
 use halo2_proofs::circuit::{AssignedCell, Layouter};
 use halo2_proofs::plonk::{
-    Advice, Column, ConstraintSystem, Constraints, Error, Expression, Selector,
+    Advice, Column, ConstraintSystem, Constraints, Error, Expression, Selector, TableColumn,
 };
 use halo2_proofs::poly::Rotation;
-use vesta_ecc::utilities::lookup_range_check::{LookupRangeCheck, VestaLookupRangeCheckConfig};
+use vesta_ecc::utilities::lookup_range_check::{LookupRangeCheck, LookupRangeCheckConfig};
 
-pub use sba_circuit::transcript::t_transcript;
+pub use crate::native::tag;
 pub use sba_primitives::poseidon_fq::Fq;
 
-type Cell = AssignedCell<Fq, Fq>;
-type Chip = Pow5Chip<Fq, 3, 2>;
+type Cell<F> = AssignedCell<F, F>;
+type Chip<F> = Pow5Chip<F, 3, 2>;
+
+/// The fields the gadget runs over.
+pub trait TranscriptField:
+    FromUniformBytes<64> + PrimeFieldBits + Ord + crate::native::PoseidonField
+{
+}
+impl TranscriptField for pasta_curves::pallas::Base {}
+impl TranscriptField for pasta_curves::vesta::Base {}
 
 /// The sponge domain: capacity initialised to the transcript tag, no padding
 /// (the protocol fixes every message's length).
 #[derive(Clone, Copy, Debug)]
 pub struct TranscriptDomain;
 
-impl Domain<Fq, 2> for TranscriptDomain {
-    type Padding = iter::Empty<Fq>;
+impl<F: TranscriptField> Domain<F, 2> for TranscriptDomain {
+    type Padding = iter::Empty<F>;
 
     fn name() -> String {
         "sb-a/v1/transcript".into()
     }
 
-    fn initial_capacity_element() -> Fq {
-        t_transcript()
+    fn initial_capacity_element() -> F {
+        tag()
     }
 
     fn padding(_input_len: usize) -> Self::Padding {
@@ -54,31 +64,36 @@ impl Domain<Fq, 2> for TranscriptDomain {
 }
 
 #[derive(Clone, Debug)]
-pub struct TranscriptConfig {
-    pub poseidon: Pow5Config<Fq, 3, 2>,
-    pub range: VestaLookupRangeCheckConfig,
+pub struct TranscriptConfig<F: TranscriptField> {
+    pub poseidon: Pow5Config<F, 3, 2>,
+    /// The gadget's own 10-bit range check (its running sums in one
+    /// advice column, the table shared with the rest of the circuit).
+    pub range: LookupRangeCheckConfig<F, 10>,
     /// `[s0, c, h]` of the challenge split, one row.
     pub split: [Column<Advice>; 3],
     q_split: Selector,
 }
 
-impl TranscriptConfig {
-    /// `advices`: three columns for the split gate (any, equality-enabled);
-    /// `poseidon` and `range` configured by the caller (they are shared with
-    /// the rest of a verifier circuit).
+impl<F: TranscriptField> TranscriptConfig<F> {
+    /// `split`: three columns for the split gate (any, equality-enabled);
+    /// `running_sum`: one equality-enabled column for the range checks;
+    /// `poseidon` configured by the caller (it is shared with the rest of
+    /// a verifier circuit).
     pub fn configure(
-        meta: &mut ConstraintSystem<Fq>,
-        poseidon: Pow5Config<Fq, 3, 2>,
-        range: VestaLookupRangeCheckConfig,
+        meta: &mut ConstraintSystem<F>,
+        poseidon: Pow5Config<F, 3, 2>,
+        running_sum: Column<Advice>,
+        table_idx: TableColumn,
         split: [Column<Advice>; 3],
     ) -> Self {
+        let range = LookupRangeCheckConfig::<F, 10>::configure(meta, running_sum, table_idx);
         let q_split = meta.selector();
         meta.create_gate("s0 = c + 2^128 h", |m| {
             let q = m.query_selector(q_split);
             let s0 = m.query_advice(split[0], Rotation::cur());
             let c = m.query_advice(split[1], Rotation::cur());
             let h = m.query_advice(split[2], Rotation::cur());
-            let two_128 = Expression::Constant(Fq::from_u128(1u128 << 64).square());
+            let two_128 = Expression::Constant(F::from_u128(1u128 << 64).square());
             Constraints::with_selector(q, [("split", s0 - c - h * two_128)])
         });
         TranscriptConfig {
@@ -88,24 +103,58 @@ impl TranscriptConfig {
             q_split,
         }
     }
+
+    /// `v < 2^(10·words + short)`: `words` 10-bit words through the table
+    /// and a `short`-bit remainder (`0 < short < 10`).
+    pub fn check(
+        &self,
+        layouter: &mut impl Layouter<F>,
+        v: &Cell<F>,
+        words: usize,
+        short: usize,
+    ) -> Result<(), Error> {
+        let zs = self
+            .range
+            .copy_check(layouter.namespace(|| "words"), v.clone(), words, false)?;
+        self.range
+            .copy_short_check(layouter.namespace(|| "short"), zs[words].clone(), short)
+    }
+
+    /// `v < 2^128`: twelve words and an 8-bit remainder.
+    pub fn check_128(&self, layouter: &mut impl Layouter<F>, v: &Cell<F>) -> Result<(), Error> {
+        self.check(layouter, v, 12, 8)
+    }
 }
 
 /// The sponge in the circuit.
-pub struct Transcript<'c> {
-    cfg: &'c TranscriptConfig,
-    chip: Chip,
-    state: State<<Chip as PoseidonInstructions<Fq, P128Pow5T3, 3, 2>>::Word, 3>,
-    pending: Vec<Cell>,
+pub struct Transcript<'c, F: TranscriptField>
+where
+    P128Pow5T3: Spec<F, 3, 2>,
+{
+    cfg: &'c TranscriptConfig<F>,
+    chip: Chip<F>,
+    state: State<<Chip<F> as PoseidonInstructions<F, P128Pow5T3, 3, 2>>::Word, 3>,
+    pending: Vec<Cell<F>>,
     /// Permutations performed (for the measurement).
     pub permutations: usize,
 }
 
-impl<'c> Transcript<'c> {
-    pub fn new(cfg: &'c TranscriptConfig, layouter: &mut impl Layouter<Fq>) -> Result<Self, Error> {
+impl<'c, F: TranscriptField> Transcript<'c, F>
+where
+    P128Pow5T3: Spec<F, 3, 2>,
+{
+    pub fn new(
+        cfg: &'c TranscriptConfig<F>,
+        layouter: &mut impl Layouter<F>,
+    ) -> Result<Self, Error> {
         let chip = Pow5Chip::construct(cfg.poseidon.clone());
-        let state = <Chip as PoseidonSpongeInstructions<Fq, P128Pow5T3, TranscriptDomain, 3, 2>>::initial_state(
-            &chip, layouter,
-        )?;
+        let state = <Chip<F> as PoseidonSpongeInstructions<
+            F,
+            P128Pow5T3,
+            TranscriptDomain,
+            3,
+            2,
+        >>::initial_state(&chip, layouter)?;
         Ok(Transcript {
             cfg,
             chip,
@@ -115,9 +164,9 @@ impl<'c> Transcript<'c> {
         })
     }
 
-    fn flush(&mut self, layouter: &mut impl Layouter<Fq>) -> Result<(), Error> {
+    fn flush(&mut self, layouter: &mut impl Layouter<F>) -> Result<(), Error> {
         if !self.pending.is_empty() {
-            let mut input = Absorbing::<PaddedWord<Fq>, 2>::init_empty();
+            let mut input = Absorbing::<PaddedWord<F>, 2>::init_empty();
             let n = self.pending.len();
             for cell in self.pending.drain(..) {
                 input
@@ -127,19 +176,19 @@ impl<'c> Transcript<'c> {
             }
             for _ in n..2 {
                 input
-                    .absorb(PaddedWord::Padding(Fq::ZERO))
+                    .absorb(PaddedWord::Padding(F::ZERO))
                     .ok()
                     .expect("fits");
             }
-            self.state = <Chip as PoseidonSpongeInstructions<
-                Fq,
+            self.state = <Chip<F> as PoseidonSpongeInstructions<
+                F,
                 P128Pow5T3,
                 TranscriptDomain,
                 3,
                 2,
             >>::add_input(&self.chip, layouter, &self.state, &input)?;
         }
-        self.state = <Chip as PoseidonInstructions<Fq, P128Pow5T3, 3, 2>>::permute(
+        self.state = <Chip<F> as PoseidonInstructions<F, P128Pow5T3, 3, 2>>::permute(
             &self.chip,
             layouter,
             &self.state,
@@ -148,8 +197,8 @@ impl<'c> Transcript<'c> {
         Ok(())
     }
 
-    /// Absorb one `Fq` cell: a coordinate, or an `Fp` scalar embedded in `Fq`.
-    pub fn absorb(&mut self, layouter: &mut impl Layouter<Fq>, v: Cell) -> Result<(), Error> {
+    /// Absorb one cell: a coordinate, or a limb of a scalar.
+    pub fn absorb(&mut self, layouter: &mut impl Layouter<F>, v: Cell<F>) -> Result<(), Error> {
         if self.pending.len() == 2 {
             self.flush(layouter)?;
         }
@@ -158,9 +207,12 @@ impl<'c> Transcript<'c> {
     }
 
     /// Squeeze: the full `s0` (for tests) and the 128-bit challenge cell.
-    pub fn squeeze(&mut self, layouter: &mut impl Layouter<Fq>) -> Result<(Cell, Cell), Error> {
+    pub fn squeeze(
+        &mut self,
+        layouter: &mut impl Layouter<F>,
+    ) -> Result<(Cell<F>, Cell<F>), Error> {
         self.flush(layouter)?;
-        let s0: Cell = self.state[0].clone().into();
+        let s0: Cell<F> = self.state[0].clone().into();
         let cfg = self.cfg;
         let (c, h) = layouter.assign_region(
             || "challenge split",
@@ -171,11 +223,11 @@ impl<'c> Transcript<'c> {
                     .value()
                     .map(|v| {
                         let repr = v.to_repr();
-                        let mut lo = [0u8; 32];
-                        lo[..16].copy_from_slice(&repr[..16]);
-                        let mut hi = [0u8; 32];
-                        hi[..16].copy_from_slice(&repr[16..]);
-                        (Fq::from_repr(lo).unwrap(), Fq::from_repr(hi).unwrap())
+                        let mut lo = F::Repr::default();
+                        lo.as_mut()[..16].copy_from_slice(&repr.as_ref()[..16]);
+                        let mut hi = F::Repr::default();
+                        hi.as_mut()[..16].copy_from_slice(&repr.as_ref()[16..]);
+                        (F::from_repr(lo).unwrap(), F::from_repr(hi).unwrap())
                     })
                     .unzip();
                 let c = r.assign_advice(|| "c", cfg.split[1], 0, || cv)?;
@@ -183,13 +235,9 @@ impl<'c> Transcript<'c> {
                 Ok((c, h))
             },
         )?;
-        // c < 2^128: twelve 10-bit words and an 8-bit remainder
-        let zs = cfg
-            .range
-            .copy_check(layouter.namespace(|| "c words"), c.clone(), 12, false)?;
-        cfg.range
-            .copy_short_check(layouter.namespace(|| "c short"), zs[12].clone(), 8)?;
-        // h < 2^127: twelve words and a 7-bit remainder (s0 < q < 2^255)
+        // c < 2^128
+        cfg.check_128(layouter, &c)?;
+        // h < 2^127: twelve words and a 7-bit remainder (s0 < 2^255)
         let zs = cfg
             .range
             .copy_check(layouter.namespace(|| "h words"), h.clone(), 12, false)?;
@@ -202,16 +250,17 @@ impl<'c> Transcript<'c> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::native::{Challenge, Sponge};
     use ff::Field;
+    use ff::PrimeField;
     use halo2_gadgets::poseidon::primitives as poseidon;
     use halo2_proofs::circuit::{SimpleFloorPlanner, Value};
     use halo2_proofs::dev::MockProver;
     use halo2_proofs::plonk::{Circuit, Instance, TableColumn};
     use halo2_proofs::transcript::EncodedChallenge;
+    use pasta_curves::vesta;
     use rand::rngs::StdRng;
     use rand::SeedableRng;
-    use sba_circuit::transcript::{Challenge128, Sponge};
-    use sba_primitives::Fp;
 
     /// A sequence of absorbs (Some(value)) and squeezes (None).
     #[derive(Clone)]
@@ -219,7 +268,7 @@ mod tests {
 
     #[derive(Clone)]
     struct Config {
-        t: TranscriptConfig,
+        t: TranscriptConfig<Fq>,
         advices: [Column<Advice>; 10],
         instance: Column<Instance>,
         table_idx: TableColumn,
@@ -249,7 +298,6 @@ mod tests {
                 core::array::from_fn(|_| meta.fixed_column());
             meta.enable_constant(fixed[0]);
             let table_idx = meta.lookup_table_column();
-            let range = VestaLookupRangeCheckConfig::configure(meta, advices[9], table_idx);
             let poseidon = Pow5Chip::configure::<poseidon::P128Pow5T3>(
                 meta,
                 advices[6..9].try_into().unwrap(),
@@ -260,7 +308,8 @@ mod tests {
             let t = TranscriptConfig::configure(
                 meta,
                 poseidon,
-                range,
+                advices[9],
+                table_idx,
                 [advices[0], advices[1], advices[2]],
             );
             Config {
@@ -313,15 +362,15 @@ mod tests {
 
     /// The native sponge's challenges for the script.
     fn native(script: &Script) -> Vec<Fq> {
-        let mut s = Sponge::default();
+        let mut s = Sponge::<vesta::Affine>::default();
         let mut out = vec![];
         for op in &script.0 {
             match op {
                 Some(v) => s.absorb(*v),
                 None => {
-                    let c = Challenge128::new(&s.squeeze());
+                    let c = Challenge::<vesta::Affine>::new(&s.squeeze());
                     // the challenge as an Fq integer: the same 128 bits
-                    out.push(Fq::from_repr(Fp::to_repr(&c.get_scalar())).unwrap());
+                    out.push(Fq::from_repr(c.get_scalar().to_repr()).unwrap());
                 }
             }
         }
