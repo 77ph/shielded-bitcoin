@@ -1,4 +1,4 @@
-# Succinct replay proofs for variant A (study, draft v0.5)
+# Succinct replay proofs for variant A (study, draft v0.6)
 
 Status: a study, no code beyond `experiments/halo2-accumulate`. The
 question `VARIANT-A.md` §7 left for after S6: the paper's §22.2 asks
@@ -382,7 +382,108 @@ MSM's terms, the parameters' `W`, `U` and Lagrange generators, the
 key's commitments), used through `[patch.crates-io]` by that experiment
 alone.
 
-### 3.4 Sizes on the light client's side [computed]
+### 3.4 The step `T`, designed
+
+A step proves one fragment of `n` statements of one block. It is two
+proofs, one per curve, made together by the indexer:
+
+* **`T_p`, over `Fp`, Vesta-committed.** (a) The batch relation of
+  `REPLAY-PROOF.md` §4.2 over the family's Poseidon: the state opening,
+  the `n` statements applied in order through the indexed nullifier
+  tree and the note tree, the anchor checks, the digest `D` [estimate
+  from the paper's measured ≈ 217 000 R1CS constraints per slot, mostly
+  Poseidon, at ≈ 66 rows per permutation in the width-3 chip and the
+  transfer circuit's ratio: ≈ 25 000 rows per slot, 2^19 for 16 slots].
+  (b) The field side of each of the `n` transfer proofs (§3.3: 3 192
+  operations each, 2^16 rows for 16). (c) The field side of the
+  previous step's `T_p` proof (the same circuit shape as a transfer
+  proof's field side, over a larger key: a few thousand operations)
+  and the group side of the previous step's `T_q` proof (Pallas
+  points, native in `Fp`: ≈ 100 multiplications, 2^15 rows). (d) The
+  bookkeeping of the two accumulators, below.
+* **`T_q`, over `Fq`, Pallas-committed.** The group side of each of the
+  `n` transfer proofs (§3.3: k = 15 each, 2^19 rows for 16), the group
+  side of the previous `T_p` proof (Vesta points, ≈ 2^15), the field
+  side of the previous `T_q` proof (≈ 2^13), and the accumulator
+  bookkeeping.
+
+**Accumulation, the Halo way** [cited: ePrint 2019/1021 §4 and §5].
+Every verified proof leaves a claim `(G, u_1 … u_k)` on its curve:
+the deferred assertion `G = ⟨s(u), params.g⟩`. The claim is settled
+without the `2^k` multiplication by opening `G`, as a polynomial
+commitment to `s(X)` whose coefficients the prover knows from `u`, at
+the next proof's challenge point inside that next proof's multiopen
+argument on the same curve: the verifier recomputes the claimed value
+as `b(x_3, u) = Π_j (1 + u_j x_3^{2^j})` in `k` multiplications, so the
+old claim becomes part of the new proof's single deferred claim, and
+each curve carries exactly one claim at any time. In the step: the
+Vesta claims of the `n` transfer proofs and of the previous `T_p` are
+opened inside `T_p`'s own proof; the Pallas claim of the previous `T_q`
+inside `T_q`'s. The decider (the light client, §3.5) settles the two
+claims it is left with by two multi-scalar multiplications of `2^k`.
+What this needs that `halo2_proofs` does not have: a prover that adds
+external commitments with known polynomials to its multiopen queries
+and a verifier that expects them (`create_proof` and `verify_proof`
+with "extra openings"), a contained change to the vendored crate, and
+the first engineering item of the step. The alternative that needs no
+prover change — a linear accumulator `G_acc ← α·G_acc + G_new` with
+every accumulated `u` vector carried along — keeps 14 field elements
+per accumulated proof in the state, ≈ 7 KB per 16-transfer block,
+which is no longer constant in the history and is rejected for the
+light client (it would do for an offline decider of a whole history).
+
+**What crosses between the two circuits, and what it costs.** The
+group side of a transfer proof (in `T_q`) derives the 25 challenges
+from the proof bytes and needs the 95 multiplication scalars; the field
+side (in `T_p`) needs the challenges and the 83 evaluations and
+computes the scalars. So per transfer proof 108 values go `T_q → T_p`
+and 95 go `T_p → T_q` (the evaluations are proof bytes both can read).
+In Halo-style recursion a value crosses curves as a **public input of
+the proof it comes from**, read by the circuit that verifies that proof
+when it recomputes the instance commitment (§3.3: one multiplication
+per value). The step's `T_q` therefore exposes `108 n` values and `T_p`
+`95 n`, and the next step's circuits pay `(108 + 95) · n`
+multiplications to bind them: for `n = 16`, 3 248 multiplications,
+≈ 2^20 rows with the chip's variable-base multiplication (2^18 with
+fixed-base tables for the Lagrange generators, which are the same at
+every step) — of the same order as everything else in the step
+together. This is the known cost of the two-curve design (Pickles
+carries its deferred values the same way), and the lever is `n`: a
+fragment of 4 statements makes the binding 2^18 rows and the whole
+step ≈ 2^18–2^19 per side; a fragment of 16 makes it ≈ 2^20–2^21. The
+indexer's memory sets `n` (the k = 14 transfer prover takes 0.5 GB;
+proving scales linearly in rows: ≈ 16 GB at k = 19, which is the
+server's container, not the laptop).
+
+**Public inputs of a step** (both circuits): `digest(S_prev)`,
+`digest(S_next)`, `D` (as the paper's `T`), the two claims carried in
+(`G` as two coordinates, `k` challenges), the cross values above. The
+statements themselves are witnesses of `T_p` (bound by `D`) and the
+instance values of the transfer proofs' group sides in `T_q` (bound by
+their instance commitments and, through the step, by `D`).
+
+**A proven block** (the wire format the light client reads): the block
+hash, the state opening after the block, and per fragment the `n`
+statements (18 elements each, for the client's own tree), the two
+proofs (≈ 6–8 KB each at k = 18–19 [computed as §3.5]), the two
+claims (480 bytes each) and the cross values (`203 n` field elements,
+≈ 100 KB for `n = 16`, 26 KB for `n = 4`), the last being the part
+that does not shrink with recursion: a client that keeps only the
+latest step keeps one fragment's worth. The paper's proven block
+(`REPLAY-PROOF.md` §4.5) ships, per slot, the envelope's own 192-byte
+proof instead; here the transfer proofs are not shipped at all, the
+step having verified them.
+
+**Order of work:** the prover change (extra openings) in the vendored
+crate with a test that a claim opened in a following proof settles;
+then one recursive step over two transfer proofs in `experiments/`
+(`T_p` without the batch relation: the field sides, the group side of
+a previous `T_q`; `T_q`: the group sides, the field side of a previous
+`T_p`), measured; then the batch relation ported from
+`crates/sb-circuit/src/batch.rs`; then the fragment size chosen on the
+server's memory and the light client's wire format.
+
+### 3.5 Sizes on the light client's side [computed]
 
 Today, without recursion, A's light client would download a **chain
 of `T` proofs** like the paper's (`REPLAY-PROOF.md` §4.5): one per
@@ -416,15 +517,13 @@ blocks.
   recursive `T` is a slice of ordinary size, on the paper's scale per
   slot, and the design stays the full one: every transfer proof
   verified in-circuit, no trust in the indexer for them.
-* **Next:** `T` in Halo 2 carrying both accumulators (§3.3's last
-  paragraph): the batch relation of `REPLAY-PROOF.md` §4.2 over the
-  family's Poseidon, plus the two circuits above applied to each
-  transfer proof of the batch and to the previous step's proofs, with
-  the accumulators' claims settled by the light client at the end with
-  two multi-scalar multiplications. Design first (what each of the two
-  circuits of a step contains, what crosses between them as public
-  inputs, the wire format of a proven block), then the port of
-  `batch.rs`.
+* **Next:** the step `T` as §3.4 designs it, in its order of work:
+  the prover's extra openings, one recursive step over two transfer
+  proofs measured, the batch relation ported, the fragment size and
+  the wire format. The cost that recursion does not remove — the
+  binding of the values that cross between the two curves, ≈ 203
+  multiplications per transfer proof in the following step — is stated
+  there with the lever that controls it (the fragment size).
 * **Not now:** porting `T` (piece 3) before the gadget is measured;
   Nova or any folding library, for the reason in §3.2.
 
@@ -451,6 +550,10 @@ blocks.
 
 ## 6. Changelog
 
+* **v0.6** (4 November 2026) — §3.4, the step `T` designed: the two
+  circuits of a step, Halo-style accumulation by re-opening (and the
+  prover change it needs), the cross-circuit binding and its cost, the
+  proven block's wire format, the order of work.
 * **v0.5** (4 November 2026) — the field side measured on the real
   proof (§3.3: k = 13, 0.6 s); the verification of one transfer proof
   complete in two circuits; the batch step `T` set as the next design.
