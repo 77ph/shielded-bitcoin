@@ -60,7 +60,9 @@ proving, the gate met; S2 `PROFILE-A.md` and S3 `sb-common` 30 October;
 S4, the variant's crates and the `sb` dispatch, and S5, the run on
 public signet on the witness carrier, 1 November; S6, the review, in
 the 3 November batch; the accumulated replay proof studied the same
-day, `REPLAY-PROOF-A.md`), code second; the rules for post-paper variants in one
+day, `REPLAY-PROOF-A.md`, and on 4 November one transfer proof verified
+entirely in two circuits over the Pasta cycle, the step `T` designed),
+code second; the rules for post-paper variants in one
 repository are `VARIANT-A.md` §6. Before that: §22 is exhausted as of
 29 October 2026. The three items that
 could not be implemented end in `REMAINING.md` as demonstrations with
