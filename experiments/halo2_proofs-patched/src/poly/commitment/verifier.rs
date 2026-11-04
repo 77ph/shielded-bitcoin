@@ -4,7 +4,7 @@ use group::{
 };
 
 use super::super::Error;
-use super::{Params, MSM};
+use super::{Claim, Params, MSM};
 use crate::transcript::{EncodedChallenge, TranscriptRead};
 
 use crate::arithmetic::{best_multiexp, CurveAffine};
@@ -50,6 +50,15 @@ impl<'a, C: CurveAffine, E: EncodedChallenge<C>> Guard<'a, C, E> {
         };
 
         (self.msm, accumulator)
+    }
+
+    /// The claim this guard defers, `(G, u)` with `G = ⟨s(u), params.g⟩`
+    /// computed here, for a later proof to open (see [`Claim`]).
+    pub fn claim(&self) -> Claim<C> {
+        Claim {
+            g: self.compute_g(),
+            u: self.u.clone(),
+        }
     }
 
     /// Computes G = ⟨s, params.g⟩
@@ -142,7 +151,7 @@ pub fn verify_proof<'a, C: CurveAffine, E: EncodedChallenge<C>, T: TranscriptRea
 }
 
 /// Computes $\prod\limits_{i=0}^{k-1} (1 + u_{k - 1 - i} x^{2^i})$.
-fn compute_b<F: Field>(x: F, u: &[F]) -> F {
+pub(crate) fn compute_b<F: Field>(x: F, u: &[F]) -> F {
     let mut tmp = F::ONE;
     let mut cur = x;
     for u_j in u.iter().rev() {
@@ -153,7 +162,7 @@ fn compute_b<F: Field>(x: F, u: &[F]) -> F {
 }
 
 /// Computes the coefficients of $g(X) = \prod\limits_{i=0}^{k-1} (1 + u_{k - 1 - i} X^{2^i})$.
-fn compute_s<F: Field>(u: &[F], init: F) -> Vec<F> {
+pub(crate) fn compute_s<F: Field>(u: &[F], init: F) -> Vec<F> {
     assert!(!u.is_empty());
     let mut v = vec![F::ZERO; 1 << u.len()];
     v[0] = init;

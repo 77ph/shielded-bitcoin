@@ -92,7 +92,12 @@ pub struct Structure {
     pub omega: Fp,
 }
 
-fn rot_of(point: Fp, x: Fp, domain: &halo2_proofs::poly::EvaluationDomain<Fp>, blinding: usize) -> i32 {
+fn rot_of(
+    point: Fp,
+    x: Fp,
+    domain: &halo2_proofs::poly::EvaluationDomain<Fp>,
+    blinding: usize,
+) -> i32 {
     for r in [0i32, 1, -1, -((blinding + 1) as i32)] {
         if domain.rotate_omega(x, Rotation(r)) == point {
             return r;
@@ -114,7 +119,11 @@ impl Structure {
         let t = &sh.typed;
         let blinding = cs.blinding_factors();
         let chunk_len = cs.degree() - 2;
-        let gate_polys = cs.gates().iter().flat_map(|g| g.polynomials().iter().cloned()).collect();
+        let gate_polys = cs
+            .gates()
+            .iter()
+            .flat_map(|g| g.polynomials().iter().cloned())
+            .collect();
         let perm_columns = cs
             .permutation()
             .get_columns()
@@ -140,11 +149,18 @@ impl Structure {
                 points_by_index.push(q.point);
             }
         }
-        let point_rotations: Vec<i32> = points_by_index.iter().map(|p| rot_of(*p, t.x, domain, blinding)).collect();
+        let point_rotations: Vec<i32> = points_by_index
+            .iter()
+            .map(|p| rot_of(*p, t.x, domain, blinding))
+            .collect();
         let sets: Vec<Vec<usize>> = sh
             .point_sets
             .iter()
-            .map(|s| s.iter().map(|p| points_by_index.iter().position(|q| q == p).unwrap()).collect())
+            .map(|s| {
+                s.iter()
+                    .map(|p| points_by_index.iter().position(|q| q == p).unwrap())
+                    .collect()
+            })
             .collect();
         // eval source of each query
         let eval_src = |q: &crate::shadow::Query, cref: CRef| -> EvalSrc {
@@ -156,14 +172,27 @@ impl Structure {
                 CRef::Advice(_) => EvalSrc::Advice(pos(&t.advice_evals).unwrap()),
                 CRef::Fixed(_) => EvalSrc::Fixed(pos(&t.fixed_evals).unwrap()),
                 CRef::Random => EvalSrc::Random,
-                CRef::PermCommon(_) => EvalSrc::PermCommon(pos(&t.permutation_common_evals).unwrap()),
+                CRef::PermCommon(_) => {
+                    EvalSrc::PermCommon(pos(&t.permutation_common_evals).unwrap())
+                }
                 CRef::PermProduct(i) => {
                     let s = &t.permutation_sets[i];
-                    if s.0 == e { EvalSrc::PermSet(i, 0) } else if s.1 == e { EvalSrc::PermSet(i, 1) } else { EvalSrc::PermSet(i, 2) }
+                    if s.0 == e {
+                        EvalSrc::PermSet(i, 0)
+                    } else if s.1 == e {
+                        EvalSrc::PermSet(i, 1)
+                    } else {
+                        EvalSrc::PermSet(i, 2)
+                    }
                 }
-                CRef::LookupProduct(i) | CRef::LookupPermutedInput(i) | CRef::LookupPermutedTable(i) => {
+                CRef::LookupProduct(i)
+                | CRef::LookupPermutedInput(i)
+                | CRef::LookupPermutedTable(i) => {
                     let l = &t.lookup_evals[i];
-                    let which = [l.0, l.1, l.2, l.3, l.4].iter().position(|x| *x == e).unwrap();
+                    let which = [l.0, l.1, l.2, l.3, l.4]
+                        .iter()
+                        .position(|x| *x == e)
+                        .unwrap();
                     EvalSrc::Lookup(i, which)
                 }
                 CRef::H => EvalSrc::ExpectedH,
@@ -234,10 +263,18 @@ impl Structure {
             .iter()
             .map(|s| {
                 let p = point_of(s);
-                terms.iter().filter(|(_, q)| *q == p).map(|(term, _)| *term).collect()
+                terms
+                    .iter()
+                    .filter(|(_, q)| *q == p)
+                    .map(|(term, _)| *term)
+                    .collect()
             })
             .collect();
-        assert_eq!(outputs.iter().map(|o| o.len()).sum::<usize>(), terms.len(), "every term in one output");
+        assert_eq!(
+            outputs.iter().map(|o| o.len()).sum::<usize>(),
+            terms.len(),
+            "every term in one output"
+        );
         let st = Structure {
             k_inner: params.k(),
             blinding,
@@ -341,7 +378,9 @@ fn output_scalars(st: &Structure, sh: &Shadow) -> Vec<Fp> {
             }
             Term::HChunk(ci, j) => {
                 let (_, si, e, _) = &st.refs[*ci];
-                x4(n_sets - 1 - si) * t.x_1.pow_vartime([*e as u64]) * sh.xn.pow_vartime([*j as u64])
+                x4(n_sets - 1 - si)
+                    * t.x_1.pow_vartime([*e as u64])
+                    * sh.xn.pow_vartime([*j as u64])
             }
             Term::G0 => -sh.v,
             Term::SPoly => t.xi,
@@ -381,7 +420,11 @@ impl Circuit<Fp> for FieldSideCircuit {
         FieldSideConfig { field, instance }
     }
 
-    fn synthesize(&self, cfg: FieldSideConfig, mut layouter: impl Layouter<Fp>) -> Result<(), Error> {
+    fn synthesize(
+        &self,
+        cfg: FieldSideConfig,
+        mut layouter: impl Layouter<Fp>,
+    ) -> Result<(), Error> {
         let st = &self.structure;
         let mut ch = FieldChip::new(&cfg.field);
         let l = &mut layouter;
@@ -393,7 +436,10 @@ impl Circuit<Fp> for FieldSideCircuit {
         let n_in = st_transcript_len(st);
         let mut cells: Vec<Cell> = Vec::with_capacity(n_in);
         for i in 0..n_in {
-            let v = values.as_ref().map(|v| Value::known(v[i])).unwrap_or(Value::unknown());
+            let v = values
+                .as_ref()
+                .map(|v| Value::known(v[i]))
+                .unwrap_or(Value::unknown());
             let c = ch.witness(l, v)?;
             l.constrain_instance(c.cell(), cfg.instance, row)?;
             row += 1;
@@ -401,7 +447,8 @@ impl Circuit<Fp> for FieldSideCircuit {
         }
         // name them
         let mut it = cells.iter();
-        let mut take = |n: usize| -> Vec<Cell> { (0..n).map(|_| it.next().unwrap().clone()).collect() };
+        let mut take =
+            |n: usize| -> Vec<Cell> { (0..n).map(|_| it.next().unwrap().clone()).collect() };
         let _vk_repr = take(1);
         let theta = take(1).remove(0);
         let beta = take(1).remove(0);
@@ -417,13 +464,23 @@ impl Circuit<Fp> for FieldSideCircuit {
         for i in 0..st.n_chunks {
             let e = take(1).remove(0);
             let n = take(1).remove(0);
-            let last = if i + 1 < st.n_chunks { Some(take(1).remove(0)) } else { None };
+            let last = if i + 1 < st.n_chunks {
+                Some(take(1).remove(0))
+            } else {
+                None
+            };
             perm_sets.push((e, n, last));
         }
         let mut lookup_evals: Vec<[Cell; 5]> = Vec::new();
         for _ in 0..st.n_lookups {
             let v = take(5);
-            lookup_evals.push([v[0].clone(), v[1].clone(), v[2].clone(), v[3].clone(), v[4].clone()]);
+            lookup_evals.push([
+                v[0].clone(),
+                v[1].clone(),
+                v[2].clone(),
+                v[3].clone(),
+                v[4].clone(),
+            ]);
         }
         let x_1 = take(1).remove(0);
         let x_2 = take(1).remove(0);
@@ -446,7 +503,9 @@ impl Circuit<Fp> for FieldSideCircuit {
         // l_r(x) = (x^n - 1) · ω^r / n · 1/(x - ω^r)
         let n_inv = Fp::from(1u64 << st.k_inner).invert().unwrap();
         let lagrange = |ch: &mut FieldChip, l: &mut _, r: i32| -> Result<Cell, Error> {
-            let omega_r = st.omega.pow_vartime([r.rem_euclid(1i32 << st.k_inner) as u64]);
+            let omega_r = st
+                .omega
+                .pow_vartime([r.rem_euclid(1i32 << st.k_inner) as u64]);
             let den = ch.affine(l, &x, Fp::ONE, -omega_r)?;
             let inv = ch.invert(l, &den)?;
             let num = ch.affine(l, &xn_minus_1, omega_r * n_inv, Fp::ZERO)?;
@@ -471,15 +530,22 @@ impl Circuit<Fp> for FieldSideCircuit {
 
         // the vanishing argument's expressions, folded with y
         let mut acc: Option<Cell> = None;
-        let push = |ch: &mut FieldChip, l: &mut _, e: Cell, acc: &mut Option<Cell>| -> Result<(), Error> {
-            *acc = Some(match acc.take() {
-                None => e,
-                Some(a) => ch.mul_add(l, &a, &y, &e)?,
-            });
-            Ok(())
-        };
+        let push =
+            |ch: &mut FieldChip, l: &mut _, e: Cell, acc: &mut Option<Cell>| -> Result<(), Error> {
+                *acc = Some(match acc.take() {
+                    None => e,
+                    Some(a) => ch.mul_add(l, &a, &y, &e)?,
+                });
+                Ok(())
+            };
         for poly in &st.gate_polys {
-            let e = ch.evaluate(l, poly, &|i| fixed_evals[i].clone(), &|i| advice_evals[i].clone(), &|i| instance_evals[i].clone())?;
+            let e = ch.evaluate(
+                l,
+                poly,
+                &|i| fixed_evals[i].clone(),
+                &|i| advice_evals[i].clone(),
+                &|i| instance_evals[i].clone(),
+            )?;
             push(&mut ch, l, e, &mut acc)?;
         }
         // permutation
@@ -502,14 +568,22 @@ impl Circuit<Fp> for FieldSideCircuit {
             push(&mut ch, l, e, &mut acc)?;
         }
         for i in 1..perm_sets.len() {
-            let prev_last = perm_sets[i - 1].2.clone().expect("last eval of a non-final chunk");
+            let prev_last = perm_sets[i - 1]
+                .2
+                .clone()
+                .expect("last eval of a non-final chunk");
             let d = ch.sub(l, &perm_sets[i].0, &prev_last)?;
             let e = ch.mul(l, &d, &l_0)?;
             push(&mut ch, l, e, &mut acc)?;
         }
         let beta_x = ch.mul(l, &beta, &x)?;
-        for (chunk_index, (set, cols)) in perm_sets.iter().zip(st.perm_columns.chunks(st.chunk_len)).enumerate() {
-            let perm_evals = &perm_common[chunk_index * st.chunk_len..(chunk_index * st.chunk_len + cols.len())];
+        for (chunk_index, (set, cols)) in perm_sets
+            .iter()
+            .zip(st.perm_columns.chunks(st.chunk_len))
+            .enumerate()
+        {
+            let perm_evals =
+                &perm_common[chunk_index * st.chunk_len..(chunk_index * st.chunk_len + cols.len())];
             let mut left = set.1.clone();
             for (col, pe) in cols.iter().zip(perm_evals) {
                 // eval + beta·pe + gamma
@@ -537,17 +611,24 @@ impl Circuit<Fp> for FieldSideCircuit {
         // lookups
         for ((input_exprs, table_exprs), ev) in st.lookups.iter().zip(&lookup_evals) {
             let [product, product_next, pin, pin_inv, ptable] = ev.clone();
-            let compress = |ch: &mut FieldChip, l: &mut _, exprs: &[Expression<Fp>]| -> Result<Cell, Error> {
-                let mut acc: Option<Cell> = None;
-                for e in exprs {
-                    let v = ch.evaluate(l, e, &|i| fixed_evals[i].clone(), &|i| advice_evals[i].clone(), &|i| instance_evals[i].clone())?;
-                    acc = Some(match acc {
-                        None => v,
-                        Some(a) => ch.mul_add(l, &a, &theta, &v)?,
-                    });
-                }
-                Ok(acc.expect("expressions"))
-            };
+            let compress =
+                |ch: &mut FieldChip, l: &mut _, exprs: &[Expression<Fp>]| -> Result<Cell, Error> {
+                    let mut acc: Option<Cell> = None;
+                    for e in exprs {
+                        let v = ch.evaluate(
+                            l,
+                            e,
+                            &|i| fixed_evals[i].clone(),
+                            &|i| advice_evals[i].clone(),
+                            &|i| instance_evals[i].clone(),
+                        )?;
+                        acc = Some(match acc {
+                            None => v,
+                            Some(a) => ch.mul_add(l, &a, &theta, &v)?,
+                        });
+                    }
+                    Ok(acc.expect("expressions"))
+                };
             let left = {
                 let a = ch.add(l, &pin, &beta)?;
                 let b = ch.add(l, &ptable, &gamma)?;
@@ -562,11 +643,29 @@ impl Circuit<Fp> for FieldSideCircuit {
                 let ab = ch.mul(l, &a, &b)?;
                 ch.mul(l, &product, &ab)?
             };
-            let e1 = { let d = ch.sub(l, &one, &product)?; ch.mul(l, &l_0, &d)? };
-            let e2 = { let sq = ch.mul(l, &product, &product)?; let d = ch.sub(l, &sq, &product)?; ch.mul(l, &l_last, &d)? };
-            let e3 = { let d = ch.sub(l, &left, &right)?; ch.mul(l, &d, &active_rows)? };
-            let e4 = { let d = ch.sub(l, &pin, &ptable)?; ch.mul(l, &l_0, &d)? };
-            let e5 = { let d1 = ch.sub(l, &pin, &ptable)?; let d2 = ch.sub(l, &pin, &pin_inv)?; let p = ch.mul(l, &d1, &d2)?; ch.mul(l, &p, &active_rows)? };
+            let e1 = {
+                let d = ch.sub(l, &one, &product)?;
+                ch.mul(l, &l_0, &d)?
+            };
+            let e2 = {
+                let sq = ch.mul(l, &product, &product)?;
+                let d = ch.sub(l, &sq, &product)?;
+                ch.mul(l, &l_last, &d)?
+            };
+            let e3 = {
+                let d = ch.sub(l, &left, &right)?;
+                ch.mul(l, &d, &active_rows)?
+            };
+            let e4 = {
+                let d = ch.sub(l, &pin, &ptable)?;
+                ch.mul(l, &l_0, &d)?
+            };
+            let e5 = {
+                let d1 = ch.sub(l, &pin, &ptable)?;
+                let d2 = ch.sub(l, &pin, &pin_inv)?;
+                let p = ch.mul(l, &d1, &d2)?;
+                ch.mul(l, &p, &active_rows)?
+            };
             for e in [e1, e2, e3, e4, e5] {
                 push(&mut ch, l, e, &mut acc)?;
             }
@@ -590,12 +689,17 @@ impl Circuit<Fp> for FieldSideCircuit {
                 EvalSrc::Fixed(i) => fixed_evals[*i].clone(),
                 EvalSrc::Random => random_eval.clone(),
                 EvalSrc::PermCommon(i) => perm_common[*i].clone(),
-                EvalSrc::PermSet(i, w) => match w { 0 => perm_sets[*i].0.clone(), 1 => perm_sets[*i].1.clone(), _ => perm_sets[*i].2.clone().unwrap() },
+                EvalSrc::PermSet(i, w) => match w {
+                    0 => perm_sets[*i].0.clone(),
+                    1 => perm_sets[*i].1.clone(),
+                    _ => perm_sets[*i].2.clone().unwrap(),
+                },
                 EvalSrc::Lookup(i, w) => lookup_evals[*i][*w].clone(),
                 EvalSrc::ExpectedH => expected_h_eval.clone(),
             }
         };
-        let mut q_eval_sets: Vec<Vec<Option<Cell>>> = st.sets.iter().map(|s| vec![None; s.len()]).collect();
+        let mut q_eval_sets: Vec<Vec<Option<Cell>>> =
+            st.sets.iter().map(|s| vec![None; s.len()]).collect();
         for (_, si, e, slots) in st.refs.iter().rev() {
             for (slot, src) in slots.iter().enumerate() {
                 let ev = eval_cell(src);
@@ -607,12 +711,21 @@ impl Circuit<Fp> for FieldSideCircuit {
             }
         }
         // points: x · ω^r
-        let omega_pow = |r: i32| st.omega.pow_vartime([r.rem_euclid(1i32 << st.k_inner) as u64]);
+        let omega_pow = |r: i32| {
+            st.omega
+                .pow_vartime([r.rem_euclid(1i32 << st.k_inner) as u64])
+        };
         let x_inv = ch.invert(l, &x)?;
         let mut msm_eval: Option<Cell> = None;
         for (si, set) in st.sets.iter().enumerate() {
-            let points: Vec<Cell> = set.iter().map(|pi| ch.affine(l, &x, omega_pow(st.point_rotations[*pi]), Fp::ZERO)).collect::<Result<_, _>>()?;
-            let evals: Vec<Cell> = q_eval_sets[si].iter().map(|c| c.clone().expect("every slot filled")).collect();
+            let points: Vec<Cell> = set
+                .iter()
+                .map(|pi| ch.affine(l, &x, omega_pow(st.point_rotations[*pi]), Fp::ZERO))
+                .collect::<Result<_, _>>()?;
+            let evals: Vec<Cell> = q_eval_sets[si]
+                .iter()
+                .map(|c| c.clone().expect("every slot filled"))
+                .collect();
             // r_eval = Σ_i y_i Π_{j≠i} (x_3 - p_j) / (p_i - p_j); p_i - p_j = x (ω^ri - ω^rj)
             let mut r_eval: Option<Cell> = None;
             for i in 0..set.len() {
@@ -622,7 +735,8 @@ impl Circuit<Fp> for FieldSideCircuit {
                         continue;
                     }
                     let num = ch.sub(l, &x_3, &points[j])?;
-                    let dw = omega_pow(st.point_rotations[set[i]]) - omega_pow(st.point_rotations[set[j]]);
+                    let dw = omega_pow(st.point_rotations[set[i]])
+                        - omega_pow(st.point_rotations[set[j]]);
                     let inv = ch.affine(l, &x_inv, dw.invert().unwrap(), Fp::ZERO)?;
                     let q = ch.mul(l, &num, &inv)?;
                     term = ch.mul(l, &term, &q)?;
@@ -670,7 +784,10 @@ impl Circuit<Fp> for FieldSideCircuit {
         }
         let neg_v = ch.neg(l, &v)?;
         let neg_c = ch.neg(l, &c)?;
-        let u_inv: Vec<Cell> = u.iter().map(|uj| ch.invert(l, uj)).collect::<Result<_, _>>()?;
+        let u_inv: Vec<Cell> = u
+            .iter()
+            .map(|uj| ch.invert(l, uj))
+            .collect::<Result<_, _>>()?;
         for terms in &st.outputs {
             let mut sum: Option<Cell> = None;
             for term in terms {
@@ -713,7 +830,18 @@ impl Circuit<Fp> for FieldSideCircuit {
 }
 
 fn st_transcript_len(st: &Structure) -> usize {
-    6 + st.n_instance_q + st.n_advice_q + st.n_fixed_q + 1 + st.n_perm_common + (3 * st.n_chunks - 1) + 5 * st.n_lookups + 3 + st.sets.len() + 3 + st.k_inner as usize + 2
+    6 + st.n_instance_q
+        + st.n_advice_q
+        + st.n_fixed_q
+        + 1
+        + st.n_perm_common
+        + (3 * st.n_chunks - 1)
+        + 5 * st.n_lookups
+        + 3
+        + st.sets.len()
+        + 3
+        + st.k_inner as usize
+        + 2
 }
 
 #[cfg(test)]
@@ -726,16 +854,30 @@ mod tests {
     #[test]
     fn the_field_side_reproduces_the_verifiers_scalars_in_circuit() {
         let (params, vk, cap) = real();
-        let (_, sources) = VerifierCircuit::shape(&cap, &params, vk.fixed_commitments(), vk.permutation_commitments());
+        let (_, sources) = VerifierCircuit::shape(
+            &cap,
+            &params,
+            vk.fixed_commitments(),
+            vk.permutation_commitments(),
+        );
         let (structure, shadow) = Structure::build(&params, &vk, &cap, &sources);
-        let circuit = FieldSideCircuit { structure, shadow: Some(shadow.clone()) };
+        let circuit = FieldSideCircuit {
+            structure,
+            shadow: Some(shadow.clone()),
+        };
         let instance = circuit.instance();
         println!("field side public inputs: {}", instance.len());
         // the outputs agree with the capture's merged terms, natively
         let merged = shadow.merged();
         let n_in = st_transcript_len(&circuit.structure);
         let outs = &instance[n_in..n_in + circuit.structure.outputs.len()];
-        assert_eq!(outs.iter().filter(|s| merged.values().any(|m| m == *s)).count(), outs.len(), "every output scalar is a merged term");
+        assert_eq!(
+            outs.iter()
+                .filter(|s| merged.values().any(|m| m == *s))
+                .count(),
+            outs.len(),
+            "every output scalar is a merged term"
+        );
         let mut k = 11;
         let prover = loop {
             match MockProver::run(k, &circuit, vec![instance.clone()]) {
@@ -751,11 +893,17 @@ mod tests {
         // a wrong challenge changes every scalar: refused
         let mut bad = instance.clone();
         bad[1] += Fp::ONE;
-        assert!(MockProver::run(k, &circuit, vec![bad]).unwrap().verify().is_err());
+        assert!(MockProver::run(k, &circuit, vec![bad])
+            .unwrap()
+            .verify()
+            .is_err());
         // a wrong output scalar: refused
         let mut bad = instance.clone();
         bad[n_in] += Fp::ONE;
-        assert!(MockProver::run(k, &circuit, vec![bad]).unwrap().verify().is_err());
+        assert!(MockProver::run(k, &circuit, vec![bad])
+            .unwrap()
+            .verify()
+            .is_err());
     }
 }
 
@@ -777,9 +925,17 @@ mod prove_tests {
     #[ignore]
     fn prove_the_field_side() {
         let (params, vk, cap) = real();
-        let (_, sources) = VerifierCircuit::shape(&cap, &params, vk.fixed_commitments(), vk.permutation_commitments());
+        let (_, sources) = VerifierCircuit::shape(
+            &cap,
+            &params,
+            vk.fixed_commitments(),
+            vk.permutation_commitments(),
+        );
         let (structure, shadow) = Structure::build(&params, &vk, &cap, &sources);
-        let circuit = FieldSideCircuit { structure, shadow: Some(shadow) };
+        let circuit = FieldSideCircuit {
+            structure,
+            shadow: Some(shadow),
+        };
         let instance = circuit.instance();
         let k = 13;
         let t = std::time::Instant::now();
@@ -789,9 +945,21 @@ mod prove_tests {
         println!("keygen (k = {k}): {:.1} s", t.elapsed().as_secs_f64());
         let t = std::time::Instant::now();
         let mut tr = Blake2bWrite::<_, vesta::Affine, Challenge255<_>>::init(vec![]);
-        plonk::create_proof(&outer, &opk, &[circuit.clone()], &[&[&instance[..]]], &mut StdRng::seed_from_u64(11), &mut tr).unwrap();
+        plonk::create_proof(
+            &outer,
+            &opk,
+            &[circuit.clone()],
+            &[&[&instance[..]]],
+            &mut StdRng::seed_from_u64(11),
+            &mut tr,
+        )
+        .unwrap();
         let proof = tr.finalize();
-        println!("prove: {:.1} s, proof {} bytes", t.elapsed().as_secs_f64(), proof.len());
+        println!(
+            "prove: {:.1} s, proof {} bytes",
+            t.elapsed().as_secs_f64(),
+            proof.len()
+        );
         let t = std::time::Instant::now();
         let strategy = plonk::SingleVerifier::new(&outer);
         let mut tr = Blake2bRead::<_, _, Challenge255<_>>::init(&proof[..]);

@@ -192,7 +192,9 @@ impl VerifierCircuit {
         let mut v = Vec::new();
         for e in &cap.events {
             match e {
-                Event::CommonScalar(s) | Event::ReadScalar(s) | Event::Squeeze(s) => v.push(embed(s)),
+                Event::CommonScalar(s) | Event::ReadScalar(s) | Event::Squeeze(s) => {
+                    v.push(embed(s))
+                }
                 Event::CommonPoint(_) => {
                     for s in &cap.instance {
                         v.push(embed(s));
@@ -221,7 +223,12 @@ fn coords(p: &vesta::Affine) -> (Fq, Fq) {
 }
 
 /// Expose a cell as the next public input.
-fn expose<L: Layouter<Fq>>(cfg: &VerifierConfig, layouter: &mut L, c: &Cell, row: &mut usize) -> Result<(), Error> {
+fn expose<L: Layouter<Fq>>(
+    cfg: &VerifierConfig,
+    layouter: &mut L,
+    c: &Cell,
+    row: &mut usize,
+) -> Result<(), Error> {
     layouter.constrain_instance(c.cell(), cfg.instance, *row)?;
     *row += 1;
     Ok(())
@@ -234,14 +241,22 @@ fn pinned<L: Layouter<Fq>>(
     layouter: &mut L,
     c: vesta::Affine,
 ) -> Result<NonIdentityPoint<vesta::Affine, Ecc>, Error> {
-    let w = NonIdentityPoint::new(ecc.clone(), layouter.namespace(|| "constant"), Value::known(c))?;
+    let w = NonIdentityPoint::new(
+        ecc.clone(),
+        layouter.namespace(|| "constant"),
+        Value::known(c),
+    )?;
     let k = Point::new_from_constant(ecc.clone(), layouter.namespace(|| "constant"), c)?;
     w.constrain_equal(layouter.namespace(|| "pin"), &k)?;
     Ok(w)
 }
 
 /// Witness one `Fq` value.
-fn witness<L: Layouter<Fq>>(cfg: &VerifierConfig, layouter: &mut L, v: Value<Fq>) -> Result<Cell, Error> {
+fn witness<L: Layouter<Fq>>(
+    cfg: &VerifierConfig,
+    layouter: &mut L,
+    v: Value<Fq>,
+) -> Result<Cell, Error> {
     layouter.assign_region(
         || "scalar",
         |mut r| r.assign_advice(|| "s", cfg.advices[3], 0, || v),
@@ -282,8 +297,12 @@ impl Circuit<Fq> for VerifierCircuit {
             lagrange_coeffs[2..5].try_into().unwrap(),
             lagrange_coeffs[5..8].try_into().unwrap(),
         );
-        let transcript =
-            TranscriptConfig::configure(meta, poseidon, range, [advices[0], advices[1], advices[2]]);
+        let transcript = TranscriptConfig::configure(
+            meta,
+            poseidon,
+            range,
+            [advices[0], advices[1], advices[2]],
+        );
         VerifierConfig {
             ecc,
             transcript,
@@ -293,12 +312,21 @@ impl Circuit<Fq> for VerifierCircuit {
         }
     }
 
-    fn synthesize(&self, cfg: VerifierConfig, mut layouter: impl Layouter<Fq>) -> Result<(), Error> {
+    fn synthesize(
+        &self,
+        cfg: VerifierConfig,
+        mut layouter: impl Layouter<Fq>,
+    ) -> Result<(), Error> {
         layouter.assign_table(
             || "10-bit table",
             |mut table| {
                 for i in 0..(1 << 10) {
-                    table.assign_cell(|| "idx", cfg.table_idx, i, || Value::known(Fq::from(i as u64)))?;
+                    table.assign_cell(
+                        || "idx",
+                        cfg.table_idx,
+                        i,
+                        || Value::known(Fq::from(i as u64)),
+                    )?;
                 }
                 Ok(())
             },
@@ -339,15 +367,25 @@ impl Circuit<Fq> for VerifierCircuit {
                         let cell = witness(&cfg, &mut layouter, v)?;
                         expose(&cfg, &mut layouter, &cell, &mut row)?;
                         let base = pinned(&ecc, &mut layouter, *g)?;
-                        let scalar = ScalarVar::from_base(ecc.clone(), layouter.namespace(|| "instance scalar"), &cell)?;
+                        let scalar = ScalarVar::from_base(
+                            ecc.clone(),
+                            layouter.namespace(|| "instance scalar"),
+                            &cell,
+                        )?;
                         let (prod, _) = base.mul(layouter.namespace(|| "instance mul"), scalar)?;
                         acc = Some(match acc {
                             None => prod,
                             Some(a) => a.add(layouter.namespace(|| "instance add"), &prod)?,
                         });
                     }
-                    let w = Point::new_from_constant(ecc.clone(), layouter.namespace(|| "W"), self.params_w)?;
-                    let commitment = acc.expect("instance values").add(layouter.namespace(|| "blind"), &w)?;
+                    let w = Point::new_from_constant(
+                        ecc.clone(),
+                        layouter.namespace(|| "W"),
+                        self.params_w,
+                    )?;
+                    let commitment = acc
+                        .expect("instance values")
+                        .add(layouter.namespace(|| "blind"), &w)?;
                     // as a non-identity point: witnessed and pinned to the sum
                     let p = NonIdentityPoint::new(
                         ecc.clone(),
@@ -405,7 +443,8 @@ impl Circuit<Fq> for VerifierCircuit {
                     g
                 }
             };
-            let scalar = ScalarVar::from_base(ecc.clone(), layouter.namespace(|| "scalar var"), &s_cell)?;
+            let scalar =
+                ScalarVar::from_base(ecc.clone(), layouter.namespace(|| "scalar var"), &s_cell)?;
             let (prod, _) = base.mul(layouter.namespace(|| "mul"), scalar)?;
             sum = Some(match sum {
                 None => prod,
@@ -417,12 +456,22 @@ impl Circuit<Fq> for VerifierCircuit {
             (self.params_w, cap.map(|c| c.w_scalar)),
             (self.params_u, cap.map(|c| c.u_scalar)),
         ] {
-            let s_cell = witness(&cfg, &mut layouter, value.map(|v| Value::known(embed(&v))).unwrap_or(Value::unknown()))?;
+            let s_cell = witness(
+                &cfg,
+                &mut layouter,
+                value
+                    .map(|v| Value::known(embed(&v)))
+                    .unwrap_or(Value::unknown()),
+            )?;
             expose(&cfg, &mut layouter, &s_cell, &mut row)?;
             let w = pinned(&ecc, &mut layouter, point)?;
-            let scalar = ScalarVar::from_base(ecc.clone(), layouter.namespace(|| "scalar var"), &s_cell)?;
+            let scalar =
+                ScalarVar::from_base(ecc.clone(), layouter.namespace(|| "scalar var"), &s_cell)?;
             let (prod, _) = w.mul(layouter.namespace(|| "mul"), scalar)?;
-            sum = Some(sum.expect("terms").add(layouter.namespace(|| "add"), &prod)?);
+            sum = Some(
+                sum.expect("terms")
+                    .add(layouter.namespace(|| "add"), &prod)?,
+            );
         }
         // the claim's G exposed, and the sum must be the identity (0, 0)
         let g_index = self
@@ -440,7 +489,11 @@ impl Circuit<Fq> for VerifierCircuit {
                 Ok(())
             },
         )?;
-        eprintln!("transcript permutations: {}, msm terms: {}", t.permutations, self.sources.len() + 2);
+        eprintln!(
+            "transcript permutations: {}, msm terms: {}",
+            t.permutations,
+            self.sources.len() + 2
+        );
         Ok(())
     }
 }
@@ -454,7 +507,11 @@ pub(crate) mod tests_support {
     use rand::SeedableRng;
     use sba_circuit::{TransferCircuit, TransferParams, K};
 
-    pub(crate) fn real() -> (Params<vesta::Affine>, plonk::VerifyingKey<vesta::Affine>, Capture) {
+    pub(crate) fn real() -> (
+        Params<vesta::Affine>,
+        plonk::VerifyingKey<vesta::Affine>,
+        Capture,
+    ) {
         let params = TransferParams::build().unwrap();
         let (st, w) = crate::sample::sample();
         let mut rng = StdRng::seed_from_u64(5);
@@ -475,8 +532,12 @@ mod tests {
     #[test]
     fn the_group_part_of_a_real_proof_verifies_in_circuit() {
         let (params, vk, cap) = real();
-        let (kinds, sources) =
-            VerifierCircuit::shape(&cap, &params, vk.fixed_commitments(), vk.permutation_commitments());
+        let (kinds, sources) = VerifierCircuit::shape(
+            &cap,
+            &params,
+            vk.fixed_commitments(),
+            vk.permutation_commitments(),
+        );
         let circuit = VerifierCircuit {
             kinds,
             sources,
@@ -487,8 +548,15 @@ mod tests {
         };
         // every MSM term found a source
         let n_terms = cap.terms.len();
-        let nonzero = circuit.scalars(&cap).iter().filter(|s| !bool::from(s.is_zero())).count();
-        println!("msm terms {n_terms}, sources {} ({nonzero} with a non-zero scalar)", circuit.sources.len());
+        let nonzero = circuit
+            .scalars(&cap)
+            .iter()
+            .filter(|s| !bool::from(s.is_zero()))
+            .count();
+        println!(
+            "msm terms {n_terms}, sources {} ({nonzero} with a non-zero scalar)",
+            circuit.sources.len()
+        );
         assert_eq!(nonzero, n_terms);
         let instance = circuit.instance(&cap, &params);
         println!("public inputs: {}", instance.len());
@@ -503,17 +571,37 @@ mod tests {
                 }
             }
         };
-        println!("fits k = {k} (mock prover {:.1} s)", t.elapsed().as_secs_f64());
+        println!(
+            "fits k = {k} (mock prover {:.1} s)",
+            t.elapsed().as_secs_f64()
+        );
         prover.assert_satisfied();
         // a wrong scalar for one term is refused
         let mut bad = instance.clone();
-        let n_transcript = cap.events.iter().filter(|e| !matches!(e, Event::ReadPoint(_))).map(|e| if matches!(e, Event::CommonPoint(_)) { cap.instance.len() } else { 1 }).sum::<usize>();
+        let n_transcript = cap
+            .events
+            .iter()
+            .filter(|e| !matches!(e, Event::ReadPoint(_)))
+            .map(|e| {
+                if matches!(e, Event::CommonPoint(_)) {
+                    cap.instance.len()
+                } else {
+                    1
+                }
+            })
+            .sum::<usize>();
         bad[n_transcript] += Fq::ONE;
-        assert!(MockProver::run(k, &circuit, vec![bad]).unwrap().verify().is_err());
+        assert!(MockProver::run(k, &circuit, vec![bad])
+            .unwrap()
+            .verify()
+            .is_err());
         // a wrong statement value is refused too (the commitment moves)
         let mut bad = instance.clone();
         bad[1] += Fq::ONE;
-        assert!(MockProver::run(k, &circuit, vec![bad]).unwrap().verify().is_err());
+        assert!(MockProver::run(k, &circuit, vec![bad])
+            .unwrap()
+            .verify()
+            .is_err());
     }
 }
 
@@ -534,8 +622,12 @@ mod prove_tests {
     #[ignore]
     fn prove_the_verifier_circuit() {
         let (params, vk, cap) = real();
-        let (kinds, sources) =
-            VerifierCircuit::shape(&cap, &params, vk.fixed_commitments(), vk.permutation_commitments());
+        let (kinds, sources) = VerifierCircuit::shape(
+            &cap,
+            &params,
+            vk.fixed_commitments(),
+            vk.permutation_commitments(),
+        );
         let circuit = VerifierCircuit {
             kinds,
             sources,
@@ -553,9 +645,21 @@ mod prove_tests {
         println!("keygen (k = {k}): {:.1} s", t.elapsed().as_secs_f64());
         let t = std::time::Instant::now();
         let mut tr = Blake2bWrite::<_, pasta_curves::pallas::Affine, Challenge255<_>>::init(vec![]);
-        plonk::create_proof(&outer, &opk, &[circuit.clone()], &[&[&instance[..]]], &mut StdRng::seed_from_u64(9), &mut tr).unwrap();
+        plonk::create_proof(
+            &outer,
+            &opk,
+            &[circuit.clone()],
+            &[&[&instance[..]]],
+            &mut StdRng::seed_from_u64(9),
+            &mut tr,
+        )
+        .unwrap();
         let proof = tr.finalize();
-        println!("prove: {:.1} s, proof {} bytes", t.elapsed().as_secs_f64(), proof.len());
+        println!(
+            "prove: {:.1} s, proof {} bytes",
+            t.elapsed().as_secs_f64(),
+            proof.len()
+        );
         let t = std::time::Instant::now();
         let strategy = plonk::SingleVerifier::new(&outer);
         let mut tr = Blake2bRead::<_, _, Challenge255<_>>::init(&proof[..]);

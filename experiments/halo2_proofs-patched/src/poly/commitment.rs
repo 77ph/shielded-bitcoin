@@ -11,10 +11,12 @@ use ff::{Field, PrimeField};
 use group::{prime::PrimeCurveAffine, Curve, Group};
 use std::ops::{Add, AddAssign, Mul, MulAssign};
 
+mod claim;
 mod msm;
 mod prover;
 mod verifier;
 
+pub use claim::Claim;
 pub use msm::MSM;
 pub use prover::create_proof;
 pub use verifier::{verify_proof, Accumulator, Guard};
@@ -169,7 +171,6 @@ impl<C: CurveAffine> Params<C> {
     pub fn get_u(&self) -> C {
         self.u
     }
-
 
     /// Getter for g generators
     pub fn get_g(&self) -> Vec<C> {

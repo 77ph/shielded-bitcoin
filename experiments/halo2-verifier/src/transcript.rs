@@ -20,7 +20,9 @@ use halo2_gadgets::poseidon::{
     PaddedWord, PoseidonInstructions, PoseidonSpongeInstructions, Pow5Chip, Pow5Config,
 };
 use halo2_proofs::circuit::{AssignedCell, Layouter};
-use halo2_proofs::plonk::{Advice, Column, ConstraintSystem, Constraints, Error, Expression, Selector};
+use halo2_proofs::plonk::{
+    Advice, Column, ConstraintSystem, Constraints, Error, Expression, Selector,
+};
 use halo2_proofs::poly::Rotation;
 use vesta_ecc::utilities::lookup_range_check::{LookupRangeCheck, VestaLookupRangeCheckConfig};
 
@@ -118,14 +120,24 @@ impl<'c> Transcript<'c> {
             let mut input = Absorbing::<PaddedWord<Fq>, 2>::init_empty();
             let n = self.pending.len();
             for cell in self.pending.drain(..) {
-                input.absorb(PaddedWord::Message(cell)).ok().expect("at most two pending");
+                input
+                    .absorb(PaddedWord::Message(cell))
+                    .ok()
+                    .expect("at most two pending");
             }
             for _ in n..2 {
-                input.absorb(PaddedWord::Padding(Fq::ZERO)).ok().expect("fits");
+                input
+                    .absorb(PaddedWord::Padding(Fq::ZERO))
+                    .ok()
+                    .expect("fits");
             }
-            self.state = <Chip as PoseidonSpongeInstructions<Fq, P128Pow5T3, TranscriptDomain, 3, 2>>::add_input(
-                &self.chip, layouter, &self.state, &input,
-            )?;
+            self.state = <Chip as PoseidonSpongeInstructions<
+                Fq,
+                P128Pow5T3,
+                TranscriptDomain,
+                3,
+                2,
+            >>::add_input(&self.chip, layouter, &self.state, &input)?;
         }
         self.state = <Chip as PoseidonInstructions<Fq, P128Pow5T3, 3, 2>>::permute(
             &self.chip,
@@ -190,16 +202,16 @@ impl<'c> Transcript<'c> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ff::Field;
     use halo2_gadgets::poseidon::primitives as poseidon;
     use halo2_proofs::circuit::{SimpleFloorPlanner, Value};
     use halo2_proofs::dev::MockProver;
     use halo2_proofs::plonk::{Circuit, Instance, TableColumn};
+    use halo2_proofs::transcript::EncodedChallenge;
     use rand::rngs::StdRng;
     use rand::SeedableRng;
     use sba_circuit::transcript::{Challenge128, Sponge};
     use sba_primitives::Fp;
-    use halo2_proofs::transcript::EncodedChallenge;
-    use ff::Field;
 
     /// A sequence of absorbs (Some(value)) and squeezes (None).
     #[derive(Clone)]
@@ -245,7 +257,12 @@ mod tests {
                 fixed[1..4].try_into().unwrap(),
                 fixed[4..7].try_into().unwrap(),
             );
-            let t = TranscriptConfig::configure(meta, poseidon, range, [advices[0], advices[1], advices[2]]);
+            let t = TranscriptConfig::configure(
+                meta,
+                poseidon,
+                range,
+                [advices[0], advices[1], advices[2]],
+            );
             Config {
                 t,
                 advices,
@@ -259,7 +276,12 @@ mod tests {
                 || "10-bit table",
                 |mut table| {
                     for i in 0..(1 << 10) {
-                        table.assign_cell(|| "idx", cfg.table_idx, i, || Value::known(Fq::from(i as u64)))?;
+                        table.assign_cell(
+                            || "idx",
+                            cfg.table_idx,
+                            i,
+                            || Value::known(Fq::from(i as u64)),
+                        )?;
                     }
                     Ok(())
                 },
@@ -331,7 +353,10 @@ mod tests {
         // a wrong expected challenge is refused
         let mut wrong = expected;
         wrong[0] += Fq::ONE;
-        assert!(MockProver::run(12, &circuit, vec![wrong]).unwrap().verify().is_err());
+        assert!(MockProver::run(12, &circuit, vec![wrong])
+            .unwrap()
+            .verify()
+            .is_err());
     }
 
     /// The shape of a transfer proof's transcript (REPLAY-PROOF-A.md §3.3):
@@ -341,7 +366,16 @@ mod tests {
     /// 8 quotient chunks, x; 83 evaluations, x_1, x_2; q', x_3; 3 u's, x_4;
     /// the s-polynomial commitment, xi, z; 14 × (L, R, u_j); c, f.
     fn transfer_shape() -> Vec<(usize, usize)> {
-        let mut v = vec![(1 + 2 + 20, 1), (4, 2), (10, 1), (16, 1), (83, 2), (2, 1), (3, 1), (2, 2)];
+        let mut v = vec![
+            (1 + 2 + 20, 1),
+            (4, 2),
+            (10, 1),
+            (16, 1),
+            (83, 2),
+            (2, 1),
+            (3, 1),
+            (2, 2),
+        ];
         for _ in 0..14 {
             v.push((4, 1));
         }
@@ -353,7 +387,11 @@ mod tests {
     fn transfer_shaped_transcript_fits_and_matches() {
         let sc = script(2, &transfer_shape());
         let expected = native(&sc);
-        println!("challenges: {}, absorbs: {}", expected.len(), sc.0.iter().filter(|o| o.is_some()).count());
+        println!(
+            "challenges: {}, absorbs: {}",
+            expected.len(),
+            sc.0.iter().filter(|o| o.is_some()).count()
+        );
         let circuit = SpongeCircuit { script: Some(sc) };
         let mut k = 10;
         loop {

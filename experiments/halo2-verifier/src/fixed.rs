@@ -6,13 +6,13 @@
 
 use ff::PrimeField;
 use group::{Curve, Group};
-use vesta_ecc::ecc::FixedPoints;
-use vesta_ecc::ecc::chip::{
-    BaseFieldElem, FixedPoint, FullScalar, H, NUM_WINDOWS, NUM_WINDOWS_SHORT, ShortScalar,
-    find_zs_and_us,
-};
 use pasta_curves::vesta;
 use std::sync::LazyLock;
+use vesta_ecc::ecc::chip::{
+    find_zs_and_us, BaseFieldElem, FixedPoint, FullScalar, ShortScalar, H, NUM_WINDOWS,
+    NUM_WINDOWS_SHORT,
+};
+use vesta_ecc::ecc::FixedPoints;
 
 type Fp = vesta::Base;
 

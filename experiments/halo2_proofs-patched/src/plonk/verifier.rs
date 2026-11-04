@@ -8,7 +8,7 @@ use super::{
 };
 use crate::arithmetic::CurveAffine;
 use crate::poly::{
-    commitment::{Blind, Guard, Params, MSM},
+    commitment::{Blind, Claim, Guard, Params, MSM},
     multiopen::{self, VerifierQuery},
 };
 use crate::transcript::{read_n_points, read_n_scalars, EncodedChallenge, TranscriptRead};
@@ -77,6 +77,28 @@ pub fn verify_proof<
     instances: &[&[&[C::Scalar]]],
     transcript: &mut T,
 ) -> Result<V::Output, Error> {
+    verify_proof_with_openings(params, vk, strategy, instances, transcript, &[])
+}
+
+/// [`verify_proof`] of a proof made by [`create_proof_with_openings`] with
+/// the same claims: each claim's `g` is absorbed as the prover absorbed it
+/// and queried at `x` with the value `s(x)` the verifier computes from the
+/// claim's challenges in `k` multiplications, so the proof's own deferred
+/// claim now covers the earlier ones.
+pub fn verify_proof_with_openings<
+    'params,
+    C: CurveAffine,
+    E: EncodedChallenge<C>,
+    T: TranscriptRead<C, E>,
+    V: VerificationStrategy<'params, C>,
+>(
+    params: &'params Params<C>,
+    vk: &VerifyingKey<C>,
+    strategy: V,
+    instances: &[&[&[C::Scalar]]],
+    transcript: &mut T,
+    claims: &[Claim<C>],
+) -> Result<V::Output, Error> {
     // Check that instances matches the expected number of instance columns
     for instances in instances.iter() {
         if instances.len() != vk.cs.num_instance_columns {
@@ -113,6 +135,14 @@ pub fn verify_proof<
         for commitment in instance_commitments {
             transcript.common_point(*commitment)?
         }
+    }
+
+    // Hash the earlier claims' commitments into the transcript
+    for claim in claims {
+        if claim.u.len() > params.k as usize {
+            return Err(Error::Opening);
+        }
+        transcript.common_point(claim.g)?;
     }
 
     let advice_commitments = (0..num_proofs)
@@ -328,7 +358,12 @@ pub fn verify_proof<
                 }),
         )
         .chain(permutations_common.queries(&vk.permutation, x))
-        .chain(vanishing.queries(x));
+        .chain(vanishing.queries(x))
+        .chain(
+            claims
+                .iter()
+                .map(|claim| VerifierQuery::new_commitment(&claim.g, *x, claim.b(*x))),
+        );
 
     // We are now convinced the circuit is satisfied so long as the
     // polynomial commitments open to the correct values.

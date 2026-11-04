@@ -18,7 +18,7 @@ use crate::{
     plonk::Assigned,
     poly::{
         self,
-        commitment::{Blind, Params},
+        commitment::{Blind, Claim, Params},
         multiopen::{self, ProverQuery},
         Coeff, ExtendedLagrangeCoeff, LagrangeCoeff, Polynomial,
     },
@@ -43,6 +43,32 @@ pub fn create_proof<
     pk: &ProvingKey<C>,
     circuits: &[ConcreteCircuit],
     instances: &[&[&[C::Scalar]]],
+    rng: R,
+    transcript: &mut T,
+) -> Result<(), Error> {
+    create_proof_with_openings(params, pk, circuits, instances, &[], rng, transcript)
+}
+
+/// [`create_proof`] that also opens the given earlier claims inside this
+/// proof's multi-point argument: each claim's `g` is absorbed into the
+/// transcript as a common point after the instance commitments, and
+/// committed-to polynomial `s(X)` is queried at this proof's `x` along
+/// with the circuit's own polynomials. A verifier that supplies the same
+/// claims ([`verify_proof_with_openings`]) is then convinced of them
+/// without their `2^k` multi-scalar multiplications. A claim's `k` must
+/// not exceed the parameters' (`Error::Opening` otherwise).
+pub fn create_proof_with_openings<
+    C: CurveAffine,
+    E: EncodedChallenge<C>,
+    R: RngCore,
+    T: TranscriptWrite<C, E>,
+    ConcreteCircuit: Circuit<C::Scalar>,
+>(
+    params: &Params<C>,
+    pk: &ProvingKey<C>,
+    circuits: &[ConcreteCircuit],
+    instances: &[&[&[C::Scalar]]],
+    claims: &[Claim<C>],
     mut rng: R,
     transcript: &mut T,
 ) -> Result<(), Error> {
@@ -124,6 +150,18 @@ pub fn create_proof<
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
+
+    // Absorb the earlier claims' commitments and fix the polynomials they open to.
+    for claim in claims {
+        if claim.u.len() > params.k as usize {
+            return Err(Error::Opening);
+        }
+        transcript.common_point(claim.g)?;
+    }
+    let claim_polys: Vec<Polynomial<C::Scalar, Coeff>> = claims
+        .iter()
+        .map(|claim| claim.s_poly(params.n as usize))
+        .collect();
 
     struct AdviceSingle<C: CurveAffine> {
         pub advice_values: Vec<Polynomial<C::Scalar, LagrangeCoeff>>,
@@ -719,7 +757,14 @@ pub fn create_proof<
         )
         .chain(pk.permutation.open(x))
         // We query the h(X) polynomial at x
-        .chain(vanishing.open(x));
+        .chain(vanishing.open(x))
+        // and the earlier claims' s(X) polynomials, which carry no blinding
+        // (the claimed G is ⟨s(u), g⟩ alone; Blind::default() is one)
+        .chain(claim_polys.iter().map(|poly| ProverQuery {
+            point: *x,
+            poly,
+            blind: Blind(C::Scalar::ZERO),
+        }));
 
     multiopen::create_proof(params, rng, transcript, instances).map_err(|_| Error::Opening)
 }

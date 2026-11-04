@@ -27,6 +27,9 @@ mod vanishing;
 mod prover;
 mod verifier;
 
+#[cfg(test)]
+mod claims_test;
+
 #[cfg(feature = "unstable-verifier-fingerprint")]
 #[cfg_attr(docsrs, doc(cfg(feature = "unstable-verifier-fingerprint")))]
 pub mod fingerprint;
@@ -119,7 +122,6 @@ impl<C: CurveAffine> VerifyingKey<C> {
     pub fn permutation_commitments(&self) -> &[C] {
         &self.permutation.commitments
     }
-
 
     /// Obtains a pinned representation of this verification key that contains
     /// the minimal information necessary to reconstruct the verification key.
