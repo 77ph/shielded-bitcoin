@@ -59,7 +59,7 @@ pub enum Source {
 }
 
 /// The structure (from the key) and, when proving, the values.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct VerifierCircuit {
     pub kinds: Vec<Kind>,
     /// One per term of the final MSM, in a canonical order.
@@ -69,6 +69,10 @@ pub struct VerifierCircuit {
     pub params_u: C,
     /// The Lagrange generators of the instance values (constants).
     pub lagrange: Vec<C>,
+    /// Cells per instance value of the verified proof: 1 for a value known
+    /// to be below `2^254` (a scalar-field element of the proof *it*
+    /// verified, embedded), `N` otherwise.
+    pub instance_limbs: Vec<usize>,
     pub capture: Option<Capture<C>>,
 }
 
@@ -81,11 +85,11 @@ pub struct VerifierConfig {
     pub table_idx: TableColumn,
 }
 
-/// The cells exposed as public inputs, in the instance's order, and where
-/// the verified proof's instance values (their limbs) start among them.
+/// The cells exposed as public inputs, in the instance's order, and the
+/// verified proof's instance values among them (the limbs of each).
 pub struct Exposed {
     pub cells: Vec<Cell>,
-    pub instance_values_at: usize,
+    pub instance_values: Vec<Vec<Cell>>,
 }
 
 impl VerifierCircuit {
@@ -180,14 +184,14 @@ impl VerifierCircuit {
         for e in &cap.events {
             match e {
                 Event::CommonScalar(s) | Event::ReadScalar(s) => {
-                    v.extend_from_slice(&C::limbs(s)[..N]);
+                    v.extend(C::cells(s, N));
                 }
                 Event::Squeeze(s) => v.push(C::limbs(s)[0]),
                 Event::CommonPoint(p) => {
                     commons += 1;
                     if commons == 1 {
-                        for s in &cap.instance {
-                            v.extend_from_slice(&C::limbs(s)[..N]);
+                        for (s, limbs) in cap.instance.iter().zip(&self.instance_limbs) {
+                            v.extend(C::cells(s, *limbs));
                         }
                     } else {
                         let (x, y) = coords(p);
@@ -199,13 +203,27 @@ impl VerifierCircuit {
             }
         }
         for s in self.scalars(cap) {
-            v.extend_from_slice(&C::limbs(&s)[..N]);
+            v.extend(C::cells(&s, N));
         }
-        v.extend_from_slice(&C::limbs(&cap.w_scalar)[..N]);
-        v.extend_from_slice(&C::limbs(&cap.u_scalar)[..N]);
+        v.extend(C::cells(&cap.w_scalar, N));
+        v.extend(C::cells(&cap.u_scalar, N));
         let (gx, gy) = coords(&cap.g);
         v.push(gx);
         v.push(gy);
+        v
+    }
+}
+
+impl VerifierCircuit {
+    /// How a proof of *this* circuit's instance values are carried by the
+    /// circuit verifying it: every one is a scalar-field element of the
+    /// proof verified here (embedded, below `2^254`) and fits one cell,
+    /// except the claim's `G` at the end, two full base-field coordinates.
+    pub fn instance_limbs_when_verified(&self, cap: &Capture<C>) -> Vec<usize> {
+        let n = self.instance(cap).len();
+        let mut v = vec![1; n];
+        v[n - 2] = 2;
+        v[n - 1] = 2;
         v
     }
 }
@@ -253,22 +271,24 @@ fn witness<L: Layouter<F>>(
     )
 }
 
-/// A scalar of the verified proof as its `N` exposed, range-checked limbs.
+/// A scalar of the verified proof as `n` exposed, range-checked limbs.
 fn witness_scalar<L: Layouter<F>>(
     cfg: &VerifierConfig,
     layouter: &mut L,
     s: Option<S>,
+    n: usize,
     exposed: &mut Vec<Cell>,
 ) -> Result<Vec<Cell>, Error> {
-    let limbs = s.map(|s| C::limbs(&s));
-    let mut cells = Vec::with_capacity(N);
-    for l in 0..N {
+    let limbs = s.map(|s| C::cells(&s, n));
+    let mut cells = Vec::with_capacity(n);
+    for l in 0..n {
         let v = limbs
+            .as_ref()
             .map(|limbs| Value::known(limbs[l]))
             .unwrap_or(Value::unknown());
         let cell = witness(cfg, layouter, v)?;
         expose(cfg, layouter, &cell, exposed)?;
-        match (N, l) {
+        match (n, l) {
             // one cell: below 2^254 (25 words and 4 bits), hence canonical
             (1, _) => cfg.transcript.check(layouter, &cell, 25, 4)?,
             // low limb below 2^128
@@ -349,6 +369,7 @@ impl Circuit<F> for VerifierCircuit {
             params_w: self.params_w,
             params_u: self.params_u,
             lagrange: self.lagrange.clone(),
+            instance_limbs: self.instance_limbs.clone(),
             capture: None,
         }
     }
@@ -423,7 +444,7 @@ impl VerifierCircuit {
         let cap = self.capture.as_ref();
         let commons: Vec<C> = cap.map(|c| c.common_points()).unwrap_or_default();
         let mut exposed: Vec<Cell> = Vec::new();
-        let mut instance_values_at = 0usize;
+        let mut instance_values: Vec<Vec<Cell>> = Vec::new();
 
         // the transcript walk
         let mut read_points: Vec<Pt> = Vec::new();
@@ -436,20 +457,21 @@ impl VerifierCircuit {
                         Event::CommonScalar(s) | Event::ReadScalar(s) => *s,
                         _ => unreachable!(),
                     });
-                    for limb in witness_scalar(&cfg, layouter, s, &mut exposed)? {
+                    for limb in witness_scalar(&cfg, layouter, s, N, &mut exposed)? {
                         t.absorb(layouter, limb)?;
                     }
                 }
                 Kind::CommonPoint => {
                     // the instance commitment from the instance values:
                     // Σ instance_j · G_lagrange[j] + [1] W
-                    instance_values_at = exposed.len();
                     let mut acc = Acc::new();
                     for (j, g) in self.lagrange.iter().enumerate() {
                         let s = cap.map(|c| c.instance[j]);
-                        let limbs = witness_scalar(&cfg, layouter, s, &mut exposed)?;
+                        let limbs =
+                            witness_scalar(&cfg, layouter, s, self.instance_limbs[j], &mut exposed)?;
                         let base = pinned(&ecc, layouter, *g)?;
                         acc.add_term(&ecc, layouter, &base, &limbs)?;
+                        instance_values.push(limbs);
                     }
                     let sum = acc.fold(&cfg, &ecc, layouter)?;
                     let w = Point::new_from_constant(ecc.clone(), layouter.namespace(|| "W"), self.params_w)?;
@@ -501,7 +523,8 @@ impl VerifierCircuit {
         let mut acc = Acc::new();
         let mut claim_point: Option<Pt> = None;
         for (j, source) in self.sources.iter().enumerate() {
-            let limbs = witness_scalar(&cfg, layouter, scalars.as_ref().map(|v| v[j]), &mut exposed)?;
+            let limbs =
+                witness_scalar(&cfg, layouter, scalars.as_ref().map(|v| v[j]), N, &mut exposed)?;
             let base: Pt = match source {
                 Source::Read(i) => read_points[*i].clone(),
                 Source::Common => common_point.clone().expect("absorbed before the MSM"),
@@ -521,7 +544,7 @@ impl VerifierCircuit {
             (self.params_w, cap.map(|c| c.w_scalar)),
             (self.params_u, cap.map(|c| c.u_scalar)),
         ] {
-            let limbs = witness_scalar(&cfg, layouter, value, &mut exposed)?;
+            let limbs = witness_scalar(&cfg, layouter, value, N, &mut exposed)?;
             let w = pinned(&ecc, layouter, point)?;
             acc.add_term(&ecc, layouter, &w, &limbs)?;
         }
@@ -547,7 +570,7 @@ impl VerifierCircuit {
         );
         Ok(Exposed {
             cells: exposed,
-            instance_values_at,
+            instance_values,
         })
     }
 }

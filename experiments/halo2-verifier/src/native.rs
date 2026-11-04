@@ -27,6 +27,21 @@ pub trait Limbs: CurveAffine {
     /// The limbs, low first; entries past `N` are zero.
     fn limbs(s: &Self::Scalar) -> [Self::Base; 2];
     fn from_limbs(l: &[Self::Base]) -> Self::Scalar;
+    /// The whole scalar as one base-field element: the same integer, for a
+    /// scalar known to be below the base field's order.
+    fn embed(s: &Self::Scalar) -> Self::Base {
+        let mut repr = <Self::Base as PrimeField>::Repr::default();
+        repr.as_mut().copy_from_slice(s.to_repr().as_ref());
+        Self::Base::from_repr(repr).expect("the scalar fits the base field")
+    }
+    /// `n` cells for a scalar: the whole of it for `n = 1`, its limbs otherwise.
+    fn cells(s: &Self::Scalar, n: usize) -> Vec<Self::Base> {
+        if n == 1 {
+            vec![Self::embed(s)]
+        } else {
+            Self::limbs(s)[..n].to_vec()
+        }
+    }
 }
 
 impl Limbs for vesta::Affine {
@@ -390,5 +405,27 @@ mod tests {
         assert_eq!(r.read_point().unwrap(), p);
         assert_eq!(r.squeeze_challenge().get_scalar(), c1);
         assert!(c1.to_repr()[16..].iter().all(|&b| b == 0));
+    }
+}
+
+#[cfg(test)]
+mod timing {
+    #[test]
+    #[ignore]
+    fn zs_and_us_of_one_point() {
+        use halo2_proofs::poly::commitment::Params;
+        let params: Params<pasta_curves::pallas::Affine> = Params::new(15);
+        let g = params.get_g_lagrange();
+        let t = std::time::Instant::now();
+        for p in &g[..4] {
+            let v =
+                halo2_gadgets::ecc::chip::find_zs_and_us(*p, halo2_gadgets::ecc::chip::NUM_WINDOWS)
+                    .unwrap();
+            assert_eq!(v.len(), halo2_gadgets::ecc::chip::NUM_WINDOWS);
+        }
+        println!(
+            "find_zs_and_us: {:.2} s per point",
+            t.elapsed().as_secs_f64() / 4.0
+        );
     }
 }

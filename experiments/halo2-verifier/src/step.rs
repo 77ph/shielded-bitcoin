@@ -20,7 +20,6 @@ use crate::fieldside::FieldSideCircuit;
 use crate::verifier::p;
 use sba_primitives::Fp;
 
-
 /// `T_p` without the batch relation: the `p` group side of a `T_q` proof
 /// and the field side of the transfer proof `T_q` verified.
 #[derive(Clone)]
@@ -30,6 +29,12 @@ pub struct StepP {
     /// For each of the field side's inputs and outputs, the index of the
     /// `T_q` instance value it must equal.
     pub link: Vec<usize>,
+}
+
+impl std::fmt::Debug for StepP {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "StepP({} links)", self.link.len())
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -91,10 +96,9 @@ impl Circuit<Fp> for StepP {
         let mut ch = FieldChip::new(&cfg.field);
         let l = &mut layouter;
         let two_128 = ch.constant(l, Fp::from_u128(1u128 << 64).square())?;
-        let at = exposed.instance_values_at;
         for (cell, m) in inputs.iter().chain(outputs.iter()).zip(&self.link) {
-            let limbs = &exposed.cells[at + m * p::N..at + (m + 1) * p::N];
-            let value = if p::N == 1 {
+            let limbs = &exposed.instance_values[*m];
+            let value = if limbs.len() == 1 {
                 limbs[0].clone()
             } else {
                 ch.mul_add(l, &limbs[1], &two_128, &limbs[0])?
@@ -207,6 +211,7 @@ mod tests {
             params_w: outer.get_w(),
             params_u: outer.get_u(),
             lagrange: outer.get_g_lagrange()[..instance_q.len()].to_vec(),
+            instance_limbs: q_circuit(&params, &vk, &cap).instance_limbs_when_verified(&cap),
             capture: Some(cap_q.clone()),
         };
         let nonzero = circuit
@@ -239,6 +244,10 @@ mod tests {
             t.elapsed().as_secs_f64()
         );
         prover.assert_satisfied();
+        println!(
+            "{:?}",
+            halo2_proofs::dev::CircuitCost::<vesta::Point, _>::measure(k, &circuit)
+        );
         // a wrong G of T_q is refused
         let mut bad = instance.clone();
         let n = bad.len();
@@ -276,6 +285,7 @@ mod tests {
             params_w: outer.get_w(),
             params_u: outer.get_u(),
             lagrange: outer.get_g_lagrange()[..instance_q.len()].to_vec(),
+            instance_limbs: q_circuit(&params, &vk, &cap).instance_limbs_when_verified(&cap),
             capture: Some(cap_q.clone()),
         };
         // the field side of the transfer proof, over the q circuit's sources
@@ -317,6 +327,10 @@ mod tests {
             t.elapsed().as_secs_f64()
         );
         prover.assert_satisfied();
+        println!(
+            "{:?}",
+            halo2_proofs::dev::CircuitCost::<vesta::Point, _>::measure(k, &step)
+        );
         drop(prover);
         // for real: a Vesta-committed proof opening the transfer proof's claim
         let claim: Claim<vesta::Affine> = cap.claim();
