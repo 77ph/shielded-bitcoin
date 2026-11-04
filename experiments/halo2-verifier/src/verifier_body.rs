@@ -221,17 +221,129 @@ impl VerifierCircuit {
     }
 }
 
+/// One public input of the circuit, by what it carries.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Slot {
+    /// A limb of a scalar event (the `i`-th scalar event, limb `l`).
+    Scalar(usize, usize),
+    /// A squeezed challenge (the `i`-th).
+    Challenge(usize),
+    /// A limb of the `j`-th instance value of the verified proof.
+    InstanceValue(usize, usize),
+    /// A coordinate of the `i`-th opened claim's `G`.
+    Opened(usize, usize),
+    /// A limb of the `j`-th MSM scalar.
+    Msm(usize, usize),
+    /// A limb of `W`'s scalar, of `U`'s.
+    W(usize),
+    U(usize),
+    /// A coordinate of the claim's `G`.
+    G(usize),
+}
+
 impl VerifierCircuit {
-    /// How a proof of *this* circuit's instance values are carried by the
-    /// circuit verifying it: every one is a scalar-field element of the
-    /// proof verified here (embedded, below `2^254`) and fits one cell,
-    /// except the claim's `G` at the end, two full base-field coordinates.
-    pub fn instance_limbs_when_verified(&self, cap: &Capture<C>) -> Vec<usize> {
-        let n = self.instance(cap).len();
-        let mut v = vec![1; n];
-        v[n - 2] = 2;
-        v[n - 1] = 2;
+    /// The public inputs' layout: what each one is.
+    pub fn layout(&self) -> Vec<Slot> {
+        let mut v = Vec::new();
+        let (mut scalars, mut challenges, mut commons) = (0usize, 0usize, 0usize);
+        for kind in &self.kinds {
+            match kind {
+                Kind::CommonScalar | Kind::ReadScalar => {
+                    for l in 0..N {
+                        v.push(Slot::Scalar(scalars, l));
+                    }
+                    scalars += 1;
+                }
+                Kind::Squeeze => {
+                    v.push(Slot::Challenge(challenges));
+                    challenges += 1;
+                }
+                Kind::CommonPoint => {
+                    if self.expose_instance {
+                        for (j, limbs) in self.instance_limbs.iter().enumerate() {
+                            for l in 0..*limbs {
+                                v.push(Slot::InstanceValue(j, l));
+                            }
+                        }
+                    }
+                }
+                Kind::OpenedPoint => {
+                    v.push(Slot::Opened(commons, 0));
+                    v.push(Slot::Opened(commons, 1));
+                    commons += 1;
+                }
+                Kind::ReadPoint => {}
+            }
+        }
+        for j in 0..self.sources.len() {
+            for l in 0..N {
+                v.push(Slot::Msm(j, l));
+            }
+        }
+        for l in 0..N {
+            v.push(Slot::W(l));
+        }
+        for l in 0..N {
+            v.push(Slot::U(l));
+        }
+        v.push(Slot::G(0));
+        v.push(Slot::G(1));
         v
+    }
+
+    /// How a proof of *this* circuit's instance values are carried by the
+    /// circuit verifying it: a scalar-field element of the proof verified
+    /// here (embedded, below `2^254`) fits one cell; a coordinate of a
+    /// point of this circuit's curve (an opened claim's `G`, the claim's
+    /// `G`) is a full base-field element and takes two.
+    pub fn instance_limbs_when_verified(&self) -> Vec<usize> {
+        self.layout()
+            .iter()
+            .map(|s| match s {
+                Slot::Opened(..) | Slot::G(_) => 2,
+                _ => 1,
+            })
+            .collect()
+    }
+
+    /// For the field side of the same proof (`fieldside`'s inputs: the
+    /// scalar events in transcript order; its outputs: the MSM scalars,
+    /// `W`'s, `U`'s), the indices of this circuit's public inputs that
+    /// carry each value, low limb first.
+    pub fn links_for_field_side(&self) -> Vec<Vec<usize>> {
+        let layout = self.layout();
+        let find = |pred: &dyn Fn(&Slot) -> bool| -> Vec<usize> {
+            layout
+                .iter()
+                .enumerate()
+                .filter(|(_, s)| pred(s))
+                .map(|(i, _)| i)
+                .collect()
+        };
+        let mut links = Vec::new();
+        // the scalar events and challenges, in transcript order
+        let (mut scalars, mut challenges) = (0usize, 0usize);
+        for kind in &self.kinds {
+            match kind {
+                Kind::CommonScalar | Kind::ReadScalar => {
+                    let i = scalars;
+                    links.push(find(&|s| matches!(s, Slot::Scalar(k, _) if *k == i)));
+                    scalars += 1;
+                }
+                Kind::Squeeze => {
+                    let i = challenges;
+                    links.push(find(&|s| matches!(s, Slot::Challenge(k) if *k == i)));
+                    challenges += 1;
+                }
+                _ => {}
+            }
+        }
+        for j in 0..self.sources.len() {
+            links.push(find(&|s| matches!(s, Slot::Msm(k, _) if *k == j)));
+        }
+        links.push(find(&|s| matches!(s, Slot::W(_))));
+        links.push(find(&|s| matches!(s, Slot::U(_))));
+        links
     }
 }
 
@@ -241,15 +353,21 @@ fn coords(p: &C) -> (F, F) {
     (*c.x(), *c.y())
 }
 
+/// The public inputs exposed so far, from `first_row` of the instance column.
+struct Exposer {
+    first_row: usize,
+    cells: Vec<Cell>,
+}
+
 /// Expose a cell as the next public input.
 fn expose<L: Layouter<F>>(
     cfg: &VerifierConfig,
     layouter: &mut L,
     c: &Cell,
-    exposed: &mut Vec<Cell>,
+    exposed: &mut Exposer,
 ) -> Result<(), Error> {
-    layouter.constrain_instance(c.cell(), cfg.instance, exposed.len())?;
-    exposed.push(c.clone());
+    layouter.constrain_instance(c.cell(), cfg.instance, exposed.first_row + exposed.cells.len())?;
+    exposed.cells.push(c.clone());
     Ok(())
 }
 
@@ -284,7 +402,7 @@ fn witness_scalar<L: Layouter<F>>(
     layouter: &mut L,
     s: Option<S>,
     n: usize,
-    exposed: Option<&mut Vec<Cell>>,
+    exposed: Option<&mut Exposer>,
 ) -> Result<Vec<Cell>, Error> {
     let limbs = s.map(|s| C::cells(&s, n));
     let mut cells = Vec::with_capacity(n);
@@ -426,35 +544,47 @@ impl Circuit<F> for VerifierCircuit {
     }
 
     fn synthesize(&self, cfg: VerifierConfig, mut layouter: impl Layouter<F>) -> Result<(), Error> {
-        self.synthesize_core(&cfg, &mut layouter).map(|_| ())
+        cfg.assign_table(&mut layouter)?;
+        self.synthesize_core(&cfg, &mut layouter, 0).map(|_| ())
     }
 }
 
-impl VerifierCircuit {
-    /// The whole circuit, returning its exposed cells (for a circuit that
-    /// embeds this one and binds other cells to them).
-    pub fn synthesize_core(
-        &self,
-        cfg: &VerifierConfig,
-        layouter: &mut impl Layouter<F>,
-    ) -> Result<Exposed, Error> {
-        let cfg = cfg.clone();
-        let mut layouter = layouter.namespace(|| "group side");
-        let layouter = &mut layouter;
+impl VerifierConfig {
+    /// The 10-bit lookup table, once per circuit.
+    pub fn assign_table(&self, layouter: &mut impl Layouter<F>) -> Result<(), Error> {
         layouter.assign_table(
             || "10-bit table",
             |mut table| {
                 for i in 0..(1 << 10) {
-                    table.assign_cell(|| "idx", cfg.table_idx, i, || Value::known(F::from(i as u64)))?;
+                    table.assign_cell(|| "idx", self.table_idx, i, || Value::known(F::from(i as u64)))?;
                 }
                 Ok(())
             },
-        )?;
+        )
+    }
+}
+
+impl VerifierCircuit {
+    /// The whole circuit but the table, its public inputs from row
+    /// `first_row` of the instance column, returning its exposed cells (for
+    /// a circuit that embeds this one and binds other cells to them).
+    pub fn synthesize_core(
+        &self,
+        cfg: &VerifierConfig,
+        layouter: &mut impl Layouter<F>,
+        first_row: usize,
+    ) -> Result<Exposed, Error> {
+        let cfg = cfg.clone();
+        let mut layouter = layouter.namespace(|| "group side");
+        let layouter = &mut layouter;
         let ecc = EccChip::construct(cfg.ecc.clone(), CircuitVersion::AnchoredBase);
         let mut t = Transcript::new(&cfg.transcript, layouter)?;
         let cap = self.capture.as_ref();
         let commons: Vec<C> = cap.map(|c| c.common_points()).unwrap_or_default();
-        let mut exposed: Vec<Cell> = Vec::new();
+        let mut exposed = Exposer {
+            first_row,
+            cells: Vec::new(),
+        };
         let mut instance_values: Vec<Vec<Cell>> = Vec::new();
 
         // the transcript walk
@@ -587,10 +717,10 @@ impl VerifierCircuit {
             t.permutations,
             self.sources.len() + 2,
             N,
-            exposed.len()
+            exposed.cells.len()
         );
         Ok(Exposed {
-            cells: exposed,
+            cells: exposed.cells,
             instance_values,
         })
     }
