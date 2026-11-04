@@ -326,7 +326,24 @@ tampered multiplication scalar and a tampered statement value; as a
 Pallas-committed proof of its own: key generation 13.1 s, proving
 **4.5 s**, verification 50 ms, 4 416 bytes, 1.1 GB peak. That is a
 quarter of the ≈ 2^17 estimated in §3.3: the chip's variable-base
-multiplication costs ≈ 260 rows, not 700. Not yet in: the `Fp` side. Vendored for it, in `experiments/halo2_proofs-patched`:
+multiplication costs ≈ 260 rows, not 700. Not yet in: the `Fp` side.
+
+**Towards the `Fp` side** (same day): `experiments/halo2-verifier/src/
+shadow.rs` recomputes natively, from the typed transcript events and the
+key, every scalar of the final multi-scalar multiplication exactly as
+`halo2_proofs`' verifier does — `x^n`, `l_0`, `l_last`, `l_blind`, the
+gate polynomials at `x` (walked as expression trees over the
+evaluations), the permutation and lookup expressions, the expected
+quotient evaluation, the multiopen queries (77, over 55 commitment
+references in 5 point sets of sizes 1, 2, 3, 3, 2, keyed by reference
+as `halo2_proofs` keys them: two equal fixed commitments are two
+entries with their own `x_1` powers), the Lagrange interpolation of
+each set at `x_3`, `v`, `b`, and the inner product's scalars — and is
+checked term by term against the captured MSM [measured: every scalar
+equal]. `src/field.rs` is the `Fp` chip the circuit will use (one row
+per operation: `a·b·m + a·sa + b·sb + c·sc + k = d`, with inversion as a
+witnessed inverse and an expression-tree evaluator). The circuit that
+mirrors the shadow is the remaining step of piece 3. Vendored for it, in `experiments/halo2_proofs-patched`:
 `halo2_proofs` 0.3.5 with five read-only accessors made public (the
 MSM's terms, the parameters' `W`, `U` and Lagrange generators, the
 key's commitments), used through `[patch.crates-io]` by that experiment

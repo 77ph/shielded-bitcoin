@@ -33,7 +33,8 @@ impl<C: ColumnType> Column<C> {
         Column { index, column_type }
     }
 
-    pub(crate) fn index(&self) -> usize {
+    /// The column's index (read-only; for verifier tooling).
+    pub fn index(&self) -> usize {
         self.index
     }
 
@@ -279,6 +280,23 @@ pub struct FixedQuery {
     pub(crate) rotation: Rotation,
 }
 
+impl FixedQuery {
+    /// The query index (read-only; for verifier tooling).
+    pub fn index(&self) -> usize {
+        self.index
+    }
+
+    /// The column index (read-only; for verifier tooling).
+    pub fn column_index(&self) -> usize {
+        self.column_index
+    }
+
+    /// The rotation (read-only; for verifier tooling).
+    pub fn rotation(&self) -> Rotation {
+        self.rotation
+    }
+}
+
 /// Query of advice column at a certain relative location
 #[derive(Copy, Clone, Debug)]
 pub struct AdviceQuery {
@@ -290,6 +308,23 @@ pub struct AdviceQuery {
     pub(crate) rotation: Rotation,
 }
 
+impl AdviceQuery {
+    /// The query index (read-only; for verifier tooling).
+    pub fn index(&self) -> usize {
+        self.index
+    }
+
+    /// The column index (read-only; for verifier tooling).
+    pub fn column_index(&self) -> usize {
+        self.column_index
+    }
+
+    /// The rotation (read-only; for verifier tooling).
+    pub fn rotation(&self) -> Rotation {
+        self.rotation
+    }
+}
+
 /// Query of instance column at a certain relative location
 #[derive(Copy, Clone, Debug)]
 pub struct InstanceQuery {
@@ -299,6 +334,23 @@ pub struct InstanceQuery {
     pub(crate) column_index: usize,
     /// Rotation of this query
     pub(crate) rotation: Rotation,
+}
+
+impl InstanceQuery {
+    /// The query index (read-only; for verifier tooling).
+    pub fn index(&self) -> usize {
+        self.index
+    }
+
+    /// The column index (read-only; for verifier tooling).
+    pub fn column_index(&self) -> usize {
+        self.column_index
+    }
+
+    /// The rotation (read-only; for verifier tooling).
+    pub fn rotation(&self) -> Rotation {
+        self.rotation
+    }
 }
 
 /// A fixed column of a lookup table.
@@ -891,7 +943,8 @@ impl<F: Field, C: Into<Constraint<F>>, Iter: IntoIterator<Item = C>> IntoIterato
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct Gate<F: Field> {
+/// A gate: a set of polynomial constraints (public for verifier tooling).
+pub struct Gate<F: Field> {
     name: &'static str,
     constraint_names: Vec<&'static str>,
     polys: Vec<Expression<F>>,
@@ -910,7 +963,8 @@ impl<F: Field> Gate<F> {
         self.constraint_names[constraint_index]
     }
 
-    pub(crate) fn polynomials(&self) -> &[Expression<F>] {
+    /// The gate's polynomials (read-only; for verifier tooling).
+    pub fn polynomials(&self) -> &[Expression<F>] {
         &self.polys
     }
 
@@ -1010,6 +1064,46 @@ impl<F: Field> Default for ConstraintSystem<F> {
 }
 
 impl<F: Field> ConstraintSystem<F> {
+    /// The number of advice columns (read-only; for verifier tooling).
+    pub fn num_advice_columns(&self) -> usize {
+        self.num_advice_columns
+    }
+
+    /// The number of instance columns (read-only; for verifier tooling).
+    pub fn num_instance_columns(&self) -> usize {
+        self.num_instance_columns
+    }
+
+    /// The gates (read-only; for verifier tooling).
+    pub fn gates(&self) -> &[Gate<F>] {
+        &self.gates
+    }
+
+    /// The lookup arguments (read-only; for verifier tooling).
+    pub fn lookups(&self) -> &[lookup::Argument<F>] {
+        &self.lookups
+    }
+
+    /// The permutation argument (read-only; for verifier tooling).
+    pub fn permutation(&self) -> &permutation::Argument {
+        &self.permutation
+    }
+
+    /// The advice queries, in query-index order (read-only; for verifier tooling).
+    pub fn advice_queries(&self) -> &[(Column<Advice>, Rotation)] {
+        &self.advice_queries
+    }
+
+    /// The fixed queries, in query-index order (read-only; for verifier tooling).
+    pub fn fixed_queries(&self) -> &[(Column<Fixed>, Rotation)] {
+        &self.fixed_queries
+    }
+
+    /// The instance queries, in query-index order (read-only; for verifier tooling).
+    pub fn instance_queries(&self) -> &[(Column<Instance>, Rotation)] {
+        &self.instance_queries
+    }
+
     /// Obtain a pinned version of this constraint system; a structure with the
     /// minimal parameters needed to determine the rest of the constraint
     /// system.
@@ -1164,7 +1258,8 @@ impl<F: Field> ConstraintSystem<F> {
         panic!("get_instance_query_index called for non-existent query");
     }
 
-    pub(crate) fn get_any_query_index(&self, column: Column<Any>) -> usize {
+    /// The query index of `column` at rotation zero (read-only; for verifier tooling).
+    pub fn get_any_query_index(&self, column: Column<Any>) -> usize {
         match column.column_type() {
             Any::Advice => self.get_advice_query_index(
                 Column::<Advice>::try_from(column).unwrap(),
