@@ -661,6 +661,63 @@ a 128-bit variable-base multiplication worth adding to the chip) and
 of `fieldside.rs` (the second sponge and the challenge derivation).
 Decided for later: the structure of the step comes first, then this.
 
+### 3.7 The batch relation in `T_p` [design]
+
+What `T_p(i)` adds to the verifier circuits is `REPLAY-PROOF.md` §4.2's
+relation over the family's own state, with one change of role: there
+the batch circuit takes the statements on trust (their proofs being the
+client's business, §4.3); here the same circuit holds, in the same
+proof, the field sides of those statements' proofs and the group side
+of the `T_q` that did the rest, so a slot's 23 statement elements are
+not free witnesses but copies, bound in-circuit, of the transfer
+statement `T_q(i)` exposed as that proof's instance (the `q` group side
+recomputes the instance commitment from them: a statement is bound to
+its proof by the commitment, and to the slot by the links). `D` stays,
+for the light client's own copy of the statements.
+
+* **State.** The family's indexer keeps a note tree, a spent set and the
+  roots by height (`sba-indexer/src/state.rs`); the relation needs what
+  the paper's state has (`sb-core/src/batch.rs`): the note tree
+  (`root`, `size`), an indexed nullifier tree (`nf_root`, `nf_size`;
+  `sb-core/src/imt.rs`, sorted linked leaves `(value, next)`, insertion
+  as two path updates), a root tree of the note roots by height
+  (`h_root`), `height`, `applied`; the state digest `PH_A(T_STATE, …)`
+  over the seven. The port: `imt.rs` and `batch.rs` into `sba-core`
+  with `Fp` and `PH_A` and tags in the family's style (`sb-a/v1/state`,
+  `sb-a/v1/imt`, `sb-a/v1/batch`), the three trees and the opening
+  into `ReplayState` beside the spent set (the set stays as the index
+  the CLI reads; the trees are what the proof opens), and the
+  checkpoints extended so that a reorganisation rolls the trees back
+  as it rolls the set back.
+* **Slot.** The paper's 18 elements become the family's: `h_anchor`,
+  `r_anchor`, 2 nullifiers, 2 × (`pk_eph` as two coordinates, `ct_note`
+  as its 6 elements), `h_body`, the kind — 23, with no `h_aux` (the
+  family's leaf is `note_leaf(const_salt, h_body, j, pk_eph, ct)`,
+  `sba-core/src/note.rs`, which the circuit recomputes with the
+  Poseidon chip). The transfer statement's `const_salt` and arities are
+  the circuit's constants.
+* **Rows** [estimate from the paper's circuit, `sb-circuit/src/batch.rs`]:
+  per slot, 13 Merkle paths of depth 32 (the anchor's, four per
+  nullifier insertion, two per output leaf) and a few leaf hashes,
+  ≈ 430 permutations of the width-3 Poseidon chip at ≈ 66 rows each
+  ≈ 28 000 rows, plus the range checks of heights and positions
+  (lookups) and the comparisons; the digest `D` over `23 n` elements.
+  `n = 4`: ≈ 2^17 for the relation, so `T_p(i)` ≈ 2^18 with its
+  verifier parts (§3.4's figures: 4 × 3 000 + 80 000 + 5 000), and
+  `T_q(i)` with four transfer proofs' group sides (4 × 33 000) beside
+  `T_p(i−1)`'s (120 000) ≈ 2^18, at its limit; `n = 8` puts both at
+  2^19 — the server's k = 19 is the fragment size's ceiling until §3.6
+  shrinks the group sides.
+* **Order of work.** `sba-core`: `imt.rs`, `batch.rs` (the opening,
+  the slot, the digest, the witnesses) — native, tested against the
+  paper's by shape; `sba-indexer`: the trees in the state and the
+  checkpoints, the batch witness produced per block; the circuit in
+  `experiments/halo2-verifier/src/batch.rs` over the Poseidon chip (a
+  Merkle gadget, the indexed insertion, the slot rules) measured alone
+  with the mock prover; then into `StepP2` with the links to the
+  transfer statements; then the chain test with real statements from a
+  replayed signet history.
+
 ## 4. What this study decides
 
 * **Now, no profile change:** batch verification in the indexer (§2),
