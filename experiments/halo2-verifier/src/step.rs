@@ -116,7 +116,7 @@ pub(crate) mod tests_support {
     use crate::native::{PoseidonRead, PoseidonWrite};
     use crate::verifier::tests_support::q_circuit;
     use halo2_proofs::plonk::{self, Circuit, VerifyingKey};
-    use halo2_proofs::poly::commitment::Params;
+    use halo2_proofs::poly::commitment::{Claim, Params};
     use pasta_curves::{pallas, vesta};
     use rand::rngs::StdRng;
     use rand::SeedableRng;
@@ -187,6 +187,102 @@ pub(crate) mod tests_support {
         );
         (outer, ovk, instance, proof, cap_q)
     }
+
+    /// `T_p` over a real transfer proof and its `T_q`: the step circuit,
+    /// its keys, a Vesta-committed proof opening the transfer proof's
+    /// claim, its capture (with that claim opened).
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn tp(
+        params: &Params<vesta::Affine>,
+        vk: &VerifyingKey<vesta::Affine>,
+        cap: &Capture<vesta::Affine>,
+        outer: &Params<pallas::Affine>,
+        ovk: &VerifyingKey<pallas::Affine>,
+        instance_q: &[pallas::Scalar],
+        cap_q: &Capture<pallas::Affine>,
+    ) -> (
+        super::StepP,
+        Params<vesta::Affine>,
+        VerifyingKey<vesta::Affine>,
+        Vec<vesta::Scalar>,
+        Vec<u8>,
+        Capture<vesta::Affine>,
+        Claim<vesta::Affine>,
+    ) {
+        use crate::fieldside::fp::{FieldSideCircuit, Structure};
+        use crate::verifier::{p, q};
+        let (kinds, sources_q) = p::VerifierCircuit::shape(
+            cap_q,
+            outer,
+            ovk.fixed_commitments(),
+            ovk.permutation_commitments(),
+        );
+        let group = p::VerifierCircuit {
+            kinds,
+            sources: sources_q,
+            params_w: outer.get_w(),
+            params_u: outer.get_u(),
+            lagrange: outer.get_g_lagrange()[..instance_q.len()].to_vec(),
+            instance_limbs: q_circuit(params, vk, cap).instance_limbs_when_verified(cap),
+            expose_instance: true,
+            capture: Some(cap_q.clone()),
+        };
+        let (_, sources) = q::VerifierCircuit::shape(
+            cap,
+            params,
+            vk.fixed_commitments(),
+            vk.permutation_commitments(),
+        );
+        let (structure, shadow) = Structure::build(params, vk, cap, &sources);
+        let link = super::StepP::link(cap, structure.outputs.len());
+        let field = FieldSideCircuit {
+            structure,
+            shadow: Some(shadow),
+        };
+        let step = super::StepP { group, field, link };
+        let instance = step.group.instance(cap_q);
+        let claim: Claim<vesta::Affine> = cap.claim();
+        let k = 17;
+        let t = std::time::Instant::now();
+        let pparams: Params<vesta::Affine> = Params::new(k);
+        let pvk = plonk::keygen_vk(&pparams, &step.without_witnesses()).unwrap();
+        let ppk = plonk::keygen_pk(&pparams, pvk.clone(), &step.without_witnesses()).unwrap();
+        println!("T_p keygen (k = {k}): {:.1} s", t.elapsed().as_secs_f64());
+        let t = std::time::Instant::now();
+        let mut tr = PoseidonWrite::<_, vesta::Affine>::init(vec![]);
+        plonk::create_proof_with_openings(
+            &pparams,
+            &ppk,
+            &[step.clone()],
+            &[&[&instance[..]]],
+            &[claim.clone()],
+            &mut StdRng::seed_from_u64(21),
+            &mut tr,
+        )
+        .unwrap();
+        let proof = tr.finalize();
+        println!(
+            "T_p prove: {:.1} s, proof {} bytes, {} public inputs",
+            t.elapsed().as_secs_f64(),
+            proof.len(),
+            instance.len()
+        );
+        let cap_p = capture(&pparams, &pvk, &instance, &proof, &[claim.clone()]).unwrap();
+        let n = |f: &dyn Fn(&Event<vesta::Affine>) -> bool| {
+            cap_p.events.iter().filter(|e| f(e)).count()
+        };
+        println!(
+            "T_p capture: {} common points, {} common scalars, {} points read, {} scalars read, {} challenges; msm terms {} (+ W, U); claim u's {}",
+            n(&|e| matches!(e, Event::CommonPoint(_))),
+            n(&|e| matches!(e, Event::CommonScalar(_))),
+            n(&|e| matches!(e, Event::ReadPoint(_))),
+            n(&|e| matches!(e, Event::ReadScalar(_))),
+            n(&|e| matches!(e, Event::Squeeze(_))),
+            cap_p.terms.len(),
+            cap_p.u.len()
+        );
+        (step, pparams, pvk, instance, proof, cap_p, claim)
+    }
 }
 
 #[cfg(test)]
@@ -223,6 +319,7 @@ mod tests {
             params_u: outer.get_u(),
             lagrange: outer.get_g_lagrange()[..instance_q.len()].to_vec(),
             instance_limbs: q_circuit(&params, &vk, &cap).instance_limbs_when_verified(&cap),
+            expose_instance: true,
             capture: Some(cap_q.clone()),
         };
         let nonzero = circuit
@@ -297,6 +394,7 @@ mod tests {
             params_u: outer.get_u(),
             lagrange: outer.get_g_lagrange()[..instance_q.len()].to_vec(),
             instance_limbs: q_circuit(&params, &vk, &cap).instance_limbs_when_verified(&cap),
+            expose_instance: true,
             capture: Some(cap_q.clone()),
         };
         // the field side of the transfer proof, over the q circuit's sources
@@ -413,5 +511,101 @@ mod tests {
             &[wrong],
         )
         .is_err());
+    }
+}
+
+#[cfg(test)]
+mod second_step {
+    use super::tests_support::{tp, tq};
+    use crate::verifier::q;
+    use crate::verifier::tests_support::real;
+    use ff::Field;
+    use halo2_proofs::dev::MockProver;
+    use pasta_curves::pallas;
+
+    /// The `q` group side of a real `T_p` proof — a proof that opened a
+    /// claim — in a circuit over `Fq`, `T_p`'s instance values witnessed
+    /// but not exposed:
+    /// `cargo test --release the_q_group_side_of_a_tp_proof -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn the_q_group_side_of_a_tp_proof_verifies_in_circuit() {
+        let (params, vk, cap) = real();
+        let (outer, ovk, instance_q, _proof_q, cap_q) = tq(&params, &vk, &cap);
+        let (_step, pparams, pvk, instance_p, _proof_p, cap_p, _claim) =
+            tp(&params, &vk, &cap, &outer, &ovk, &instance_q, &cap_q);
+        let (kinds, sources) = q::VerifierCircuit::shape(
+            &cap_p,
+            &pparams,
+            pvk.fixed_commitments(),
+            pvk.permutation_commitments(),
+        );
+        assert!(kinds.iter().any(|k| matches!(k, q::Kind::OpenedPoint)));
+        assert!(sources.iter().any(|s| matches!(s, q::Source::Opened(0))));
+        let circuit = q::VerifierCircuit {
+            kinds,
+            sources,
+            params_w: pparams.get_w(),
+            params_u: pparams.get_u(),
+            lagrange: pparams.get_g_lagrange()[..instance_p.len()].to_vec(),
+            instance_limbs: vec![1; instance_p.len()],
+            expose_instance: false,
+            capture: Some(cap_p.clone()),
+        };
+        let nonzero = circuit
+            .scalars(&cap_p)
+            .iter()
+            .filter(|s| !bool::from(s.is_zero()))
+            .count();
+        assert_eq!(nonzero, cap_p.terms.len());
+        let instance = circuit.instance(&cap_p);
+        println!(
+            "T_q(2) group side of T_p: msm terms {}, instance values of T_p {} (not exposed), public inputs {}",
+            cap_p.terms.len(),
+            instance_p.len(),
+            instance.len()
+        );
+        let mut k = 16;
+        let t = std::time::Instant::now();
+        let prover = loop {
+            match MockProver::run(k, &circuit, vec![instance.clone()]) {
+                Ok(p) => break p,
+                Err(_) => {
+                    k += 1;
+                    assert!(k <= 20, "does not fit k = 20");
+                }
+            }
+        };
+        println!(
+            "q group side of T_p fits k = {k} (mock prover {:.1} s)",
+            t.elapsed().as_secs_f64()
+        );
+        prover.assert_satisfied();
+        println!(
+            "{:?}",
+            halo2_proofs::dev::CircuitCost::<pallas::Point, _>::measure(k, &circuit)
+        );
+        // a wrong coordinate of the opened claim's G is refused
+        let at = cap_p
+            .events
+            .iter()
+            .take_while(|e| !matches!(e, crate::capture::Event::CommonPoint(_)))
+            .filter(|e| !matches!(e, crate::capture::Event::ReadPoint(_)))
+            .count();
+        // the first common point is the instance commitment (not exposed);
+        // the opened G follows the next events: find it by value
+        let (gx, _) = {
+            use pasta_curves::arithmetic::CurveAffine;
+            let c = cap_p.common_points()[1].coordinates().unwrap();
+            (*c.x(), *c.y())
+        };
+        let pos = instance.iter().position(|v| *v == gx).expect("G exposed");
+        let _ = at;
+        let mut bad = instance.clone();
+        bad[pos] += q::F::ONE;
+        assert!(MockProver::run(k, &circuit, vec![bad])
+            .unwrap()
+            .verify()
+            .is_err());
     }
 }

@@ -487,6 +487,26 @@ which is the expected loss for one proof and the gain for a block, since
 the step's cost does not grow with the number of proofs it covers
 beyond the per-proof circuits.
 
+**The second step's pieces (4 November 2026)** [measured]. The field
+side of a `T_q` proof, a circuit over `Fq` (`fieldside::fq`, the same
+body as the transfer proof's field side with the field and the group
+side's sources swapped): 222 public inputs, 3 037 field rows, **k = 13**
+— the Pallas chip's gates evaluate in fewer rows than the transfer
+circuit's. The `q` group side of a `T_p` proof — a proof that opened a
+claim, so its transcript has a second common point, the claim's `G`,
+witnessed and exposed and multiplied like a commitment — with `T_p`'s
+643 instance values witnessed for its instance commitment but not
+exposed (`expose_instance: false`; nothing after the step needs them,
+and they are bound by the commitment): 117 MSM terms, 260 public
+inputs, 120 210 rows, **k = 17**. So the two circuits of a steady-state
+step, by the pieces: `T_q(i)` = the group side of a transfer proof
+(≈ 33 000 rows) + the group side of `T_p(i−1)` (≈ 120 000) + the field
+side of `T_q(i−1)` (≈ 4 000) ≈ 2^18; `T_p(i)` = the field side of the
+transfer proof (≈ 3 000) + the group side of `T_q(i)` (≈ 500 instance
+values and ≈ 120 terms, ≈ 80 000) + the field side of `T_p(i−1)`
+(≈ 5 000) ≈ 2^17. The server's container for a k = 18 prover
+(≈ 10 GB).
+
 **Accumulation, the Halo way** [cited: ePrint 2019/1021 §4 and §5].
 Every verified proof leaves a claim `(G, u_1 … u_k)` on its curve:
 the deferred assertion `G = ⟨s(u), params.g⟩`. The claim is settled
