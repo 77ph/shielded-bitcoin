@@ -26,7 +26,7 @@ use pasta_curves::vesta;
 use crate::capture::{Capture, Event};
 use crate::field::{Cell, FieldChip, FieldConfig, Fp};
 use crate::shadow::{CRef, Commitment, Shadow};
-use crate::verifier::Source;
+use crate::verifier::q::Source;
 
 /// Where an evaluation of the multiopen argument comes from.
 #[derive(Clone, Copy, Debug)]
@@ -110,7 +110,7 @@ impl Structure {
     pub fn build(
         params: &Params<vesta::Affine>,
         vk: &VerifyingKey<vesta::Affine>,
-        cap: &Capture,
+        cap: &Capture<vesta::Affine>,
         sources: &[Source],
     ) -> (Structure, Shadow) {
         let sh = Shadow::compute(params, vk, cap);
@@ -255,6 +255,7 @@ impl Structure {
             match s {
                 Source::Read(i) => read[*i],
                 Source::Common => t.instance_commitment,
+                Source::Opened(i) => cap.common_points()[1 + *i],
                 Source::Constant(c) => *c,
                 Source::Claim => cap.g,
             }
@@ -847,8 +848,8 @@ fn st_transcript_len(st: &Structure) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::verifier::q::VerifierCircuit;
     use crate::verifier::tests_support::real;
-    use crate::verifier::VerifierCircuit;
     use halo2_proofs::dev::MockProver;
 
     #[test]
@@ -910,8 +911,8 @@ mod tests {
 #[cfg(test)]
 mod prove_tests {
     use super::*;
+    use crate::verifier::q::VerifierCircuit;
     use crate::verifier::tests_support::real;
-    use crate::verifier::VerifierCircuit;
     use halo2_proofs::plonk;
     use halo2_proofs::poly::commitment::Params;
     use halo2_proofs::transcript::{Blake2bRead, Blake2bWrite, Challenge255};

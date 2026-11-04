@@ -385,26 +385,76 @@ alone.
 ### 3.4 The step `T`, designed
 
 A step proves one fragment of `n` statements of one block. It is two
-proofs, one per curve, made together by the indexer:
+proofs, one per curve, made **one after the other** by the indexer —
+`T_q` first, then `T_p` verifying `T_q`'s group side — because a value
+that crosses between the curves (a challenge derived on one side and
+used on the other) can only be bound by the circuit that verifies the
+proof it is a public input of; two circuits made side by side would
+each leave the other's values unbound, and binding them one step later
+would need the same binding again a step after that. Halo and Pickles
+arrange their step and wrap proofs in the same alternation.
 
-* **`T_p`, over `Fp`, Vesta-committed.** (a) The batch relation of
+* **`T_q(i)`, over `Fq`, Pallas-committed.** The group side of each of
+  the `n` transfer proofs (§3.3: k = 15 each); the group side of
+  `T_p(i−1)` (Vesta points, native); the field side of `T_q(i−1)` (`Fq`
+  arithmetic, native); and the opening of `T_q(i−1)`'s claim (a
+  Pallas claim, inside a Pallas-committed proof). Its public inputs:
+  the transfer proofs' challenges, scalars and `G`s, the deferred
+  values of the two previous proofs.
+* **`T_p(i)`, over `Fp`, Vesta-committed.** (a) The batch relation of
   `REPLAY-PROOF.md` §4.2 over the family's Poseidon: the state opening,
   the `n` statements applied in order through the indexed nullifier
   tree and the note tree, the anchor checks, the digest `D` [estimate
   as §3.2 item 3: ≈ 40 000 rows per slot, 2^20 for 16 slots, 2^18 for
-  4].
-  (b) The field side of each of the `n` transfer proofs (§3.3: 3 192
-  operations each, 2^16 rows for 16). (c) The field side of the
-  previous step's `T_p` proof (the same circuit shape as a transfer
-  proof's field side, over a larger key: a few thousand operations)
-  and the group side of the previous step's `T_q` proof (Pallas
-  points, native in `Fp`: ≈ 100 multiplications, 2^15 rows). (d) The
-  bookkeeping of the two accumulators, below.
-* **`T_q`, over `Fq`, Pallas-committed.** The group side of each of the
-  `n` transfer proofs (§3.3: k = 15 each, 2^19 rows for 16), the group
-  side of the previous `T_p` proof (Vesta points, ≈ 2^15), the field
-  side of the previous `T_q` proof (≈ 2^13), and the accumulator
-  bookkeeping.
+  4]. (b) The field side of each of the `n` transfer proofs (§3.3:
+  3 192 operations each). (c) The group side of `T_q(i)` — the same
+  step's, which binds everything `T_q(i)` exposed — and the field side
+  of `T_p(i−1)`. (d) The openings of the `n` transfer proofs' claims and
+  of `T_p(i−1)`'s (Vesta claims, inside a Vesta-committed proof).
+
+Every proof of step `i−1` is thereby verified by step `i`: `T_q(i−1)`'s
+group side was in `T_p(i−1)`, its field side is in `T_q(i)`;
+`T_p(i−1)`'s group side is in `T_q(i)`, its field side in `T_p(i)`. The
+decider verifies the last step's two proofs natively and in full (the
+claims `T_p(i)` opened are read from `T_q(i)`'s public inputs), settling
+the two claims those leave by two multi-scalar multiplications.
+
+**Scalars across the cycle** [built]. A proof's scalars live in its
+curve's scalar field and the circuit verifying its group side in the
+base field. For Vesta-committed proofs that is `Fp` in `Fq`, `p < q`:
+one cell, range-checked below `2^254` so that the cell is a canonical
+`Fp` element (without the check a prover could absorb `s + p` in place
+of `s` and grind a second transcript per scalar). For Pallas-committed
+proofs it is `Fq` in `Fp`, `q > p`: an `Fq` element does not fit, so it
+is carried as two 128-bit limbs — in the proof's transcript (the
+sponge over `Fp` absorbs low then high: `native.rs`), as the circuit's
+public inputs (two cells, low below `2^128`, high below `2^126`), and
+in the multiplications: `Σ [s_i] P_i = Σ [lo_i] P_i + [2^128] Σ
+[hi_i] P_i`, two multiplications per term and one more at the end. The
+other side reconstructs `hi · 2^128 + lo` natively. A coordinate of a
+Vesta point exposed by `T_q` (a claim's `G`) is an `Fq` value `T_p`
+reads as a Pallas scalar: it fits unless it lies in `[p, q)`, a range of
+`2^-178` of the field — a completeness loss that small, not a
+soundness one, since the commitment is binding.
+
+**One step, measured (4 November 2026)** [measured,
+`experiments/halo2-verifier/src/step.rs`]: the `q` group side of a
+real transfer proof proven for real as `T_q` at k = 15 (keygen 10.8 s,
+prove 4.2 s, 4 960 bytes, 221 public inputs, native verification 55 ms
+with the Poseidon transcript over `Fp`); its capture: 61 points and 94
+scalars read, 26 challenges, 99 MSM terms, 15 inner-product challenges;
+the `p` group side of *that* proof in a circuit over `Fp`: 862 public
+inputs, 159 permutations, (101 + 221) · 2 = 644 multiplications, **fits
+k = 17** (mock prover 6.3 s, 1.2 GB for the whole run), and refuses a
+wrong `G` or a wrong limb of a `T_q` instance value. The instance
+commitment of `T_q` is 442 of the 644 multiplications: 221 values, each
+two limbs, each multiplied as a variable base. Two reductions are
+plain: the 217 of those values that are `Fp` elements embedded in `Fq`
+(challenges, scalars, evaluations of the transfer proof) fit one limb;
+and the Lagrange generators are constants, so the chip's fixed-base
+multiplication (3-bit windows, ≈ 90 rows) applies instead of the
+variable-base one (≈ 250 rows). With both, the `T_q` instance costs
+≈ 2^15 rows instead of ≈ 2^17 and the `p` group side ≈ 2^16.
 
 **Accumulation, the Halo way** [cited: ePrint 2019/1021 §4 and §5].
 Every verified proof leaves a claim `(G, u_1 … u_k)` on its curve:
@@ -488,10 +538,13 @@ step having verified them.
 
 **Order of work:** the prover change (extra openings) in the vendored
 crate with a test that a claim opened in a following proof settles
-(done, above); then one recursive step over two transfer proofs in `experiments/`
-(`T_p` without the batch relation: the field sides, the group side of
-a previous `T_q`; `T_q`: the group sides, the field side of a previous
-`T_p`), measured; then the batch relation ported from
+(done, above); the `p` group side over a real `T_q` (done, above);
+then `T_p(1)` whole — the `p` group side of `T_q(1)`, the field side of
+the transfer proof, the opening of its claim — proven for real and
+verified by the decider, which is one transfer proof verified
+recursively end to end; then the two reductions of the instance cost;
+then the field side of a `T_q` and the group side of a `T_p` (the
+second step); then the batch relation ported from
 `crates/sb-circuit/src/batch.rs`; then the fragment size chosen on the
 server's memory and the light client's wire format.
 
@@ -567,7 +620,10 @@ blocks.
   prover change it needs, done the same day in the vendored crate:
   claims opened inside a later proof, tested over two sizes), the
   cross-circuit binding and its cost, the proven block's wire format,
-  the order of work.
+  the order of work. Then, the same day: the sequential order of the
+  two circuits (the binding argument), scalars across the cycle (two
+  limbs, canonicity), and one step measured — the `p` group side of a
+  real `T_q` proof at k = 17.
 * **v0.5** (4 November 2026) — the field side measured on the real
   proof (§3.3: k = 13, 0.6 s); the verification of one transfer proof
   complete in two circuits; the batch step `T` set as the next design.

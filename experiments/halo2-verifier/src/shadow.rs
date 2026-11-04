@@ -60,12 +60,12 @@ pub struct Typed {
 }
 
 struct Reader<'a> {
-    events: &'a [Event],
+    events: &'a [Event<vesta::Affine>],
     i: usize,
 }
 
 impl<'a> Reader<'a> {
-    fn next(&mut self) -> &'a Event {
+    fn next(&mut self) -> &'a Event<vesta::Affine> {
         let e = &self.events[self.i];
         self.i += 1;
         e
@@ -110,7 +110,7 @@ impl<'a> Reader<'a> {
 
 impl Typed {
     /// Parse the events in the verifier's order (`plonk::verify_proof`).
-    pub fn parse(vk: &VerifyingKey<vesta::Affine>, cap: &Capture, k: u32) -> Typed {
+    pub fn parse(vk: &VerifyingKey<vesta::Affine>, cap: &Capture<vesta::Affine>, k: u32) -> Typed {
         let cs = vk.cs();
         let mut r = Reader {
             events: &cap.events,
@@ -305,7 +305,7 @@ impl Shadow {
     pub fn compute(
         params: &Params<vesta::Affine>,
         vk: &VerifyingKey<vesta::Affine>,
-        cap: &Capture,
+        cap: &Capture<vesta::Affine>,
     ) -> Shadow {
         let t = Typed::parse(vk, cap, params.k());
         let cs = vk.cs();
