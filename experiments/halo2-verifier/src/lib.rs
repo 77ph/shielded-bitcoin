@@ -5,6 +5,7 @@
 
 pub mod capture;
 pub mod field;
+pub mod fieldside;
 pub mod fixed;
 pub mod sample;
 pub mod shadow;
