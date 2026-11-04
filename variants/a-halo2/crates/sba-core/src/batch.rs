@@ -11,9 +11,8 @@ use sba_primitives::tags::{t_batch, t_state};
 use sba_primitives::{Affine, Fp};
 
 use crate::imt::{Insertion, Leaf};
-use crate::note::NoteCiphertext;
-use crate::tree::{DEPTH, MerklePath};
-use crate::xy;
+use crate::note::{NoteCiphertext, note_leaf};
+use crate::tree::{DEPTH, EMPTY_ROOTS, MerklePath};
 
 pub use crate::envelope::N_IN;
 pub use crate::recovery::N_OUT;
@@ -62,11 +61,20 @@ pub struct SlotStatement {
     pub h_anchor: u32,
     pub r_anchor: Fp,
     pub nullifiers: [Fp; N_IN],
-    pub pk_eph: [Affine; N_OUT],
+    /// The ephemeral keys as coordinates; `(0, 0)` for a mint's absent
+    /// second output.
+    pub pk_eph: [(Fp, Fp); N_OUT],
     pub ct: [NoteCiphertext; N_OUT],
     pub h_body: Fp,
     pub mint: bool,
 }
+
+/// An absent output's ciphertext.
+pub const NO_CT: NoteCiphertext = NoteCiphertext {
+    c0: Fp::ZERO,
+    c1: Fp::ZERO,
+    tag: Fp::ZERO,
+};
 
 /// `h_anchor, r_anchor, nullifiers, (x, y, c0, c1, tag) per output, h_body, kind`.
 pub const SLOT_ELEMENTS: usize = 1 + 1 + N_IN + N_OUT * 5 + 1 + 1;
@@ -83,13 +91,18 @@ fn u32_of(f: &Fp) -> Option<u32> {
 }
 
 impl SlotStatement {
+    /// Outputs a slot of this kind appends: one for a mint.
+    pub fn outputs(&self) -> usize {
+        if self.mint { 1 } else { N_OUT }
+    }
+
     pub fn to_elements(&self) -> [Fp; SLOT_ELEMENTS] {
         let mut v = Vec::with_capacity(SLOT_ELEMENTS);
         v.push(Fp::from(self.h_anchor as u64));
         v.push(self.r_anchor);
         v.extend_from_slice(&self.nullifiers);
         for j in 0..N_OUT {
-            let (x, y) = xy(&self.pk_eph[j]);
+            let (x, y) = self.pk_eph[j];
             v.push(x);
             v.push(y);
             v.extend_from_slice(&self.ct[j].elements());
@@ -100,34 +113,34 @@ impl SlotStatement {
     }
 
     /// The inverse of [`Self::to_elements`], `None` if the elements are
-    /// not a statement: a height above `u32`, a point off the curve, a
-    /// kind other than 0 or 1.
+    /// not a statement: a height above `u32`, a used output's key off the
+    /// curve, a kind other than 0 or 1.
     pub fn from_elements(e: &[Fp]) -> Option<Self> {
         use pasta_curves::arithmetic::CurveAffine;
         if e.len() != SLOT_ELEMENTS {
             return None;
         }
         let h_anchor = u32_of(&e[0])?;
-        let mut pk_eph = [Affine::default(); N_OUT];
-        let mut ct = [NoteCiphertext {
-            c0: Fp::ZERO,
-            c1: Fp::ZERO,
-            tag: Fp::ZERO,
-        }; N_OUT];
+        let mint = match u32_of(&e[SLOT_ELEMENTS - 1])? {
+            0 => false,
+            1 => true,
+            _ => return None,
+        };
+        let outputs = if mint { 1 } else { N_OUT };
+        let mut pk_eph = [(Fp::ZERO, Fp::ZERO); N_OUT];
+        let mut ct = [NO_CT; N_OUT];
         for j in 0..N_OUT {
             let base = 2 + N_IN + j * 5;
-            pk_eph[j] = Option::from(Affine::from_xy(e[base], e[base + 1]))?;
+            if j < outputs {
+                Option::<Affine>::from(Affine::from_xy(e[base], e[base + 1]))?;
+            }
+            pk_eph[j] = (e[base], e[base + 1]);
             ct[j] = NoteCiphertext {
                 c0: e[base + 2],
                 c1: e[base + 3],
                 tag: e[base + 4],
             };
         }
-        let mint = match u32_of(&e[SLOT_ELEMENTS - 1])? {
-            0 => false,
-            1 => true,
-            _ => return None,
-        };
         let mut nullifiers = [Fp::ZERO; N_IN];
         nullifiers.copy_from_slice(&e[2..2 + N_IN]);
         Some(SlotStatement {
@@ -229,6 +242,136 @@ impl BatchStatement {
     }
 }
 
+/// The deployment constants the relation is fixed by.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct BatchParams {
+    pub activation: u32,
+    pub window_w: u32,
+    pub k_min: u32,
+    pub const_salt: Fp,
+}
+
+/// An absent path.
+pub fn no_path() -> MerklePath {
+    MerklePath {
+        position: 0,
+        siblings: [Fp::ZERO; DEPTH],
+    }
+}
+
+impl NullifierInsert {
+    /// An absent insertion (a mint's, an empty slot's).
+    pub fn none() -> Self {
+        NullifierInsert {
+            low: Leaf {
+                value: Fp::ZERO,
+                next: Fp::ZERO,
+            },
+            low_path: no_path(),
+            new_path: no_path(),
+        }
+    }
+}
+
+impl BatchWitness {
+    /// The relation, natively — the specification the circuit follows rule
+    /// by rule: the statement it proves, or `None` where a rule fails.
+    pub fn check(&self, p: &BatchParams) -> Option<BatchStatement> {
+        let prev = &self.prev;
+        let mut root = prev.root;
+        let mut size = prev.size;
+        let mut nf_root = prev.nf_root;
+        let mut nf_size = prev.nf_size;
+        let mut applied = prev.applied;
+        let mut statements = Vec::with_capacity(self.slots.len());
+        for slot in &self.slots {
+            let Some(sw) = slot else {
+                statements.push(None);
+                continue;
+            };
+            let st = &sw.statement;
+            statements.push(Some(*st));
+            if !st.mint {
+                // the anchor: in the window, its root in the root tree (an
+                // anchor below activation opens to the initial root)
+                let h = st.h_anchor as u64;
+                let height = prev.height as u64;
+                if h + (p.window_w as u64) < height || height < h + (p.k_min as u64) {
+                    return None;
+                }
+                if st.h_anchor < p.activation {
+                    if st.r_anchor != EMPTY_ROOTS[DEPTH] {
+                        return None;
+                    }
+                } else {
+                    let path = MerklePath {
+                        position: (st.h_anchor - p.activation) as u64 + 1,
+                        siblings: sw.anchor_siblings,
+                    };
+                    if path.root(&st.r_anchor) != prev.h_root {
+                        return None;
+                    }
+                }
+                // the nullifiers: absent, then inserted, in order
+                for (k, nf) in st.nullifiers.iter().enumerate() {
+                    let ins = Insertion {
+                        value: *nf,
+                        low_before: sw.nullifiers[k].low,
+                        low_path: sw.nullifiers[k].low_path.clone(),
+                        new_position: nf_size,
+                        new_path: sw.nullifiers[k].new_path.clone(),
+                    };
+                    let (before, after) = ins.roots()?;
+                    if before != nf_root {
+                        return None;
+                    }
+                    nf_root = after;
+                    nf_size += 1;
+                }
+            }
+            // the output leaves, appended in order
+            for j in 0..st.outputs() {
+                use pasta_curves::arithmetic::CurveAffine;
+                let pk: Affine = Option::from(Affine::from_xy(st.pk_eph[j].0, st.pk_eph[j].1))?;
+                let leaf = note_leaf(&p.const_salt, &st.h_body, j as u64, &pk, &st.ct[j]);
+                let path = &sw.leaves[j];
+                if path.position != size || path.root(&Fp::ZERO) != root {
+                    return None;
+                }
+                root = path.root(&leaf);
+                size += 1;
+            }
+            applied += 1;
+        }
+        // the end of a block: the note root appended to the root tree
+        let (h_root, height, applied) = if self.final_block {
+            let ra = self.root_append.as_ref()?;
+            if ra.position != (prev.height - p.activation) as u64 + 1
+                || ra.root(&Fp::ZERO) != prev.h_root
+            {
+                return None;
+            }
+            (ra.root(&root), prev.height + 1, 0)
+        } else {
+            (prev.h_root, prev.height, applied)
+        };
+        let next = StateOpening {
+            root,
+            size,
+            nf_root,
+            nf_size,
+            h_root,
+            height,
+            applied,
+        };
+        Some(BatchStatement {
+            s_prev: prev.digest(),
+            s_next: next.digest(),
+            d: batch_digest(&statements),
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -263,7 +406,7 @@ mod tests {
             h_anchor: 7,
             r_anchor: Fp::from(8u64),
             nullifiers: [Fp::from(9u64), Fp::from(10u64)],
-            pk_eph: [Affine::generator(); N_OUT],
+            pk_eph: [crate::xy(&Affine::generator()); N_OUT],
             ct: [NoteCiphertext {
                 c0: Fp::from(11u64),
                 c1: Fp::from(12u64),

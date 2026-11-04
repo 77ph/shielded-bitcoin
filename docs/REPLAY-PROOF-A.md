@@ -709,9 +709,15 @@ for the light client's own copy of the statements.
   2^19 — the server's k = 19 is the fragment size's ceiling until §3.6
   shrinks the group sides.
 * **Order of work.** `sba-core`: `imt.rs`, `batch.rs` (the opening,
-  the slot, the digest, the witnesses) — native, tested against the
-  paper's by shape; `sba-indexer`: the trees in the state and the
-  checkpoints, the batch witness produced per block; the circuit in
+  the slot, the digest as a chain of `PH_A` over chunks of 8 from the
+  slot count — `PH_A` takes at most 10 inputs — and the witnesses, with
+  `BatchWitness::check`, the relation natively, rule by rule: the
+  circuit's specification) — **done 4 November**; `sba-indexer`: the
+  nullifier tree and the root tree beside the spent set, the opening,
+  the batch witness produced per block and rolled back with it, the
+  state file at version 2 (nullifiers in insertion order) — **done the
+  same day**, every replayed block's witness accepted by the check and
+  chained through the openings in the indexer's tests; the circuit in
   `experiments/halo2-verifier/src/batch.rs` over the Poseidon chip (a
   Merkle gadget, the indexed insertion, the slot rules) measured alone
   with the mock prover; then into `StepP2` with the links to the

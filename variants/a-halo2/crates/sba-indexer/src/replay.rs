@@ -6,6 +6,10 @@ use bitcoin::{Block, ScriptBuf, Transaction};
 use log::{debug, info, warn};
 
 use sba_circuit::{TransferStatement, TransferVerifier};
+use sba_core::batch::{
+    BatchParams, BatchWitness, NO_CT, NullifierInsert, SlotStatement, SlotWitness, no_path,
+};
+use sba_core::envelope::N_IN;
 use sba_core::envelope::{
     CANDIDATE_PREFIX, Envelope, MintEnvelope, ParseError, TransferBody, TransferEnvelope,
     parse_envelope,
@@ -14,6 +18,8 @@ use sba_core::event::AcceptedEvent;
 use sba_core::event::EventKind;
 use sba_core::note::note_leaf;
 use sba_core::recovery::N_OUT;
+use sba_core::tree::DEPTH;
+use sba_core::xy;
 use sba_primitives::Fp;
 
 use sb_common::carrier::CarrierError;
@@ -91,6 +97,8 @@ pub struct Indexer {
     /// is exercised. Nothing but tests sets it.
     #[doc(hidden)]
     pub drop_first_from_batch: bool,
+    /// The batch witness's slots of the block in progress.
+    pending_slots: Vec<Option<SlotWitness>>,
 }
 
 impl Indexer {
@@ -104,6 +112,7 @@ impl Indexer {
             state,
             vault_script,
             drop_first_from_batch: false,
+            pending_slots: Vec::new(),
         }
     }
 
@@ -135,9 +144,11 @@ impl Indexer {
         // proof was valid and the outcome equals the normative one. When it
         // does not, the block is undone and replayed sequentially with each
         // proof verified alone (§11 as written), which also names the culprit.
+        let prev = self.state.opening(id.height);
         let mut cp = self.checkpoint(id);
         let mut report = BlockReport::default();
         let mut batch = Vec::new();
+        self.pending_slots.clear();
         self.replay_txs(id, block, &mut cp, &mut report, Some(&mut batch));
         // Completeness guard: every transfer the pass accepted must be in the
         // batch, one entry each, else nothing certifies the ones outside it.
@@ -175,8 +186,27 @@ impl Indexer {
         }
         let root = self.state.tree.root();
         self.state.roots.insert(id.height, root);
+        // the block's batch witness, and its root into the root tree
+        let root_append = self.state.h_tree.append_path();
+        self.state.h_tree.append(root);
+        self.state.batches.push(BatchWitness {
+            prev,
+            slots: std::mem::take(&mut self.pending_slots),
+            final_block: true,
+            root_append: Some(root_append),
+        });
         self.state.blocks.push(cp);
         report
+    }
+
+    /// The relation's constants of this deployment.
+    pub fn batch_params(&self) -> BatchParams {
+        BatchParams {
+            activation: self.deployment.activation_height,
+            window_w: self.deployment.window_w,
+            k_min: self.deployment.k_min,
+            const_salt: self.deployment.const_salt_fp(),
+        }
     }
 
     fn checkpoint(&self, id: BlockId) -> BlockCheckpoint {
@@ -196,8 +226,10 @@ impl Indexer {
         for nf in &cp.nullifiers_added {
             self.state.unmark_spent(nf);
         }
+        self.state.unspend_last(cp.nullifiers_added.len());
         self.state.events.truncate(cp.events_before);
         self.state.rejections.truncate(cp.rejections_before);
+        self.pending_slots.clear();
     }
 
     /// The block's carriers in order; with `batch`, transfer proofs are
@@ -266,6 +298,7 @@ impl Indexer {
             Envelope::Transfer(env) => {
                 let (h_body, statement) =
                     self.validate_transfer_with(height, &env, batch.is_none())?;
+                let r_anchor = statement.r_anchor;
                 if let Some(batch) = batch {
                     if self.drop_first_from_batch && batch.is_empty() {
                         self.drop_first_from_batch = false;
@@ -273,7 +306,7 @@ impl Indexer {
                         batch.push((statement, env.proof.clone()));
                     }
                 }
-                self.apply_transfer(height, tx_index, txid, env, h_body)
+                self.apply_transfer(height, tx_index, txid, env, h_body, r_anchor)
             }
             Envelope::Mint(env) => self.accept_mint(height, tx_index, txid, tx, env),
         }
@@ -373,11 +406,24 @@ impl Indexer {
         txid: [u8; 32],
         envelope: TransferEnvelope,
         h_body: Fp,
+        r_anchor: Fp,
     ) -> Result<AcceptedEvent, RejectReason> {
         let body = &envelope.body;
         let salt_fe = self.deployment.const_salt_fp();
         let first_position = self.state.tree.size();
+        // the batch witness's parts, taken as the trees are changed
+        let activation = self.deployment.activation_height;
+        let anchor_siblings = if body.h_anchor < activation {
+            [Fp::zero(); DEPTH]
+        } else {
+            self.state
+                .h_tree
+                .path((body.h_anchor - activation) as u64 + 1)
+                .expect("the anchor's root is in the root tree")
+                .siblings
+        };
         let mut leaves = Vec::with_capacity(N_OUT);
+        let mut leaf_paths = Vec::with_capacity(N_OUT);
         for j in 0..N_OUT {
             let leaf = note_leaf(
                 &salt_fe,
@@ -386,12 +432,28 @@ impl Indexer {
                 &body.pk_eph[j],
                 &body.ct_note[j],
             );
+            leaf_paths.push(self.state.tree.append_path());
             self.state.tree.append(leaf);
             leaves.push(leaf);
         }
+        let mut inserts = Vec::with_capacity(N_IN);
         for nf in &body.nullifiers {
-            self.state.mark_spent(nf);
+            inserts.push(NullifierInsert::from(&self.state.mark_spent(nf)));
         }
+        self.pending_slots.push(Some(SlotWitness {
+            statement: SlotStatement {
+                h_anchor: body.h_anchor,
+                r_anchor,
+                nullifiers: body.nullifiers,
+                pk_eph: [xy(&body.pk_eph[0]), xy(&body.pk_eph[1])],
+                ct: body.ct_note,
+                h_body,
+                mint: false,
+            },
+            anchor_siblings,
+            nullifiers: inserts.try_into().expect("N_IN"),
+            leaves: leaf_paths.try_into().expect("N_OUT"),
+        }));
         Ok(AcceptedEvent::from_transfer(
             height,
             tx_index,
@@ -429,7 +491,22 @@ impl Indexer {
         let derived = envelope.derive().ok_or(RejectReason::MintDiversifier)?;
         let salt_fe = self.deployment.const_salt_fp();
         let leaf = note_leaf(&salt_fe, &h_body, 0, &derived.0, &derived.1);
+        let leaf_path = self.state.tree.append_path();
         let first_position = self.state.tree.append(leaf);
+        self.pending_slots.push(Some(SlotWitness {
+            statement: SlotStatement {
+                h_anchor: 0,
+                r_anchor: Fp::zero(),
+                nullifiers: [Fp::zero(); N_IN],
+                pk_eph: [xy(&derived.0), (Fp::zero(), Fp::zero())],
+                ct: [derived.1, NO_CT],
+                h_body,
+                mint: true,
+            },
+            anchor_siblings: [Fp::zero(); DEPTH],
+            nullifiers: [NullifierInsert::none(), NullifierInsert::none()],
+            leaves: [leaf_path, no_path()],
+        }));
         Ok(AcceptedEvent::from_mint(
             height,
             tx_index,
