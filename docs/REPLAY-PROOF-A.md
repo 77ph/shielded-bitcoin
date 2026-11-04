@@ -456,6 +456,28 @@ multiplication (3-bit windows, ≈ 90 rows) applies instead of the
 variable-base one (≈ 250 rows). With both, the `T_q` instance costs
 ≈ 2^15 rows instead of ≈ 2^17 and the `p` group side ≈ 2^16.
 
+**One transfer proof verified recursively, end to end (4 November
+2026)** [measured, `step.rs::one_transfer_proof_verified_recursively`,
+laptop]. `T_p(1)` as one circuit over `Fp`: the `p` group side of
+`T_q(1)` and the field side of the transfer proof, bound in-circuit —
+each of the field side's 202 values (challenges, evaluations, the 93
+scalars, `W`'s, `U`'s) is constrained equal to the `T_q` instance value
+the group side exposes, reconstructed from its limbs — and proven as a
+Vesta-committed proof that opens the transfer proof's claim
+(`create_proof_with_openings`). It fits **k = 17** with the field side
+inside (3 192 field rows and 202 links fit in the group side's slack):
+keygen 47.8 s, **prove 17.3 s, 5 664 bytes**, 862 public inputs; the
+test's peak memory 5.8 GB (the laptop's limit for this; larger keys go
+to the server). The decider verifies `T_q(1)` natively (47 ms) and
+`T_p(1)` natively with the claim whose `G` and `u` are `T_q(1)`'s public
+inputs (163 ms, the full `2^17` multiplication included), and refuses
+`T_p(1)` without the claim or with a wrong `u`. The transfer proof
+itself is never read by the decider: what it verifies is `T_q(1)`,
+`T_p(1)`, and the claim — 10.6 KB and 480 bytes in place of 4.4 KB,
+which is the expected loss for one proof and the gain for a block, since
+the step's cost does not grow with the number of proofs it covers
+beyond the per-proof circuits.
+
 **Accumulation, the Halo way** [cited: ePrint 2019/1021 §4 and §5].
 Every verified proof leaves a claim `(G, u_1 … u_k)` on its curve:
 the deferred assertion `G = ⟨s(u), params.g⟩`. The claim is settled
@@ -539,10 +561,9 @@ step having verified them.
 **Order of work:** the prover change (extra openings) in the vendored
 crate with a test that a claim opened in a following proof settles
 (done, above); the `p` group side over a real `T_q` (done, above);
-then `T_p(1)` whole — the `p` group side of `T_q(1)`, the field side of
-the transfer proof, the opening of its claim — proven for real and
-verified by the decider, which is one transfer proof verified
-recursively end to end; then the two reductions of the instance cost;
+`T_p(1)` whole, proven for real and decided, one transfer proof
+verified recursively end to end (done, above); then the two reductions
+of the instance cost;
 then the field side of a `T_q` and the group side of a `T_p` (the
 second step); then the batch relation ported from
 `crates/sb-circuit/src/batch.rs`; then the fragment size chosen on the
@@ -623,7 +644,8 @@ blocks.
   the order of work. Then, the same day: the sequential order of the
   two circuits (the binding argument), scalars across the cycle (two
   limbs, canonicity), and one step measured — the `p` group side of a
-  real `T_q` proof at k = 17.
+  real `T_q` proof at k = 17, then `T_p(1)` whole at k = 17 proven and
+  decided: one transfer proof verified recursively end to end.
 * **v0.5** (4 November 2026) — the field side measured on the real
   proof (§3.3: k = 13, 0.6 s); the verification of one transfer proof
   complete in two circuits; the batch step `T` set as the next design.
