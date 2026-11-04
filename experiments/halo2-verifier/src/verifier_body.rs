@@ -74,11 +74,18 @@ pub struct VerifierCircuit {
 
 #[derive(Clone, Debug)]
 pub struct VerifierConfig {
-    ecc: EccConfig<Bases, RangeConfig>,
-    transcript: TranscriptConfig<F>,
-    advices: [Column<Advice>; 11],
-    instance: Column<Instance>,
-    table_idx: TableColumn,
+    pub ecc: EccConfig<Bases, RangeConfig>,
+    pub transcript: TranscriptConfig<F>,
+    pub advices: [Column<Advice>; 11],
+    pub instance: Column<Instance>,
+    pub table_idx: TableColumn,
+}
+
+/// The cells exposed as public inputs, in the instance's order, and where
+/// the verified proof's instance values (their limbs) start among them.
+pub struct Exposed {
+    pub cells: Vec<Cell>,
+    pub instance_values_at: usize,
 }
 
 impl VerifierCircuit {
@@ -214,10 +221,10 @@ fn expose<L: Layouter<F>>(
     cfg: &VerifierConfig,
     layouter: &mut L,
     c: &Cell,
-    row: &mut usize,
+    exposed: &mut Vec<Cell>,
 ) -> Result<(), Error> {
-    layouter.constrain_instance(c.cell(), cfg.instance, *row)?;
-    *row += 1;
+    layouter.constrain_instance(c.cell(), cfg.instance, exposed.len())?;
+    exposed.push(c.clone());
     Ok(())
 }
 
@@ -251,7 +258,7 @@ fn witness_scalar<L: Layouter<F>>(
     cfg: &VerifierConfig,
     layouter: &mut L,
     s: Option<S>,
-    row: &mut usize,
+    exposed: &mut Vec<Cell>,
 ) -> Result<Vec<Cell>, Error> {
     let limbs = s.map(|s| C::limbs(&s));
     let mut cells = Vec::with_capacity(N);
@@ -260,7 +267,7 @@ fn witness_scalar<L: Layouter<F>>(
             .map(|limbs| Value::known(limbs[l]))
             .unwrap_or(Value::unknown());
         let cell = witness(cfg, layouter, v)?;
-        expose(cfg, layouter, &cell, row)?;
+        expose(cfg, layouter, &cell, exposed)?;
         match (N, l) {
             // one cell: below 2^254 (25 words and 4 bits), hence canonical
             (1, _) => cfg.transcript.check(layouter, &cell, 25, 4)?,
@@ -387,6 +394,21 @@ impl Circuit<F> for VerifierCircuit {
     }
 
     fn synthesize(&self, cfg: VerifierConfig, mut layouter: impl Layouter<F>) -> Result<(), Error> {
+        self.synthesize_core(&cfg, &mut layouter).map(|_| ())
+    }
+}
+
+impl VerifierCircuit {
+    /// The whole circuit, returning its exposed cells (for a circuit that
+    /// embeds this one and binds other cells to them).
+    pub fn synthesize_core(
+        &self,
+        cfg: &VerifierConfig,
+        layouter: &mut impl Layouter<F>,
+    ) -> Result<Exposed, Error> {
+        let cfg = cfg.clone();
+        let mut layouter = layouter.namespace(|| "group side");
+        let layouter = &mut layouter;
         layouter.assign_table(
             || "10-bit table",
             |mut table| {
@@ -397,10 +419,11 @@ impl Circuit<F> for VerifierCircuit {
             },
         )?;
         let ecc = EccChip::construct(cfg.ecc.clone(), CircuitVersion::AnchoredBase);
-        let mut t = Transcript::new(&cfg.transcript, &mut layouter)?;
+        let mut t = Transcript::new(&cfg.transcript, layouter)?;
         let cap = self.capture.as_ref();
         let commons: Vec<C> = cap.map(|c| c.common_points()).unwrap_or_default();
-        let mut row = 0usize;
+        let mut exposed: Vec<Cell> = Vec::new();
+        let mut instance_values_at = 0usize;
 
         // the transcript walk
         let mut read_points: Vec<Pt> = Vec::new();
@@ -413,21 +436,22 @@ impl Circuit<F> for VerifierCircuit {
                         Event::CommonScalar(s) | Event::ReadScalar(s) => *s,
                         _ => unreachable!(),
                     });
-                    for limb in witness_scalar(&cfg, &mut layouter, s, &mut row)? {
-                        t.absorb(&mut layouter, limb)?;
+                    for limb in witness_scalar(&cfg, layouter, s, &mut exposed)? {
+                        t.absorb(layouter, limb)?;
                     }
                 }
                 Kind::CommonPoint => {
                     // the instance commitment from the instance values:
                     // Σ instance_j · G_lagrange[j] + [1] W
+                    instance_values_at = exposed.len();
                     let mut acc = Acc::new();
                     for (j, g) in self.lagrange.iter().enumerate() {
                         let s = cap.map(|c| c.instance[j]);
-                        let limbs = witness_scalar(&cfg, &mut layouter, s, &mut row)?;
-                        let base = pinned(&ecc, &mut layouter, *g)?;
-                        acc.add_term(&ecc, &mut layouter, &base, &limbs)?;
+                        let limbs = witness_scalar(&cfg, layouter, s, &mut exposed)?;
+                        let base = pinned(&ecc, layouter, *g)?;
+                        acc.add_term(&ecc, layouter, &base, &limbs)?;
                     }
-                    let sum = acc.fold(&cfg, &ecc, &mut layouter)?;
+                    let sum = acc.fold(&cfg, &ecc, layouter)?;
                     let w = Point::new_from_constant(ecc.clone(), layouter.namespace(|| "W"), self.params_w)?;
                     let commitment = sum.add(layouter.namespace(|| "blind"), &w)?;
                     // as a non-identity point: witnessed and pinned to the sum
@@ -437,8 +461,8 @@ impl Circuit<F> for VerifierCircuit {
                         commitment.inner().point(),
                     )?;
                     p.constrain_equal(layouter.namespace(|| "pin commitment"), &commitment)?;
-                    t.absorb(&mut layouter, p.inner().x())?;
-                    t.absorb(&mut layouter, p.inner().y())?;
+                    t.absorb(layouter, p.inner().x())?;
+                    t.absorb(layouter, p.inner().y())?;
                     common_point = Some(p);
                 }
                 Kind::OpenedPoint => {
@@ -447,10 +471,10 @@ impl Circuit<F> for VerifierCircuit {
                         .map(|p| Value::known(*p))
                         .unwrap_or(Value::unknown());
                     let p = NonIdentityPoint::new(ecc.clone(), layouter.namespace(|| "opened G"), v)?;
-                    expose(&cfg, &mut layouter, &p.inner().x(), &mut row)?;
-                    expose(&cfg, &mut layouter, &p.inner().y(), &mut row)?;
-                    t.absorb(&mut layouter, p.inner().x())?;
-                    t.absorb(&mut layouter, p.inner().y())?;
+                    expose(&cfg, layouter, &p.inner().x(), &mut exposed)?;
+                    expose(&cfg, layouter, &p.inner().y(), &mut exposed)?;
+                    t.absorb(layouter, p.inner().x())?;
+                    t.absorb(layouter, p.inner().y())?;
                     opened_points.push(p);
                 }
                 Kind::ReadPoint => {
@@ -461,13 +485,13 @@ impl Circuit<F> for VerifierCircuit {
                         })
                         .unwrap_or(Value::unknown());
                     let p = NonIdentityPoint::new(ecc.clone(), layouter.namespace(|| "point"), v)?;
-                    t.absorb(&mut layouter, p.inner().x())?;
-                    t.absorb(&mut layouter, p.inner().y())?;
+                    t.absorb(layouter, p.inner().x())?;
+                    t.absorb(layouter, p.inner().y())?;
                     read_points.push(p);
                 }
                 Kind::Squeeze => {
-                    let (_, c) = t.squeeze(&mut layouter)?;
-                    expose(&cfg, &mut layouter, &c, &mut row)?;
+                    let (_, c) = t.squeeze(layouter)?;
+                    expose(&cfg, layouter, &c, &mut exposed)?;
                 }
             }
         }
@@ -477,12 +501,12 @@ impl Circuit<F> for VerifierCircuit {
         let mut acc = Acc::new();
         let mut claim_point: Option<Pt> = None;
         for (j, source) in self.sources.iter().enumerate() {
-            let limbs = witness_scalar(&cfg, &mut layouter, scalars.as_ref().map(|v| v[j]), &mut row)?;
+            let limbs = witness_scalar(&cfg, layouter, scalars.as_ref().map(|v| v[j]), &mut exposed)?;
             let base: Pt = match source {
                 Source::Read(i) => read_points[*i].clone(),
                 Source::Common => common_point.clone().expect("absorbed before the MSM"),
                 Source::Opened(i) => opened_points[*i].clone(),
-                Source::Constant(c) => pinned(&ecc, &mut layouter, *c)?,
+                Source::Constant(c) => pinned(&ecc, layouter, *c)?,
                 Source::Claim => {
                     let v = cap.map(|c| Value::known(c.g)).unwrap_or(Value::unknown());
                     let g = NonIdentityPoint::new(ecc.clone(), layouter.namespace(|| "G"), v)?;
@@ -490,22 +514,22 @@ impl Circuit<F> for VerifierCircuit {
                     g
                 }
             };
-            acc.add_term(&ecc, &mut layouter, &base, &limbs)?;
+            acc.add_term(&ecc, layouter, &base, &limbs)?;
         }
         // W and U
         for (point, value) in [
             (self.params_w, cap.map(|c| c.w_scalar)),
             (self.params_u, cap.map(|c| c.u_scalar)),
         ] {
-            let limbs = witness_scalar(&cfg, &mut layouter, value, &mut row)?;
-            let w = pinned(&ecc, &mut layouter, point)?;
-            acc.add_term(&ecc, &mut layouter, &w, &limbs)?;
+            let limbs = witness_scalar(&cfg, layouter, value, &mut exposed)?;
+            let w = pinned(&ecc, layouter, point)?;
+            acc.add_term(&ecc, layouter, &w, &limbs)?;
         }
         // the claim's G exposed, and the sum must be the identity (0, 0)
         let g = claim_point.expect("a claim term");
-        expose(&cfg, &mut layouter, &g.inner().x(), &mut row)?;
-        expose(&cfg, &mut layouter, &g.inner().y(), &mut row)?;
-        let sum = acc.fold(&cfg, &ecc, &mut layouter)?;
+        expose(&cfg, layouter, &g.inner().x(), &mut exposed)?;
+        expose(&cfg, layouter, &g.inner().y(), &mut exposed)?;
+        let sum = acc.fold(&cfg, &ecc, layouter)?;
         layouter.assign_region(
             || "identity",
             |mut r| {
@@ -515,11 +539,15 @@ impl Circuit<F> for VerifierCircuit {
             },
         )?;
         eprintln!(
-            "transcript permutations: {}, msm terms: {} ({} limbs each)",
+            "transcript permutations: {}, msm terms: {} ({} limbs each), public inputs {}",
             t.permutations,
             self.sources.len() + 2,
-            N
+            N,
+            exposed.len()
         );
-        Ok(())
+        Ok(Exposed {
+            cells: exposed,
+            instance_values_at,
+        })
     }
 }

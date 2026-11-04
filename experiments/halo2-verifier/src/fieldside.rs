@@ -308,8 +308,8 @@ pub struct FieldSideCircuit {
 
 #[derive(Clone, Debug)]
 pub struct FieldSideConfig {
-    field: FieldConfig,
-    instance: Column<Instance>,
+    pub field: FieldConfig,
+    pub instance: Column<Instance>,
 }
 
 /// The public inputs: challenges and evaluations in transcript order, then
@@ -408,16 +408,9 @@ impl Circuit<Fp> for FieldSideCircuit {
     }
 
     fn configure(meta: &mut ConstraintSystem<Fp>) -> FieldSideConfig {
-        let advices: [Column<Advice>; 4] = core::array::from_fn(|_| meta.advice_column());
-        for a in &advices {
-            meta.enable_equality(*a);
-        }
-        let fixed: [Column<Fixed>; 5] = core::array::from_fn(|_| meta.fixed_column());
-        let constants = meta.fixed_column();
-        meta.enable_constant(constants);
+        let field = FieldSideCircuit::configure_field(meta);
         let instance = meta.instance_column();
         meta.enable_equality(instance);
-        let field = FieldConfig::configure(meta, advices, fixed);
         FieldSideConfig { field, instance }
     }
 
@@ -426,12 +419,42 @@ impl Circuit<Fp> for FieldSideCircuit {
         cfg: FieldSideConfig,
         mut layouter: impl Layouter<Fp>,
     ) -> Result<(), Error> {
+        self.synthesize_core(&cfg.field, Some(cfg.instance), &mut layouter)
+            .map(|_| ())
+    }
+}
+
+impl FieldSideCircuit {
+    /// The field chip's columns (a circuit embedding this one shares them).
+    pub fn configure_field(meta: &mut ConstraintSystem<Fp>) -> FieldConfig {
+        let advices: [Column<Advice>; 4] = core::array::from_fn(|_| meta.advice_column());
+        for a in &advices {
+            meta.enable_equality(*a);
+        }
+        let fixed: [Column<Fixed>; 5] = core::array::from_fn(|_| meta.fixed_column());
+        let constants = meta.fixed_column();
+        meta.enable_constant(constants);
+        FieldConfig::configure(meta, advices, fixed)
+    }
+
+    /// The whole circuit; with an instance column its inputs and outputs
+    /// are exposed as public inputs, without one they are returned for the
+    /// embedding circuit to bind: (the inputs in transcript order, the
+    /// output scalars then `W`'s and `U`'s).
+    pub fn synthesize_core(
+        &self,
+        field: &FieldConfig,
+        instance: Option<Column<Instance>>,
+        layouter: &mut impl Layouter<Fp>,
+    ) -> Result<(Vec<Cell>, Vec<Cell>), Error> {
         let st = &self.structure;
-        let mut ch = FieldChip::new(&cfg.field);
+        let mut ch = FieldChip::new(field);
+        let mut layouter = layouter.namespace(|| "field side");
         let l = &mut layouter;
         let sh = self.shadow.as_ref();
         let t = sh.map(|s| &s.typed);
         let mut row = 0usize;
+        let mut outs: Vec<Cell> = Vec::new();
         // public inputs in transcript order, witnessed and exposed
         let values: Option<Vec<Fp>> = t.map(transcript_order);
         let n_in = st_transcript_len(st);
@@ -442,8 +465,10 @@ impl Circuit<Fp> for FieldSideCircuit {
                 .map(|v| Value::known(v[i]))
                 .unwrap_or(Value::unknown());
             let c = ch.witness(l, v)?;
-            l.constrain_instance(c.cell(), cfg.instance, row)?;
-            row += 1;
+            if let Some(col) = instance {
+                l.constrain_instance(c.cell(), col, row)?;
+                row += 1;
+            }
             cells.push(c);
         }
         // name them
@@ -815,18 +840,24 @@ impl Circuit<Fp> for FieldSideCircuit {
                 });
             }
             let out = sum.expect("terms");
-            l.constrain_instance(out.cell(), cfg.instance, row)?;
-            row += 1;
+            if let Some(col) = instance {
+                l.constrain_instance(out.cell(), col, row)?;
+                row += 1;
+            }
+            outs.push(out);
         }
         // W: -f; U: -c·b·z
         let w_s = ch.neg(l, &f)?;
-        l.constrain_instance(w_s.cell(), cfg.instance, row)?;
-        row += 1;
         let cb = ch.mul(l, &neg_c, &b)?;
         let u_s = ch.mul(l, &cb, &z)?;
-        l.constrain_instance(u_s.cell(), cfg.instance, row)?;
+        if let Some(col) = instance {
+            l.constrain_instance(w_s.cell(), col, row)?;
+            l.constrain_instance(u_s.cell(), col, row + 1)?;
+        }
+        outs.push(w_s);
+        outs.push(u_s);
         eprintln!("field side rows: {}", ch.rows);
-        Ok(())
+        Ok((cells, outs))
     }
 }
 
