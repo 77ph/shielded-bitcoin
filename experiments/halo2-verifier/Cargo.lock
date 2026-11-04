@@ -239,6 +239,7 @@ dependencies = [
  "group",
  "halo2_gadgets",
  "halo2_proofs",
+ "hex",
  "pasta_curves",
  "rand",
  "sba-circuit",
