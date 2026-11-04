@@ -3,4 +3,8 @@
 //! measured: the transcript gadget (`transcript`), then the group
 //! arithmetic of the inner-product argument over `vesta-ecc`.
 
+pub mod capture;
+pub mod fixed;
+pub mod sample;
 pub mod transcript;
+pub mod verifier;

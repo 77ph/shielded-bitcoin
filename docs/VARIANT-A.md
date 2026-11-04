@@ -1,4 +1,4 @@
-# Variant A: the paper's protocol without a trusted setup (study, draft v0.8)
+# Variant A: the paper's protocol without a trusted setup (study, draft v0.9)
 
 Status: a study with a first measurement, 30 October 2026; no change to
 the paper implementation. It records a decision of the owner and the
@@ -362,6 +362,9 @@ implementation of the paper? Rules this repository adopts:
 
 ## 9. Changelog
 
+* **v0.9** (4 November 2026) — the recursion study's deciding
+  measurement made (`REPLAY-PROOF-A.md` §3.3–§4: the group part of a
+  transfer proof verifies in an `Fq` circuit at k = 15).
 * **v0.8** (4 November 2026) — profile a-0.3: the Poseidon transcript
   (`PROFILE-A.md` §1.1, `REPLAY-PROOF-A.md` §4), the first step towards
   the accumulated replay proof.

@@ -242,6 +242,7 @@ dependencies = [
  "pasta_curves",
  "rand",
  "sba-circuit",
+ "sba-core",
  "sba-primitives",
  "vesta-ecc",
 ]
@@ -281,8 +282,6 @@ dependencies = [
 [[package]]
 name = "halo2_proofs"
 version = "0.3.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f5aca1c66059a919227dec97444a11a4350d2f9c820ca48690988f0aa0e81cbf"
 dependencies = [
  "blake2b_simd",
  "ff",
