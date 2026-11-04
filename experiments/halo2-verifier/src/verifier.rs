@@ -68,9 +68,20 @@ pub(crate) mod tests_support {
         plonk::VerifyingKey<vesta::Affine>,
         Capture<vesta::Affine>,
     ) {
+        real_with_seed(5)
+    }
+
+    /// A real transfer proof with the given proving randomness, captured.
+    pub(crate) fn real_with_seed(
+        seed: u64,
+    ) -> (
+        Params<vesta::Affine>,
+        plonk::VerifyingKey<vesta::Affine>,
+        Capture<vesta::Affine>,
+    ) {
         let params = TransferParams::build().unwrap();
         let (st, w) = crate::sample::sample();
-        let mut rng = StdRng::seed_from_u64(5);
+        let mut rng = StdRng::seed_from_u64(seed);
         let proof = params.prove(&st, &w, &mut rng).unwrap();
         let halo_params: Params<vesta::Affine> = Params::new(K);
         let vk = plonk::keygen_vk(&halo_params, &TransferCircuit::default()).unwrap();
