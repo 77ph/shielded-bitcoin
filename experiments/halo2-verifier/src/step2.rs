@@ -21,7 +21,7 @@ use crate::verifier::{p, q};
 
 /// Bind each field-side cell to the value its limbs (cells of the group
 /// side's instance values) say: one cell is the value, two are `lo + 2^128 hi`.
-fn bind<F: PrimeField>(
+pub fn bind<F: PrimeField>(
     ch: &mut impl Binder<F>,
     l: &mut impl Layouter<F>,
     cells: &[AssignedCell<F, F>],

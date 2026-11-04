@@ -769,12 +769,21 @@ for the light client's own copy of the statements.
   inputs (`h_aux = 0` last, `sba-core/src/note.rs`), and a circuit
   that shares the Poseidon chip's columns with its own gadgets is fine
   — the first failure was the leaf's input count, not the columns.
-  Then into `StepP2` with the links to the transfer statements (a slot's
-  `r_anchor`, nullifiers, keys, ciphertexts and `h_body` are the
-  statement `T_q` exposes; `h_anchor` and the kind are the slot's own,
-  bound by the root tree and the rules); then the chain test with real
-  statements from a replayed history — the indexer's test world, moved
-  where the experiment can drive it.
+  Then into the step (`step3.rs`, **done the same day** [measured]):
+  `T_p` = the `p` group side of `T_q`, the field side of the block's
+  transfer proof, and the relation over the block's batch witness with
+  each transfer slot's `r_anchor`, nullifiers, keys, ciphertexts and
+  `h_body` bound to the statement `T_q` exposed for its proof
+  (`h_anchor` and the kind are the slot's own, the kind fixed to a
+  transfer for a linked slot; a mint has no proof and no link). The
+  block is the indexer's own: its test world (now `sba_indexer::testing`)
+  replays a mint, then a transfer and a mint, and the second block's
+  witness and transfer proof go in. 646 public inputs, **k = 17** still
+  — the relation's 75 478 rows sit beside the verifier parts in their
+  own columns (26 advice columns in all), so the rows do not add; a slot
+  whose `r_anchor` is not the proof's is refused; `s_prev` and `s_next`
+  are the indexer's openings. A block with more transfer proofs needs
+  as many group and field sides, which is the fragment size's cost.
 
 ## 4. What this study decides
 
