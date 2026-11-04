@@ -218,3 +218,63 @@ mod fq_tests {
             .is_err());
     }
 }
+
+#[cfg(test)]
+mod opened_tests {
+    use super::fp::*;
+    use crate::step::tests_support::{tp, tq};
+    use crate::verifier::q::VerifierCircuit;
+    use crate::verifier::tests_support::real;
+    use ff::Field;
+    use halo2_proofs::dev::MockProver;
+    use sba_primitives::Fp;
+
+    /// The field side of a real `T_p` proof — one that opened a claim: the
+    /// claim's `G` is a commitment of its multi-point argument whose value
+    /// at `x`, `b(x, u)`, the circuit computes from the claim's challenges
+    /// (its last inputs):
+    /// `cargo test --release the_field_side_of_a_tp_proof -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn the_field_side_of_a_tp_proof_with_an_opened_claim() {
+        let (params, vk, cap) = real();
+        let (outer, ovk, instance_q, _proof_q, cap_q) = tq(&params, &vk, &cap);
+        let (_step, pparams, pvk, _instance_p, _proof_p, cap_p, claim) =
+            tp(&params, &vk, &cap, &outer, &ovk, &instance_q, &cap_q);
+        assert_eq!(cap_p.opened, vec![claim.u.clone()]);
+        let (_, sources) = VerifierCircuit::shape(
+            &cap_p,
+            &pparams,
+            pvk.fixed_commitments(),
+            pvk.permutation_commitments(),
+        );
+        let (structure, shadow) = Structure::build(&pparams, &pvk, &cap_p, &sources);
+        assert_eq!(structure.opened_k, vec![claim.u.len()]);
+        let circuit = FieldSideCircuit {
+            structure,
+            shadow: Some(shadow),
+        };
+        let instance = circuit.instance();
+        println!("T_p field side public inputs: {}", instance.len());
+        let mut k = 13;
+        let prover = loop {
+            match MockProver::run(k, &circuit, vec![instance.clone()]) {
+                Ok(p) => break p,
+                Err(_) => {
+                    k += 1;
+                    assert!(k <= 20);
+                }
+            }
+        };
+        println!("T_p field side fits k = {k}");
+        prover.assert_satisfied();
+        // a wrong challenge of the opened claim is refused
+        let n_in = st_transcript_len(&circuit.structure);
+        let mut bad = instance.clone();
+        bad[n_in - 1] += Fp::ONE;
+        assert!(MockProver::run(k, &circuit, vec![bad])
+            .unwrap()
+            .verify()
+            .is_err());
+    }
+}

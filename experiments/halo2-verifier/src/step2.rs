@@ -330,6 +330,17 @@ mod tests {
             pvk.fixed_commitments(),
             pvk.permutation_commitments(),
         );
+        // T_p(1) opened the first transfer proof's claim: its challenges are
+        // T_q(1)'s last squeezes, among the T_q(1) instance values T_p(1)
+        // exposed; T_q(2) re-exposes those for T_p(2)'s field side of T_p(1)
+        let u_in_tq1 = q_circuit(&params, &vk, &cap1).ipa_challenge_slots(cap1.u.len());
+        let u_in_tp1: Vec<usize> = u_in_tq1
+            .iter()
+            .map(|j| step1.group.instance_value_slots(*j)[0])
+            .collect();
+        for (i, j) in u_in_tp1.iter().enumerate() {
+            assert_eq!(instance_p1[*j].to_repr(), cap1.u[i].to_repr(), "u {i}");
+        }
         let group_tp = q::VerifierCircuit {
             kinds,
             sources,
@@ -338,6 +349,7 @@ mod tests {
             lagrange: pparams.get_g_lagrange()[..instance_p1.len()].to_vec(),
             instance_limbs: vec![1; instance_p1.len()],
             expose_instance: false,
+            opened_u_slots: vec![u_in_tp1],
             capture: Some(cap_p1.clone()),
         };
         // the field side of T_q(1): its values are T_p(1)'s instance values,
@@ -456,6 +468,7 @@ mod tests {
             lagrange: qparams.get_g_lagrange()[..instance_q2.len()].to_vec(),
             instance_limbs,
             expose_instance: false,
+            opened_u_slots: vec![],
             capture: Some(cap_q2.clone()),
         };
         let (_, sources2) = q::VerifierCircuit::shape(
