@@ -19,7 +19,8 @@ mod assigned;
 mod circuit;
 mod error;
 mod keygen;
-mod lookup;
+/// The lookup argument (public for verifier tooling).
+pub mod lookup;
 pub(crate) mod permutation;
 mod vanishing;
 
@@ -102,6 +103,11 @@ impl<C: CurveAffine> VerifyingKey<C> {
         transcript.common_scalar(self.transcript_repr)?;
 
         Ok(())
+    }
+
+    /// The constraint system (read-only; for verifier tooling).
+    pub fn cs(&self) -> &ConstraintSystem<C::Scalar> {
+        &self.cs
     }
 
     /// The commitments to the fixed columns (read-only; for verifier tooling).

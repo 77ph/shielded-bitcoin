@@ -10,7 +10,8 @@ pub(crate) mod verifier;
 
 /// A permutation argument.
 #[derive(Debug, Clone)]
-pub(crate) struct Argument {
+/// The permutation argument (public for verifier tooling).
+pub struct Argument {
     /// A sequence of columns involved in the argument.
     columns: Vec<Column<Any>>,
 }
@@ -64,7 +65,8 @@ impl Argument {
         }
     }
 
-    pub(crate) fn get_columns(&self) -> Vec<Column<Any>> {
+    /// The permuted columns, in the argument's order (read-only; for verifier tooling).
+    pub fn get_columns(&self) -> Vec<Column<Any>> {
         self.columns.clone()
     }
 }

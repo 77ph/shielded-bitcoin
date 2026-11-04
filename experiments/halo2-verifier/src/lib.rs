@@ -4,7 +4,9 @@
 //! arithmetic of the inner-product argument over `vesta-ecc`.
 
 pub mod capture;
+pub mod field;
 pub mod fixed;
 pub mod sample;
+pub mod shadow;
 pub mod transcript;
 pub mod verifier;

@@ -5,8 +5,11 @@ pub(crate) mod prover;
 pub(crate) mod verifier;
 
 #[derive(Clone, Debug)]
-pub(crate) struct Argument<F: Field> {
+/// A lookup argument (public for verifier tooling).
+pub struct Argument<F: Field> {
+    /// The input expressions (public for verifier tooling).
     pub input_expressions: Vec<Expression<F>>,
+    /// The table expressions (public for verifier tooling).
     pub table_expressions: Vec<Expression<F>>,
 }
 
