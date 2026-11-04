@@ -2368,6 +2368,7 @@ dependencies = [
  "sb-common",
  "sba-circuit",
  "sba-core",
+ "sba-indexer",
  "sba-primitives",
  "serde",
  "serde_json",
