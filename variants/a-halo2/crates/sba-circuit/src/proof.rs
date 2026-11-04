@@ -1,12 +1,13 @@
 //! Proving and verification (PROFILE-A.md §8.4): deterministic parameters
-//! (`Params::new(K)`), keys derived from the circuit, Blake2b transcripts,
+//! (`Params::new(K)`), keys derived from the circuit, the Poseidon transcript
+//! of `transcript.rs` (the verifying-key identifier alone keeps Blake2b),
 //! fixed-length proofs, and the verifying-key identifier a deployment pins.
 
 use ff::Field;
 use halo2_proofs::{
     plonk::{self, Error, ProvingKey, SingleVerifier, VerificationStrategy, VerifyingKey},
     poly::commitment::{Guard, MSM, Params},
-    transcript::{Blake2bRead, Blake2bWrite, Challenge255, EncodedChallenge, Transcript},
+    transcript::{Blake2bWrite, Challenge255, EncodedChallenge, Transcript},
 };
 use pasta_curves::vesta;
 use rand::rngs::OsRng;
@@ -17,6 +18,7 @@ use sba_primitives::Fp;
 use sba_primitives::encoding::fp_to_bytes;
 
 use crate::circuit::{K, TransferCircuit, TransferStatement, TransferWitness};
+use crate::transcript::{PoseidonRead, PoseidonWrite};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProofError {
@@ -85,7 +87,7 @@ impl TransferParams {
             negate_g_d: false,
         };
         let instance = statement.to_field_elements();
-        let mut transcript = Blake2bWrite::<_, vesta::Affine, _>::init(vec![]);
+        let mut transcript = PoseidonWrite::init(vec![]);
         plonk::create_proof(
             &self.params,
             &self.pk,
@@ -148,7 +150,7 @@ impl TransferVerifier {
                 return false;
             }
             let instance = statement.to_field_elements();
-            let mut transcript = Blake2bRead::<_, _, Challenge255<_>>::init(&proof[..]);
+            let mut transcript = PoseidonRead::init(&proof[..]);
             let Ok(mut msm) = plonk::verify_proof(
                 &self.params,
                 &self.vk,
@@ -173,7 +175,7 @@ impl TransferVerifier {
         }
         let instance = statement.to_field_elements();
         let strategy = SingleVerifier::new(&self.params);
-        let mut transcript = Blake2bRead::init(proof);
+        let mut transcript = PoseidonRead::init(proof);
         plonk::verify_proof(
             &self.params,
             &self.vk,

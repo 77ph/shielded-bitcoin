@@ -2,7 +2,8 @@
 //! one by one, and accumulated into one multi-scalar multiplication
 //! (`docs/REPLAY-PROOF-A.md`). Three verifiers:
 //!
-//! * `single`: `SingleVerifier`, one 2^k-sized MSM per proof;
+//! * `single`: `SingleVerifier`, one 2^k-sized MSM per proof (the proofs use
+//!   the family's Poseidon transcript, `PROFILE-A.md` §1.1);
 //! * `batched`: every proof's deferred MSM (`Guard::use_challenges`, the
 //!   `s` vector folded into the generator scalars) scaled by a random factor
 //!   and added into one MSM, evaluated once;
@@ -23,7 +24,8 @@ use group::Curve;
 use halo2_proofs::arithmetic::best_multiexp;
 use halo2_proofs::plonk::{self, Error, VerificationStrategy};
 use halo2_proofs::poly::commitment::{Guard, Params, MSM};
-use halo2_proofs::transcript::{Blake2bRead, Blake2bWrite, Challenge255, EncodedChallenge};
+use halo2_proofs::transcript::EncodedChallenge;
+use sba_circuit::transcript::{PoseidonRead, PoseidonWrite};
 use pasta_curves::vesta;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
@@ -134,7 +136,7 @@ fn run<'p>(
     proof: &[u8],
     mode: Mode,
 ) -> Out<'p> {
-    let mut transcript = Blake2bRead::<_, _, Challenge255<_>>::init(proof);
+    let mut transcript = PoseidonRead::init(proof);
     plonk::verify_proof(params, vk, Strat(params, mode), &[&[instance]], &mut transcript).unwrap()
 }
 
@@ -158,7 +160,7 @@ fn main() {
     let proofs: Vec<Vec<u8>> = (0..n_max)
         .map(|_| {
             let circuit = TransferCircuit { statement: Some(st.clone()), witness: Some(w.clone()), negate_g_d: false };
-            let mut tr = Blake2bWrite::<_, vesta::Affine, Challenge255<_>>::init(vec![]);
+            let mut tr = PoseidonWrite::init(vec![]);
             plonk::create_proof(&params, &pk, &[circuit], &[&[&instance[..]]], &mut rng, &mut tr).unwrap();
             tr.finalize()
         })
@@ -182,7 +184,7 @@ fn main() {
         let t = Instant::now();
         for p in &proofs[..n] {
             let strategy = plonk::SingleVerifier::new(&params);
-            let mut tr = Blake2bRead::<_, _, Challenge255<_>>::init(&p[..]);
+            let mut tr = PoseidonRead::init(&p[..]);
             plonk::verify_proof(&params, &vk, strategy, &[&[&instance[..]]], &mut tr).unwrap();
         }
         let single = t.elapsed().as_secs_f64() * 1000.0;

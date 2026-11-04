@@ -1,4 +1,4 @@
-# Succinct replay proofs for variant A (study, draft v0.1)
+# Succinct replay proofs for variant A (study, draft v0.2)
 
 Status: a study, no code beyond `experiments/halo2-accumulate`. The
 question `VARIANT-A.md` §7 left for after S6: the paper's §22.2 asks
@@ -154,12 +154,14 @@ Three pieces, none shipped for this stack:
    recursive profile needs a Poseidon transcript over the commitment
    curve's base field with challenges truncated to 128 bits, as Halo
    does [cited: ePrint 2019/1021 §5; the Halo 2 book, "Transcript"].
-   That is a profile change: `vk_id` and every proof byte move, a
-   `a-0.x` bump with no change to the relation. It should happen
-   **before** any deployment whose history is meant to be accumulated
-   later, because proofs made under the Blake2b transcript can never be
-   verified in-circuit; the paper implementation has the same kind of
-   frozen choice in its Groth16 proofs.
+   That is a profile change: every proof's challenges move (the bytes
+   keep their length and `vk_id` stays), a `a-0.x` bump with no change
+   to the relation. **Done as a-0.3 on 4 November 2026** (`PROFILE-A.md`
+   §1.1, `sba-circuit/src/transcript.rs`: a duplex sponge over `Fq`,
+   128-bit challenges), before any deployment whose history is meant to
+   be accumulated later, because proofs made under the Blake2b
+   transcript can never be verified in-circuit; the paper implementation
+   has the same kind of frozen choice in its Groth16 proofs.
 3. **`T` in Halo 2.** A port of `crates/sb-circuit/src/batch.rs` to
    the family: the indexed nullifier tree and the root tree with
    `PH_A`, the statement digest, the slot rules. Rows [estimate from
@@ -229,7 +231,7 @@ blocks.
   block size 64 and is independent of everything else here.
 * **Before any accumulable deployment:** the algebraic transcript
   (§3.2 piece 2), as `a-0.x`, with the vectors regenerated; the rest
-  of the circuit untouched.
+  of the circuit untouched. Done: a-0.3, 4 November 2026.
 * **The measurement that decides the rest:** the succinct-verifier
   gadget prototype (§3.2 piece 1) in `experiments/`, over `Fq` with the
   ECC chip, verifying one transfer proof made under a Poseidon
@@ -268,6 +270,8 @@ blocks.
 
 ## 6. Changelog
 
+* **v0.2** (4 November 2026) — §3.2 piece 2 and §4's second decision
+  done (the Poseidon transcript, a-0.3).
 * **v0.1** (3 November 2026) — the three questions under A, the
   measured verification modes, the recursion shape and inventory, the
   light-client arithmetic, the decisions.
