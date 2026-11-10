@@ -120,8 +120,7 @@ impl<Fixed: FixedPoints<vesta::Affine>> Config<Fixed> {
         base: &<Fixed as FixedPoints<vesta::Affine>>::FullScalar,
     ) -> Result<(EccPoint, EccScalarFixed), Error>
     where
-        <Fixed as FixedPoints<vesta::Affine>>::FullScalar:
-            super::super::FixedPoint<vesta::Affine>,
+        <Fixed as FixedPoints<vesta::Affine>>::FullScalar: super::super::FixedPoint<vesta::Affine>,
     {
         let (scalar, acc, mul_b) = layouter.assign_region(
             || "Full-width fixed-base mul (incomplete addition)",
@@ -259,11 +258,9 @@ pub mod tests {
         {
             const LAST_DOUBLING: &str = "1333333333333333333333333333333333333333333333333333333333333333333333333333333333334";
             let h = vesta::Scalar::from(H as u64);
-            let scalar_fixed = LAST_DOUBLING
-                .chars()
-                .fold(vesta::Scalar::zero(), |acc, c| {
-                    acc * &h + &vesta::Scalar::from(c.to_digit(8).unwrap() as u64)
-                });
+            let scalar_fixed = LAST_DOUBLING.chars().fold(vesta::Scalar::zero(), |acc, c| {
+                acc * &h + &vesta::Scalar::from(c.to_digit(8).unwrap() as u64)
+            });
             let by = ScalarFixed::new(
                 chip.clone(),
                 layouter.namespace(|| LAST_DOUBLING),

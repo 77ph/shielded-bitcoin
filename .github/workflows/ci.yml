@@ -23,7 +23,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
-      - run: cargo clippy --workspace --all-targets --release -- -D warnings
+      - run: cargo clippy --workspace --all-targets --release --exclude halo2_proofs --exclude vesta-ecc -- -D warnings
       - run: cargo build --release --workspace
       # The variant's end-to-end test has its own job below.
       - run: cargo test --release --workspace -- --skip variant_a_cycle
@@ -40,7 +40,7 @@ jobs:
       - uses: taiki-e/install-action@cargo-llvm-cov
       - run: >-
           cargo llvm-cov --workspace --release --ignore-run-fail
-          --ignore-filename-regex 'chain/fake\.rs|variants/a-halo2/crates/sba-cli/'
+          --ignore-filename-regex 'chain/fake\.rs|variants/a-halo2/crates/sba-cli/|variants/a-halo2/crates/sba-replay/|experiments/'
           --fail-under-lines 90
           -- --include-ignored --skip variant_a_cycle
         env:

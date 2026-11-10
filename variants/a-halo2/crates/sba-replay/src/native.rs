@@ -94,8 +94,8 @@ pub struct Constants<F> {
     pub mds: [[F; 3]; 3],
 }
 
-static CONSTANTS_FP: LazyLock<Constants<pallas::Base>> = LazyLock::new(|| constants());
-static CONSTANTS_FQ: LazyLock<Constants<vesta::Base>> = LazyLock::new(|| constants());
+static CONSTANTS_FP: LazyLock<Constants<pallas::Base>> = LazyLock::new(constants);
+static CONSTANTS_FQ: LazyLock<Constants<vesta::Base>> = LazyLock::new(constants);
 
 fn constants<F: FromUniformBytes<64> + Ord>() -> Constants<F>
 where
@@ -129,7 +129,7 @@ pub fn permute<F: PoseidonField>(state: &mut [F; 3]) {
     let c = F::constants();
     let sbox = |x: F| x.square().square() * x;
     for (round, rc) in c.round_constants.iter().enumerate() {
-        let full = round < 4 || round >= 4 + 56;
+        let full = !(4..4 + 56).contains(&round);
         for (w, r) in state.iter_mut().zip(rc) {
             *w += r;
         }
@@ -142,8 +142,8 @@ pub fn permute<F: PoseidonField>(state: &mut [F; 3]) {
         }
         let mut out = [F::ZERO; 3];
         for (i, o) in out.iter_mut().enumerate() {
-            for j in 0..3 {
-                *o += c.mds[i][j] * state[j];
+            for (m, s) in c.mds[i].iter().zip(state.iter()) {
+                *o += *m * *s;
             }
         }
         *state = out;
@@ -347,8 +347,8 @@ where
 mod tests {
     use super::*;
     use group::{Curve, Group};
-    use rand::rngs::StdRng;
     use rand::SeedableRng;
+    use rand::rngs::StdRng;
     use sba_primitives::Fp;
 
     #[test]

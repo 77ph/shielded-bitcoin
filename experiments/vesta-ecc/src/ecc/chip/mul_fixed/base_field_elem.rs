@@ -443,7 +443,8 @@ pub mod tests {
         // [a]B
         {
             // a scalar of the Vesta chip is an Fp element embedded in Fq (p < q)
-            let scalar_fixed = vesta::Base::from_repr(vesta::Scalar::random(rng).to_repr()).unwrap();
+            let scalar_fixed =
+                vesta::Base::from_repr(vesta::Scalar::random(rng).to_repr()).unwrap();
             let result = {
                 let scalar_fixed = chip.load_private(
                     layouter.namespace(|| "random base field element"),

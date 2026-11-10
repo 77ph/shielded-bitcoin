@@ -17,7 +17,7 @@
 # (poly::commitment::Claim, create_proof_with_openings,
 # verify_proof_with_openings). Its own workspace: `cargo test` here.
 edition = "2021"
-rust-version = "1.60"
+rust-version = "1.85"
 name = "halo2_proofs"
 version = "0.3.5"
 authors = [
@@ -46,9 +46,7 @@ keywords = [
 categories = ["cryptography"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/zcash/halo2"
-resolver = "1"
 
-[workspace]
 
 [package.metadata.docs.rs]
 all-features = true

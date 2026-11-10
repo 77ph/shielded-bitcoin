@@ -151,7 +151,7 @@ impl Circuit<vesta::Scalar> for StepPBatch {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::capture::{capture, Capture};
+    use crate::capture::{Capture, capture};
     use crate::fieldside::fp::Structure;
     use crate::native::{PoseidonRead, PoseidonWrite};
     use crate::step::tests_support::tq;
@@ -160,14 +160,14 @@ mod tests {
     use halo2_proofs::dev::MockProver;
     use halo2_proofs::plonk;
     use halo2_proofs::poly::commitment::Params;
-    use rand::rngs::StdRng;
     use rand::SeedableRng;
+    use rand::rngs::StdRng;
     use sb_common::carrier::carrier_output;
-    use sba_circuit::{TransferCircuit, TransferStatement, K};
-    use sba_core::envelope::{parse_envelope, Envelope};
+    use sba_circuit::{K, TransferCircuit, TransferStatement};
+    use sba_core::envelope::{Envelope, parse_envelope};
     use sba_core::event::EventKind;
     use sba_core::note::decrypt_as_recipient;
-    use sba_indexer::testing::{tx_with, MockChain, World, ACTIVATION};
+    use sba_indexer::testing::{ACTIVATION, MockChain, World, tx_with};
 
     /// The indexer replays a mint, then a block with a transfer and a
     /// mint; the second block's batch witness and its transfer proof's
@@ -332,10 +332,12 @@ mod tests {
         tampered.slots[0].as_mut().unwrap().statement.r_anchor += Fp::ONE;
         let mut bad = step.clone();
         bad.batch.witness = Some(tampered);
-        assert!(MockProver::run(k, &bad, vec![instance.clone(), vec![]])
-            .unwrap()
-            .verify()
-            .is_err());
+        assert!(
+            MockProver::run(k, &bad, vec![instance.clone(), vec![]])
+                .unwrap()
+                .verify()
+                .is_err()
+        );
         if std::env::var("SB_PROVE_STEP3").is_err() {
             println!("SB_PROVE_STEP3 unset: stopping before the real proof");
             return;

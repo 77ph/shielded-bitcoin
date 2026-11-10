@@ -16,7 +16,7 @@ use pasta_curves::{pallas, vesta};
 use crate::native::PoseidonRead;
 use crate::step4::StepQN;
 use crate::verifier::q::Slot;
-use sba_core::batch::{batch_digest, SlotStatement, StateOpening, SLOT_ELEMENTS};
+use sba_core::batch::{SLOT_ELEMENTS, SlotStatement, StateOpening, batch_digest};
 use sba_primitives::Fp;
 
 type Fq = vesta::Base;

@@ -112,8 +112,7 @@ impl<Fixed: FixedPoints<vesta::Affine>> Config<Fixed> {
         base: &<Fixed as FixedPoints<vesta::Affine>>::ShortScalar,
     ) -> Result<(EccPoint, EccScalarFixedShort), Error>
     where
-        <Fixed as FixedPoints<vesta::Affine>>::ShortScalar:
-            super::super::FixedPoint<vesta::Affine>,
+        <Fixed as FixedPoints<vesta::Affine>>::ShortScalar: super::super::FixedPoint<vesta::Affine>,
     {
         let (scalar, acc, mul_b) = layouter.assign_region(
             || "Short fixed-base mul (incomplete addition)",
@@ -325,8 +324,7 @@ pub mod tests {
         },
         utilities::{
             lookup_range_check::{
-                VestaLookupRangeCheck, VestaLookupRangeCheck4_5BConfig,
-                VestaLookupRangeCheckConfig,
+                VestaLookupRangeCheck, VestaLookupRangeCheck4_5BConfig, VestaLookupRangeCheckConfig,
             },
             UtilitiesInstructions,
         },

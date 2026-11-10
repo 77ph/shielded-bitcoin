@@ -89,14 +89,14 @@ impl Circuit<Fp> for StepP {
 
 #[cfg(test)]
 pub(crate) mod tests_support {
-    use crate::capture::{capture, Capture, Event};
+    use crate::capture::{Capture, Event, capture};
     use crate::native::{PoseidonRead, PoseidonWrite};
     use crate::verifier::tests_support::q_circuit;
     use halo2_proofs::plonk::{self, Circuit, VerifyingKey};
     use halo2_proofs::poly::commitment::{Claim, Params};
     use pasta_curves::{pallas, vesta};
-    use rand::rngs::StdRng;
     use rand::SeedableRng;
+    use rand::rngs::StdRng;
 
     /// `T_q` over a real transfer proof: keys, a Pallas-committed proof
     /// under the Poseidon transcript, its capture.
@@ -276,8 +276,8 @@ mod tests {
     use halo2_proofs::plonk::{self, Circuit};
     use halo2_proofs::poly::commitment::{Claim, Params};
     use pasta_curves::vesta;
-    use rand::rngs::StdRng;
     use rand::SeedableRng;
+    use rand::rngs::StdRng;
 
     /// `cargo test --release the_p_group_side_of_a_tq_proof -- --ignored --nocapture`
     #[test]
@@ -340,17 +340,21 @@ mod tests {
         let mut bad = instance.clone();
         let n = bad.len();
         bad[n - 1] += p::F::ONE;
-        assert!(MockProver::run(k, &circuit, vec![bad])
-            .unwrap()
-            .verify()
-            .is_err());
+        assert!(
+            MockProver::run(k, &circuit, vec![bad])
+                .unwrap()
+                .verify()
+                .is_err()
+        );
         // and a wrong limb of one of T_q's instance values
         let mut bad = instance.clone();
         bad[2] += p::F::ONE;
-        assert!(MockProver::run(k, &circuit, vec![bad])
-            .unwrap()
-            .verify()
-            .is_err());
+        assert!(
+            MockProver::run(k, &circuit, vec![bad])
+                .unwrap()
+                .verify()
+                .is_err()
+        );
         let _ = q::N;
     }
 
@@ -472,27 +476,31 @@ mod tests {
         assert_eq!(instance_q[n - 1], gy);
         // without the claim, or with a wrong one, T_p is refused
         let mut tr = PoseidonRead::<_, vesta::Affine>::init(&proof_p[..]);
-        assert!(plonk::verify_proof_with_openings(
-            &pparams,
-            &pvk,
-            plonk::SingleVerifier::new(&pparams),
-            &[&[&instance[..]]],
-            &mut tr,
-            &[],
-        )
-        .is_err());
+        assert!(
+            plonk::verify_proof_with_openings(
+                &pparams,
+                &pvk,
+                plonk::SingleVerifier::new(&pparams),
+                &[&[&instance[..]]],
+                &mut tr,
+                &[],
+            )
+            .is_err()
+        );
         let mut wrong = claim.clone();
         wrong.u[3] = wrong.u[3].double();
         let mut tr = PoseidonRead::<_, vesta::Affine>::init(&proof_p[..]);
-        assert!(plonk::verify_proof_with_openings(
-            &pparams,
-            &pvk,
-            plonk::SingleVerifier::new(&pparams),
-            &[&[&instance[..]]],
-            &mut tr,
-            &[wrong],
-        )
-        .is_err());
+        assert!(
+            plonk::verify_proof_with_openings(
+                &pparams,
+                &pvk,
+                plonk::SingleVerifier::new(&pparams),
+                &[&[&instance[..]]],
+                &mut tr,
+                &[wrong],
+            )
+            .is_err()
+        );
     }
 }
 
@@ -586,9 +594,11 @@ mod second_step {
         let _ = at;
         let mut bad = instance.clone();
         bad[pos] += q::F::ONE;
-        assert!(MockProver::run(k, &circuit, vec![bad])
-            .unwrap()
-            .verify()
-            .is_err());
+        assert!(
+            MockProver::run(k, &circuit, vec![bad])
+                .unwrap()
+                .verify()
+                .is_err()
+        );
     }
 }

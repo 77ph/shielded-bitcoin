@@ -299,7 +299,7 @@ impl Circuit<vesta::Scalar> for StepP2 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::capture::{capture, Event};
+    use crate::capture::{Event, capture};
     use crate::native::{PoseidonRead, PoseidonWrite};
     use crate::step::tests_support::{tp, tq};
     use crate::verifier::tests_support::{q_circuit, real_with_seed};
@@ -307,8 +307,8 @@ mod tests {
     use halo2_proofs::dev::MockProver;
     use halo2_proofs::plonk;
     use halo2_proofs::poly::commitment::Params;
-    use rand::rngs::StdRng;
     use rand::SeedableRng;
+    use rand::rngs::StdRng;
 
     /// Two steps over two transfer proofs, mocked at every stage; with
     /// `SB_PROVE_STEP2=1` the second step's two proofs are made for real
@@ -582,26 +582,30 @@ mod tests {
         );
         // a wrong claim for either is refused
         let mut tr = PoseidonRead::<_, pallas::Affine>::init(&proof_q2[..]);
-        assert!(plonk::verify_proof_with_openings(
-            &qparams,
-            &qvk,
-            plonk::SingleVerifier::new(&qparams),
-            &[&[&instance_q2[..]]],
-            &mut tr,
-            &[],
-        )
-        .is_err());
+        assert!(
+            plonk::verify_proof_with_openings(
+                &qparams,
+                &qvk,
+                plonk::SingleVerifier::new(&qparams),
+                &[&[&instance_q2[..]]],
+                &mut tr,
+                &[],
+            )
+            .is_err()
+        );
         let mut wrong = claims_p2.clone();
         wrong[1].u[2] = wrong[1].u[2].double();
         let mut tr = PoseidonRead::<_, vesta::Affine>::init(&proof_p2[..]);
-        assert!(plonk::verify_proof_with_openings(
-            &p2params,
-            &p2vk,
-            plonk::SingleVerifier::new(&p2params),
-            &[&[&instance_p2[..]]],
-            &mut tr,
-            &wrong,
-        )
-        .is_err());
+        assert!(
+            plonk::verify_proof_with_openings(
+                &p2params,
+                &p2vk,
+                plonk::SingleVerifier::new(&p2params),
+                &[&[&instance_p2[..]]],
+                &mut tr,
+                &wrong,
+            )
+            .is_err()
+        );
     }
 }

@@ -25,7 +25,3 @@ proptest = "1"
 test-dev-graph = []
 test-dependencies = []
 
-[profile.release]
-debug = false
-
-[workspace]

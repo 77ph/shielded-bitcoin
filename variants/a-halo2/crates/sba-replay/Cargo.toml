@@ -1,0 +1,25 @@
+[package]
+name = "sba-replay"
+description = "Shielded Bitcoin variant A: the accumulated replay proof (docs/REPLAY-PROOF-A.md) — the recursive verifier circuits over the Pasta cycle, the batch relation, the step prover and the decider"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+sba-primitives.workspace = true
+sba-core.workspace = true
+sba-circuit.workspace = true
+sba-indexer.workspace = true
+vesta-ecc.workspace = true
+halo2_proofs.workspace = true
+halo2_gadgets.workspace = true
+pasta_curves.workspace = true
+ff.workspace = true
+group.workspace = true
+rand.workspace = true
+hex.workspace = true
+
+[dev-dependencies]
+sba-indexer = { workspace = true, features = ["testing"] }
+sb-common.workspace = true

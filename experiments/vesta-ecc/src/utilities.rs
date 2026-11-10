@@ -248,8 +248,8 @@ mod tests {
     };
     use pasta_curves::vesta;
     use proptest::prelude::*;
-    use rand::RngCore;
     use rand::rngs::OsRng;
+    use rand::RngCore;
     use std::convert::TryInto;
     use std::iter;
     use uint::construct_uint;
