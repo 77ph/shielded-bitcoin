@@ -1089,8 +1089,12 @@ proven chain stops it — the proven chain is of one branch, and a step
 binds no block hash, only the statements and the state. The decider
 command takes the steps on disk in order from the client's state. The
 chain test saves the prover after step 1, resumes it from the bytes,
-and proves step 3 through the runner; its figures with the next server
-run.
+and proves step 3 through the runner [measured, the server, 10 November,
+a quieter host than the first run's]: keys 872.6 s; step 1 397.5 s; the
+saved state **92 482 bytes** (the two captures); step 2 by the resumed
+prover 277.9 s; step 3 through the runner (the block synced and proven
+in one call, the witness consumed, a block not yet on the chain reported
+as none) 271.8 s; the decider **1.94 s** a step; the whole test 1 897 s.
 
 **Reviewed** (S7, 10 November 2026, the auditor's firsthand pass at
 664d013 and 50fdca6, the document to follow on an audit branch at the
