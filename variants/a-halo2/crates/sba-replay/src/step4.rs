@@ -165,7 +165,6 @@ pub fn bind_slots(
     // empty slot to none); Σ_s link[s][p] = used_p ∈ {0, 1} (a used
     // proof is exactly one slot's, an unused one none's — it is still
     // verified); link[s][p] · (slot_s[i] − statement_p[i]) = 0
-    let known = known;
     let one = ch.constant(l, Fp::ONE)?;
     let n_p = statement_positions.len();
     let mut per_proof: Vec<Option<_>> = vec![None; n_p];
