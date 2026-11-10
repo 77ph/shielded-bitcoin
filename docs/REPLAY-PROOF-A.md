@@ -1,6 +1,8 @@
-# Succinct replay proofs for variant A (study, draft v0.7)
+# Succinct replay proofs for variant A (study, draft v0.8)
 
-Status: a study, no code beyond `experiments/halo2-accumulate`. The
+Status: a study; its code is the crate `sba-replay` (§3.8) over the
+vendored `experiments/halo2_proofs-patched` and `experiments/vesta-ecc`,
+with `experiments/halo2-accumulate` for §2. The
 question `VARIANT-A.md` §7 left for after S6: the paper's §22.2 asks
 for one succinct proof of the whole replay; `REPLAY-PROOF.md` answered
 it for the paper's stack with a per-batch proof and a measured
@@ -891,7 +893,7 @@ for the light client's own copy of the statements.
   transfers is `T_q` at k = 17 and `T_p` at k = 18 (the relation's
   ≈ 150 000 rows), eight at k = 18 / k = 19.
 
-### 3.8 The crate [built]
+### 3.8 The crate [built, measured]
 
 Since 10 November the pieces are the family's crate `sba-replay`
 (`variants/a-halo2/crates/sba-replay`, development-grade), built on the
@@ -1005,9 +1007,50 @@ with `base = 1`, padding transfers with the keys' sample proof and slots
 with empties; `ChainDecider::decide(step, index, s_prev)` reads every
 claim the two proofs opened and both keys' commitments out of the
 public inputs, checks the base bit against the step's index, verifies
-both proofs natively and the three public values. Its test runs three
-blocks (two mints; two transfers and a mint; one transfer) through one
-key set on the server; its figures follow.
+both proofs natively and the three public values.
+
+**One key set, three blocks** (`two_blocks_through_the_chain`, 10
+November, the server container with four cores) [measured]. The
+bootstrap needed four corrections before its shapes were the chain's,
+each a fact about the mirror worth keeping: (1) a step's `T_p` had a
+second, empty instance column — the batch relation's own — whose
+commitment is `W`, and the verifier mirror, one instance column by
+design, took it for an opened claim's `G`; the relation now shares the
+step's column. (2) The placeholder `T_p` must open a claim of the
+previous `T_p`'s shape (`k_p` challenges, not a transfer's 14): a
+claim's shape is its challenge count. (3) The verifier's MSM merges
+equal points, so the n sample proofs the keys are shaped over, and the
+padding of a fragment's empty slots, must be *distinct* proofs: identical
+claims collapse into one term and a real step has one term more than
+the keys (seen as 1 025 → 1 026 public inputs between two bootstrap
+rounds). (4) The chain's `T_p` over a two-proof `T_q` outgrows k = 17:
+both circuits are at **k = 18**. Shapes for n = 2 proofs over 3 slots:
+`T_q` 1 027 public inputs — two transfer group sides of 221, the group
+side of `T_p(i−1)` with 585 exposed values (181 transcript
+permutations, 167 MSM terms, keys and base bit among them), the field
+side of `T_q(i−1)` in 3 268 rows; `T_p` 660 public inputs — the group
+side of `T_q(i)` with 657 exposed values in two limbs each (186
+permutations, 123 MSM terms), the two transfer field sides of 3 192
+rows, the field side of `T_p(i−1)` in 4 199 rows, the relation's 3 951
+rows for three slots and its three public values. Figures: the key
+bootstrap — four `T_q` and four `T_p` verifying keys at k = 18 and the
+two proving keys — **1 293.5 s**; step 1 (two mints, both proofs the
+padding, the base step over the dummy step 0) **387.1 s**; step 2 (two
+transfers and a mint) **382.1 s**; step 3 (one transfer, one padding)
+**333.2 s** — each a prove including the captures of the transfer
+proofs and of the step's own two proofs, about three times the
+fragment prover's 119 s (k = 18/17, a smaller `T_q`, no previous step);
+**69 716 bytes** on the wire per step (two proofs, two instances, the
+slot statements, the opening). The decider accepted each step against
+the running digest and refused step 3 presented as step 1 and against
+the genesis digest (its time was not taken this run; the fragment
+decider over the same proof sizes took 0.95 s). The whole test 2 480 s.
+What this establishes: one key set serves every step of the chain, the
+base case is a dummy step under the same keys, a block with fewer
+transfers than the fragment is padded with the keys' sample proofs, and
+the decider needs the keys alone. What it costs: a step is a six-minute
+prove on four cores at k = 18 twice; the key bootstrap is twenty minutes
+once per deployment.
 
 ## 4. What this study decides
 
@@ -1071,6 +1114,13 @@ key set on the server; its figures follow.
   limbs, canonicity), and one step measured — the `p` group side of a
   real `T_q` proof at k = 17, then `T_p(1)` whole at k = 17 proven and
   decided: one transfer proof verified recursively end to end.
+* **v0.8** (10 November 2026) — the recursion a crate (`sba-replay`,
+  §3.8): prover and decider API, fragments of up to n proofs with
+  padding, the key cycle found and resolved Halo-style (key commitments
+  as public inputs, a dummy previous proof with a `base` flag), one key
+  set for the whole chain bootstrapped from fake captures and run over
+  three blocks on the server with the figures above; four facts about
+  the verifier mirror learnt from the bootstrap.
 * **v0.7** (5 November 2026) — the second step composed and run on the
   server, the loop closed (§3.4); opened claims through the field side;
   the batch relation designed (§3.7), ported natively into `sba-core`
