@@ -37,6 +37,9 @@ pub struct Keys {
     pub step_q: StepQN,
     pub step_p: StepPN,
     pub batch_params: BatchParams,
+    /// A valid transfer proof of a sample statement: the padding of a
+    /// fragment with fewer transfers than `n_proofs`.
+    pub padding: (TransferStatement, Vec<u8>),
 }
 
 impl Keys {
@@ -96,6 +99,7 @@ impl Keys {
             batch_params,
             None,
             &[],
+            &vec![false; n_proofs],
         )?;
         let pparams: Params<vesta::Affine> = Params::new(k_p);
         let pvk = plonk::keygen_vk(&pparams, &step_p.without_witnesses())
@@ -116,6 +120,7 @@ impl Keys {
             step_q: step_q.without_witnesses(),
             step_p: step_p.without_witnesses(),
             batch_params,
+            padding: (st, proof),
         })
     }
 
@@ -135,6 +140,7 @@ impl Keys {
         batch_params: BatchParams,
         witness: Option<BatchWitness>,
         slot_proof: &[Option<usize>],
+        used: &[bool],
     ) -> Result<StepPN, String> {
         let (kinds, sources) = p::VerifierCircuit::shape(
             cap_q,
@@ -199,6 +205,7 @@ impl Keys {
             } else {
                 slot_proof.to_vec()
             },
+            used: used.to_vec(),
         })
     }
 
@@ -231,12 +238,17 @@ impl Prover<'_> {
         transfers: &[(TransferStatement, Vec<u8>)],
     ) -> Result<ProvenStep, String> {
         let k = self.keys;
-        if transfers.len() != k.n_proofs {
+        if transfers.len() > k.n_proofs {
             return Err(format!(
                 "{} transfer proofs for a fragment of {}",
                 transfers.len(),
                 k.n_proofs
             ));
+        }
+        let used: Vec<bool> = (0..k.n_proofs).map(|i| i < transfers.len()).collect();
+        let mut transfers: Vec<(TransferStatement, Vec<u8>)> = transfers.to_vec();
+        while transfers.len() < k.n_proofs {
+            transfers.push(k.padding.clone());
         }
         if witness.slots.len() != k.n_slots {
             return Err(format!(
@@ -264,8 +276,11 @@ impl Prover<'_> {
                 _ => None,
             })
             .collect();
-        if next != transfers.len() {
-            return Err(format!("{next} transfer slots, {} proofs", transfers.len()));
+        if next != used.iter().filter(|u| **u).count() {
+            return Err(format!(
+                "{next} transfer slots, {} proofs",
+                used.iter().filter(|u| **u).count()
+            ));
         }
         let caps: Vec<_> = transfers
             .iter()
@@ -308,6 +323,7 @@ impl Prover<'_> {
             k.batch_params,
             Some(witness.clone()),
             &slot_proof,
+            &used,
         )?;
         let instance_p = step_p.instance();
         let claims: Vec<Claim<vesta::Affine>> = caps.iter().map(|c| c.claim()).collect();
