@@ -42,6 +42,10 @@ pub struct SplitSponge {
     /// Over `Fp`, the scalars (a Pallas-typed sponge: its base field is `Fp`).
     pub scalars: Sponge<pasta_curves::pallas::Affine>,
     last: Last,
+    /// Whether the key's representative has been absorbed: the rule opens
+    /// the transcript with it (into both sponges), and every other
+    /// operation before it is a mistake in the caller's order.
+    opened: bool,
 }
 
 /// Which sponge a challenge came from.
@@ -58,6 +62,7 @@ impl Default for SplitSponge {
             scalars: Sponge::default(),
             // the first absorption is the key's representative, a scalar
             last: Last::Scalars,
+            opened: false,
         }
     }
 }
@@ -67,7 +72,15 @@ fn low128(repr: &[u8]) -> u128 {
 }
 
 impl SplitSponge {
+    fn opened(&self) {
+        assert!(
+            self.opened,
+            "the split transcript opens with the key's representative (absorb_common_scalar)"
+        );
+    }
+
     pub fn absorb_point(&mut self, p: C) -> io::Result<()> {
+        self.opened();
         let coords: Coordinates<C> = Option::from(p.coordinates())
             .ok_or_else(|| io::Error::other("cannot write points at infinity to the transcript"))?;
         self.points.absorb(*coords.x());
@@ -78,12 +91,14 @@ impl SplitSponge {
 
     /// A scalar read from the proof: into the `Fp` sponge.
     pub fn absorb_scalar(&mut self, s: Fp) {
+        self.opened();
         self.scalars.absorb(s);
         self.last = Last::Scalars;
     }
 
     /// A scalar the verifier supplies (the key's representative): into both.
     pub fn absorb_common_scalar(&mut self, s: Fp) {
+        self.opened = true;
         self.scalars.absorb(s);
         self.points
             .absorb(Fq::from_repr(s.to_repr()).expect("p < q"));
@@ -93,6 +108,7 @@ impl SplitSponge {
     /// The challenge (128 bits) and which sponge produced it; the other
     /// sponge absorbs it.
     pub fn squeeze(&mut self) -> (u128, From) {
+        self.opened();
         match self.last {
             Last::Points => {
                 let c = low128(&self.points.squeeze().to_repr());
