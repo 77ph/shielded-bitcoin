@@ -920,8 +920,15 @@ vendored `halo2_proofs` — now the whole workspace's through the root
   sees a transfer proof.
 
 The keys are in memory (`halo2_proofs` 0.3 serialises verifying keys,
-not proving keys): a prover process makes them at start, minutes at
-k = 17. What the crate does not do yet: steps after the first (the
+not proving keys): a prover process makes them at start — **267 s** for
+a fragment of two transfers over three slots at k = 16/17 on the
+server's 8 cores (the sample transfer proof, `T_q`'s keys and a sample
+`T_q`, `T_p`'s keys); then `prove_block` **119 s** for the indexer's
+two-transfer block (57 076 bytes on the wire) and `decide` **0.95 s**,
+10 GB for the run [measured, `prover::tests`]. A fragment holds up to
+`n_proofs` transfers: the rest are the keys' canned sample proof, bound
+to no slot through a `used` bit, so a block with fewer transfers than
+the fragment size uses the same keys. What the crate does not do yet: steps after the first (the
 chain of §3.4 is in its tests, not behind `Prover`), persistence of the
 batch witnesses (the indexer keeps them in memory per run), and the
 split transcript as the default (§3.6, the owner's decision).
