@@ -570,15 +570,17 @@ impl Opening {
 }
 
 impl BatchCircuit {
-    /// The public inputs: `s_prev`, `s_next`, `D`.
+    /// The public inputs: `s_prev`, `s_next`, `D` — zeros for a circuit
+    /// without a witness (a shape, as key generation and fake captures
+    /// use it).
     pub fn instance(&self) -> Vec<Fp> {
-        let st = self
-            .witness
-            .as_ref()
-            .expect("values")
-            .check(&self.params)
-            .expect("a witness the relation accepts");
-        st.to_field_elements()
+        match &self.witness {
+            Some(w) => w
+                .check(&self.params)
+                .expect("a witness the relation accepts")
+                .to_field_elements(),
+            None => vec![Fp::ZERO; 3],
+        }
     }
 
     /// The relation, as a function of the configuration and a layouter;
