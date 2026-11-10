@@ -161,8 +161,11 @@ enum Cmd {
         #[arg(long, default_value_t = 18)]
         k_p: u32,
     },
-    /// Decide the proven steps on disk as a light client: from the keys and the previous digest alone.
+    /// Decide the proven steps on disk as a light client: from the keys and the previous digest alone (or, with --latest, the newest step alone from the genesis).
     ReplayDecide {
+        /// The newest step alone: one step attests the whole history from the genesis.
+        #[arg(long)]
+        latest: bool,
         #[arg(long, default_value_t = 2)]
         proofs: usize,
         #[arg(long, default_value_t = 4)]
@@ -919,6 +922,7 @@ pub fn run(args: Vec<String>) -> Result<()> {
             blocks,
         )?,
         Cmd::ReplayDecide {
+            latest,
             proofs,
             slots,
             k_q,
@@ -931,6 +935,7 @@ pub fn run(args: Vec<String>) -> Result<()> {
                 k_q,
                 k_p,
             },
+            latest,
         )?,
         Cmd::Scan { name } => {
             let (idx, _store) = ctx.indexer()?;
