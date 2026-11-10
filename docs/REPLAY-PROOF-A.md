@@ -786,6 +786,19 @@ the prover pays for it. Which way to adopt it — as a-0.4 for the
 transfer proofs (and the recursion's own proofs by the mirrored rule)
 or not — is the owner's decision; the numbers are these.
 
+**Reviewed** (S7, 10 November 2026, the auditor's firsthand pass at
+50fdca6; the review document follows on an audit branch at the owner's
+go): the two-sponge rule is **Fiat–Shamir sound** — a challenge squeezed
+from the sponge that absorbed last and absorbed by the other threads the
+whole history of both through the 128-bit digest the scheme assumes
+anyway; the key's representative enters both; the evaluation binding
+holds both ways (the group side witnesses the challenges the field side
+squeezes, the links copy-constrain them; a tampered field-side
+evaluation is refused, `step5.rs`). Adoption is safe; whether to adopt —
+the prover's cost against the client's gain — is the owner's engineering
+decision, not a security one. Standing condition, as for the ceremony:
+one independent cryptographer before any value deployment.
+
 ### 3.7 The batch relation in `T_p` [design]
 
 What `T_p(i)` adds to the verifier circuits is `REPLAY-PROOF.md` §4.2's
@@ -1078,6 +1091,26 @@ command takes the steps on disk in order from the client's state. The
 chain test saves the prover after step 1, resumes it from the bytes,
 and proves step 3 through the runner; its figures with the next server
 run.
+
+**Reviewed** (S7, 10 November 2026, the auditor's firsthand pass at
+664d013 and 50fdca6, the document to follow on an audit branch at the
+owner's go): `capture`, `step4`, `wire`, `prover`, `verifier_body`,
+`chain`, `batch` and `persist` — **no soundness finding**. Confirmed in
+particular: fake captures shape circuits only; a padded or mint slot
+cannot pass as a transfer and an active slot must equal its one bound
+verified statement; the wire is canonical both ways; the key
+commitments as inputs are bound into the MSM where the native verifier
+absorbs them, and the `base` gate relaxes the final identity alone; the
+decider ties `base = 1` to step 1 only, so no dummy predecessor passes
+later; the continuity `s_prev = s_next` holds in circuit and in the
+decider. Two notes fixed (50fdca6): the split transcript asserts it
+opens with the key's representative; the split step's test refuses a
+tampered field-side evaluation. Trust points stated, not findings: the
+vendored `halo2_proofs` patch is a separate, larger audit surface the
+recursion rests on; a step binds no block hash (the replay layer does);
+a mint carries no proof (F-3-1). Recommendation taken: the recursion's
+mock tests that fit a hosted runner run weekly in CI (`recursion` job,
+ba08e74); the k = 18 tests stay server runs with their figures here.
 
 ## 4. What this study decides
 
