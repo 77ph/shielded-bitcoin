@@ -801,10 +801,11 @@ impl ChainKeys {
         h.finalize().into()
     }
 
-    /// The digest of the genesis opening, as the dummy step 0 exposes it.
+    /// The digest of the genesis opening, as the dummy step 0 exposes it:
+    /// its `g`, the last of its public values `[s_prev, s_next, D, g]`.
     pub fn genesis_digest(&self) -> Fp {
         let i = &self.step0.cap_p.instance;
-        i[i.len() - 2]
+        i[i.len() - 1]
     }
 
     /// Keys for fragments of `n_proofs` over `n_slots` at `k_q`, `k_p`,
