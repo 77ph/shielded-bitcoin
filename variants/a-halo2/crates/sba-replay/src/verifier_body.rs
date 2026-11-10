@@ -83,6 +83,9 @@ pub struct VerifierCircuit {
     /// even when `expose_instance` is off (the field side of the verified
     /// proof needs them for the claim's value at `x`).
     pub opened_u_slots: Vec<Vec<usize>>,
+    /// Further instance values of the verified proof to expose for the
+    /// client (a claim's `G` the decider reads), not linked to a field side.
+    pub re_expose: Vec<usize>,
     pub capture: Option<Capture<C>>,
 }
 
@@ -118,6 +121,7 @@ impl VerifierCircuit {
             instance_limbs: vec![1; cap.instance.len()],
             expose_instance: true,
             opened_u_slots: vec![],
+            re_expose: vec![],
             capture: Some(cap.clone()),
         }
     }
@@ -271,7 +275,9 @@ impl VerifierCircuit {
     /// Whether the j-th instance value of the verified proof is a public
     /// input of this circuit.
     pub fn exposes_value(&self, j: usize) -> bool {
-        self.expose_instance || self.opened_u_slots.iter().any(|s| s.contains(&j))
+        self.expose_instance
+            || self.opened_u_slots.iter().any(|s| s.contains(&j))
+            || self.re_expose.contains(&j)
     }
 
     /// Positions in the layout of the last `k` challenges: the inner-product
@@ -562,6 +568,7 @@ impl Circuit<F> for VerifierCircuit {
             instance_limbs: self.instance_limbs.clone(),
             expose_instance: self.expose_instance,
             opened_u_slots: self.opened_u_slots.clone(),
+            re_expose: self.re_expose.clone(),
             capture: None,
         }
     }

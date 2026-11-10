@@ -110,6 +110,7 @@ pub(crate) mod tests_support {
             instance_limbs: vec![1; cap.instance.len()],
             expose_instance: true,
             opened_u_slots: vec![],
+            re_expose: vec![],
             capture: Some(cap.clone()),
         }
     }
