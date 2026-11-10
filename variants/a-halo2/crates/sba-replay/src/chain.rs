@@ -732,7 +732,8 @@ impl ChainKeys {
                 .map(|c| q::VerifierCircuit::over(&tparams, &tvk, c))
                 .collect(),
         };
-        let vk_q0 = plonk::keygen_vk(&outer, &q0.without_witnesses()).map_err(err)?;
+        let vk_q0 = plonk::keygen_vk(&outer, &q0.without_witnesses())
+            .map_err(|e| format!("T_q keys: {e:?}"))?;
         let (cap_q0, _) = fake_capture(&outer, &vk_q0, &q0.instance(), &[], OsRng).map_err(err)?;
         let p0 = crate::prover::Keys::step_p(
             &q0,
@@ -748,7 +749,8 @@ impl ChainKeys {
             &[],
             &vec![false; n_proofs],
         )?;
-        let vk_p0 = plonk::keygen_vk(&pparams, &p0.without_witnesses()).map_err(err)?;
+        let vk_p0 = plonk::keygen_vk(&pparams, &p0.without_witnesses())
+            .map_err(|e| format!("T_p keys: {e:?}"))?;
         let claims_t: Vec<Claim<vesta::Affine>> = caps.iter().map(|c| c.claim()).collect();
         // the placeholder opens what a chain T_p opens: the transfers' claims
         // and a previous T_p's — one of k_p challenges (any values: a claim's
@@ -805,7 +807,8 @@ impl ChainKeys {
             prev_s_next: None,
         };
         let sq1 = shaper0.step_q(&caps, &cap_p0, &p0_as_chain, &cap_q0, true);
-        let vk_q1 = plonk::keygen_vk(&outer, &sq1.without_witnesses()).map_err(err)?;
+        let vk_q1 = plonk::keygen_vk(&outer, &sq1.without_witnesses())
+            .map_err(|e| format!("T_q keys: {e:?}"))?;
         let (cap_q1, _) = fake_capture(
             &outer,
             &vk_q1,
@@ -834,7 +837,8 @@ impl ChainKeys {
             vec![None; n_slots],
             vec![false; n_proofs],
         );
-        let vk_p1 = plonk::keygen_vk(&pparams, &sp1.without_witnesses()).map_err(err)?;
+        let vk_p1 = plonk::keygen_vk(&pparams, &sp1.without_witnesses())
+            .map_err(|e| format!("T_p keys: {e:?}"))?;
         let mut claims_p1 = claims_t.clone();
         claims_p1.push(cap_p0.claim());
         let (cap_p1, _) =
@@ -851,7 +855,8 @@ impl ChainKeys {
             batch_params,
         };
         let sq2 = shaper2.step_q(&caps, &cap_p1, &sp1, &cap_q1, true);
-        let vk_q2 = plonk::keygen_vk(&outer, &sq2.without_witnesses()).map_err(err)?;
+        let vk_q2 = plonk::keygen_vk(&outer, &sq2.without_witnesses())
+            .map_err(|e| format!("T_q keys: {e:?}"))?;
         let (cap_q2, _) = fake_capture(
             &outer,
             &vk_q2,
@@ -880,7 +885,8 @@ impl ChainKeys {
             vec![None; n_slots],
             vec![false; n_proofs],
         );
-        let vk_p2 = plonk::keygen_vk(&pparams, &sp2.without_witnesses()).map_err(err)?;
+        let vk_p2 = plonk::keygen_vk(&pparams, &sp2.without_witnesses())
+            .map_err(|e| format!("T_p keys: {e:?}"))?;
         if sq2.instance().len() != sq1.instance().len()
             || sp2.instance().len() != sp1.instance().len()
         {
@@ -913,8 +919,10 @@ impl ChainKeys {
         let (cap_p2, _) =
             fake_capture(&pparams, &vk_p2, &sp2.instance(), &claims_p2, OsRng).map_err(err)?;
         let sq3 = shaper4.step_q(&caps, &cap_p2, &sp2, &cap_q2, true);
-        let ovk = plonk::keygen_vk(&outer, &sq3.without_witnesses()).map_err(err)?;
-        let opk = plonk::keygen_pk(&outer, ovk.clone(), &sq3.without_witnesses()).map_err(err)?;
+        let ovk = plonk::keygen_vk(&outer, &sq3.without_witnesses())
+            .map_err(|e| format!("T_q keys: {e:?}"))?;
+        let opk = plonk::keygen_pk(&outer, ovk.clone(), &sq3.without_witnesses())
+            .map_err(|e| format!("T_q keys: {e:?}"))?;
         let (cap_q3, _) = fake_capture(
             &outer,
             &ovk,
@@ -943,8 +951,10 @@ impl ChainKeys {
             vec![None; n_slots],
             vec![false; n_proofs],
         );
-        let pvk = plonk::keygen_vk(&pparams, &sp3.without_witnesses()).map_err(err)?;
-        let ppk = plonk::keygen_pk(&pparams, pvk.clone(), &sp3.without_witnesses()).map_err(err)?;
+        let pvk = plonk::keygen_vk(&pparams, &sp3.without_witnesses())
+            .map_err(|e| format!("T_p keys: {e:?}"))?;
+        let ppk = plonk::keygen_pk(&pparams, pvk.clone(), &sp3.without_witnesses())
+            .map_err(|e| format!("T_p keys: {e:?}"))?;
         if ovk.fixed_commitments().len() != vk_q2.fixed_commitments().len()
             || pvk.fixed_commitments().len() != vk_p2.fixed_commitments().len()
         {
@@ -1316,7 +1326,9 @@ mod chain_tests {
     use sba_indexer::testing::{ACTIVATION, MockChain, World, tx_with};
 
     /// One key set, two blocks: `cargo test -p sba-replay --release two_blocks_through_the_chain -- --ignored --nocapture`
-    /// (the server: keys at k = 18/17 and four proofs, ≈ 15 GB, half an hour).
+    /// (the server: keys at k = 18/18 — the chain's `T_p` over a two-proof
+    /// `T_q` of ≈ 1 000 public inputs outgrows k = 17 — and six proofs,
+    /// about an hour).
     #[test]
     #[ignore]
     fn two_blocks_through_the_chain() {
@@ -1332,7 +1344,7 @@ mod chain_tests {
         idx.sync(&chain).unwrap();
         let bparams = idx.batch_params();
         let t = std::time::Instant::now();
-        let keys = ChainKeys::generate(2, 3, 18, 17, bparams, &genesis).unwrap();
+        let keys = ChainKeys::generate(2, 3, 18, 18, bparams, &genesis).unwrap();
         println!("chain keys: {:.1} s", t.elapsed().as_secs_f64());
         let mut prover = ChainProver::new(&keys);
         let decider = ChainDecider { keys: &keys };
