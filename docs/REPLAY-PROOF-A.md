@@ -802,7 +802,10 @@ for the light client's own copy of the statements.
   three-slot relation: 874 public inputs, 110 464 rows, **k = 17** — the
   relation's rows (three slots) still the maximum, the verifier parts
   beside them in their own columns. Binding the second slot to the first
-  proof's statement is refused. By these figures a fragment of four
+  proof's statement is refused. On the server: `T_q` prove 28 s, `T_p`
+  keygen 169 s, **prove 84 s, 8 256 bytes**, the decider 1.0 s for both
+  with the two claims, 10.8 GB for the run. By these figures a fragment
+  of four
   transfers is `T_q` at k = 17 and `T_p` at k = 18 (the relation's
   ≈ 150 000 rows), eight at k = 18 / k = 19.
 
