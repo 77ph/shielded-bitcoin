@@ -737,8 +737,21 @@ sponges exactly as listed above (five from the points, `x_1 x_2` from
 the scalars, `x_3` points, `x_4` scalars, then `ξ z u_1 … u_14` points),
 the a-0.3 verifier refuses it and a flipped bit fails. The key's
 representative goes into both sponges so that every challenge depends
-on the key. Next: the group side over `Fq` absorbing no evaluation and
-combining by Horner, the field side over `Fp` with the second sponge.
+on the key. **The group side under it** (`verifier_split.rs`, the same
+day) [measured]: the `Fq` circuit absorbs the points and the key's
+representative, squeezes 22 challenges natively and witnesses `x_1, x_2,
+x_4` (128-bit, checked), combines the 60 commitments by Horner in `x_1`
+within each of the 5 point sets, the sets in `x_4`, the 7 quotient
+chunks in `x^n`, and adds the inner-product terms with the 19 claimed
+scalars (`x^n, −v, −c, −f, −c·b·z, u_1^{−1} … u_14^{−1}`) — **64 public
+inputs** (the key's representative, the 17-element statement, 25
+challenges, 19 claimed scalars, `G`) in place of 221, 61 permutations
+in place of 101, 112 multiplications, **19 343 rows** in place of
+≈ 33 000, so k = 15 with room (2^14 is 16 384). A wrong witnessed
+challenge or claimed scalar is refused. Next: the field side over `Fp`
+with the second sponge (the evaluations absorbed there, `x_1, x_2, x_4`
+squeezed and matched, the 19 claimed scalars checked), then the step's
+`T_p` group side over a `T_q` whose instance is a quarter of today's.
 
 ### 3.7 The batch relation in `T_p` [design]
 

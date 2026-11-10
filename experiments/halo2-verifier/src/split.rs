@@ -16,7 +16,7 @@
 
 use std::io::{self, Read, Write};
 
-use ff::PrimeField;
+use ff::{Field, PrimeField};
 use group::GroupEncoding;
 use halo2_proofs::arithmetic::{Coordinates, CurveAffine};
 use halo2_proofs::transcript::{EncodedChallenge, Transcript, TranscriptRead, TranscriptWrite};
@@ -300,4 +300,65 @@ mod tests {
         )
         .is_err());
     }
+}
+
+/// The capture of a proof under the split transcript: the a-0.3 shaped
+/// capture (so that `shadow` reads it) and, per challenge, which sponge
+/// produced it.
+pub fn capture_split(
+    params: &halo2_proofs::poly::commitment::Params<C>,
+    vk: &halo2_proofs::plonk::VerifyingKey<C>,
+    instance: &[Fp],
+    proof: &[u8],
+) -> Result<(crate::capture::Capture<C>, Vec<From>), halo2_proofs::plonk::Error> {
+    use crate::capture::{Capture, Deferred, Event as E};
+    let mut transcript = SplitRead::init(proof);
+    let out = halo2_proofs::plonk::verify_proof(
+        params,
+        vk,
+        Deferred(params),
+        &[&[instance]],
+        &mut transcript,
+    )?;
+    let (g_scalars, w_scalar, u_scalar, other) = out.msm.fingerprint_terms();
+    let mut terms: Vec<(Fp, C)> = other
+        .into_iter()
+        .map(|(s, x, y)| (s, C::from_xy(x, y).unwrap()))
+        .collect();
+    if let Some(gs) = g_scalars {
+        let g = params.get_g();
+        for (i, s) in gs.iter().enumerate() {
+            if !bool::from(s.is_zero()) {
+                terms.push((*s, g[i]));
+            }
+        }
+    }
+    let mut froms = Vec::new();
+    let events = transcript
+        .events
+        .iter()
+        .map(|e| match e {
+            Event::CommonScalar(s) => E::CommonScalar(*s),
+            Event::CommonPoint(p) => E::CommonPoint(*p),
+            Event::ReadPoint(p) => E::ReadPoint(*p),
+            Event::ReadScalar(s) => E::ReadScalar(*s),
+            Event::Squeeze(s, f) => {
+                froms.push(*f);
+                E::Squeeze(*s)
+            }
+        })
+        .collect();
+    Ok((
+        Capture {
+            instance: instance.to_vec(),
+            events,
+            terms,
+            w_scalar: w_scalar.unwrap_or(Fp::ZERO),
+            u_scalar: u_scalar.unwrap_or(Fp::ZERO),
+            g: out.g,
+            u: out.u,
+            opened: vec![],
+        },
+        froms,
+    ))
 }
