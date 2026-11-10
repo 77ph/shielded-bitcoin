@@ -179,10 +179,36 @@ pub fn prove(ctx: &Ctx, sizes: Sizes, blocks: u32) -> Result<()> {
 }
 
 /// Decide the steps on disk the client has not seen, from the keys and
-/// the client's state alone.
-pub fn decide(ctx: &Ctx, sizes: Sizes) -> Result<()> {
+/// the client's state alone; with `latest`, the newest step alone from
+/// the genesis digest (one step attests the whole history).
+pub fn decide(ctx: &Ctx, sizes: Sizes, latest: bool) -> Result<()> {
     let dir = Dir::of(ctx)?;
     let keys = keys(ctx, sizes)?;
+    if latest {
+        let (index, height, path) = dir.steps()?.into_iter().last().context("no step on disk")?;
+        let step = ProvenStep::from_bytes(&std::fs::read(&path)?)
+            .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
+        let decider = ChainDecider { keys: &keys };
+        let t = Instant::now();
+        let (h, s) = decider
+            .decide_latest(&step)
+            .map_err(|e| anyhow::anyhow!("step {index} (block {height}) refused: {e}"))?;
+        println!(
+            "step {index} alone, from the genesis: block {h} accepted in {:.2} s, digest {}",
+            t.elapsed().as_secs_f64(),
+            hex::encode(fp_to_bytes(&s))
+        );
+        write_atomic(
+            &dir.client_state(),
+            &ClientState {
+                keys_id: keys.id(),
+                index,
+                s,
+            }
+            .to_bytes(),
+        )?;
+        return Ok(());
+    }
     let mut client = match std::fs::read(dir.client_state()) {
         Ok(b) => {
             let c =

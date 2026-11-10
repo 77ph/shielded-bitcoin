@@ -146,6 +146,12 @@ pub struct StepPChain {
     /// Among `T_q(i)`'s instance values, `T_p(i−1)`'s `s_next` (re-exposed),
     /// which this step's `s_prev` must equal.
     pub prev_s_next: Option<usize>,
+    /// Among `T_q(i)`'s instance values, `T_p(i−1)`'s `g` (re-exposed): the
+    /// chain's genesis digest, this step's fourth public value — equal to
+    /// the previous step's, or to this step's `s_prev` in the base step.
+    pub prev_g: Option<usize>,
+    /// Among `T_q(i)`'s instance values, its `base` bit.
+    pub base_pos: Option<usize>,
 }
 
 #[derive(Clone, Debug)]
@@ -167,11 +173,28 @@ impl std::fmt::Debug for StepPChain {
 }
 
 impl StepPChain {
+    /// The public inputs: `T_q(i)`'s group side's exposure, the relation's
+    /// `[s_prev, s_next, D]`, then `g` — the chain's genesis digest.
     pub fn instance(&self) -> Vec<Fp> {
-        let mut v = self
-            .group_tq
-            .instance(self.group_tq.capture.as_ref().expect("values"));
-        v.extend(self.batch.instance());
+        let cap = self.group_tq.capture.as_ref().expect("values");
+        let mut v = self.group_tq.instance(cap);
+        let batch = self.batch.instance();
+        let g = match (self.base_pos, self.prev_g) {
+            (Some(b), Some(pg)) => {
+                // T_q(i)'s instance values are Fq cells holding Fp integers
+                let as_fp = |x: &vesta::Base| {
+                    Option::from(Fp::from_repr(x.to_repr())).expect("an Fp value in an Fq cell")
+                };
+                if as_fp(&cap.instance[b]) == Fp::from(1u64) {
+                    batch[0]
+                } else {
+                    as_fp(&cap.instance[pg])
+                }
+            }
+            _ => batch[0],
+        };
+        v.extend(batch);
+        v.push(g);
         v
     }
 }
@@ -197,6 +220,8 @@ impl Circuit<vesta::Scalar> for StepPChain {
             slot_proof: vec![None; self.slot_proof.len()],
             used: vec![false; self.used.len()],
             prev_s_next: self.prev_s_next,
+            prev_g: self.prev_g,
+            base_pos: self.base_pos,
         }
     }
     fn configure(meta: &mut ConstraintSystem<Fp>) -> StepPChainConfig {
@@ -237,6 +262,21 @@ impl Circuit<vesta::Scalar> for StepPChain {
             assert_eq!(prev.len(), 1);
             ch.assert_equal(&mut l, &s_prev, &prev[0])?;
         }
+        // g = prev_g + base · (s_prev − prev_g): the previous step's genesis
+        // digest, or this step's s_prev when this is the base step
+        let mut ctx = crate::batch::Ctx::new(&cfg.batch);
+        let g = match (self.base_pos, self.prev_g) {
+            (Some(b), Some(pg)) => {
+                let base = &ex.instance_values[b];
+                let prev_g = &ex.instance_values[pg];
+                assert_eq!((base.len(), prev_g.len()), (1, 1));
+                let d = ctx.sub(&mut l, &s_prev, &prev_g[0])?;
+                let t = ctx.mul(&mut l, &base[0], &d)?;
+                ctx.add(&mut l, &prev_g[0], &t)?
+            }
+            _ => s_prev.clone(),
+        };
+        l.constrain_instance(g.cell(), cfg.group.instance, ex.cells.len() + 3)?;
         Ok(())
     }
 }
@@ -454,6 +494,13 @@ fn pos_p(g: &p::VerifierCircuit, j: usize) -> usize {
         .position(|s| matches!(s, p::Slot::InstanceValue(i, _) if *i == j))
         .expect("exposed")
 }
+/// Where a `q` group side exposes its `base` bit.
+fn base_slot_q(g: &q::VerifierCircuit) -> usize {
+    g.layout()
+        .iter()
+        .position(|s| matches!(s, q::Slot::Base))
+        .expect("base")
+}
 fn key_slots_q(g: &q::VerifierCircuit) -> Vec<usize> {
     g.layout()
         .iter()
@@ -521,10 +568,12 @@ impl Shaper<'_> {
                 .map(|_| pos_p(g_prev, *it.next().expect("re-exposed")))
                 .collect::<Vec<_>>(),
         );
-        // T_q(i−1)'s claim (G, u) and T_p(i−1)'s s_next, as T_p(i−1) instance indices
+        // T_q(i−1)'s claim (G, u), then T_p(i−1)'s s_next and g, as T_p(i−1)
+        // instance indices (its instance ends [s_prev, s_next, D, g])
         let mut re_expose = claim_positions_p(g_prev, k_q);
-        let s_next = prev_p.instance.len() - 2;
-        re_expose.push(s_next);
+        let n_p = prev_p.instance.len();
+        re_expose.push(n_p - 3);
+        re_expose.push(n_p - 1);
         let mut group_tp = q::VerifierCircuit::over(self.pparams, self.pvk, prev_p);
         group_tp.expose_instance = false;
         group_tp.keys_as_inputs = true;
@@ -573,8 +622,10 @@ impl Shaper<'_> {
         let k_t = K as usize;
         let k_p = prev_p.u.len();
         // T_q(i) opened T_q(i−1)'s claim: its u's are the re-exposed values
-        // of T_p(i−1)'s instance at the claim's positions (after G's two)
-        let claim_q_prev_in_tp = &sq.group_tp.re_expose[..sq.group_tp.re_expose.len() - 1];
+        // of T_p(i−1)'s instance at the claim's positions (after G's two);
+        // the last two re-exposed are T_p(i−1)'s s_next and g
+        let re = &sq.group_tp.re_expose;
+        let claim_q_prev_in_tp = &re[..re.len() - 2];
         let u_q_prev_in_tq: Vec<usize> = claim_q_prev_in_tp[2..]
             .iter()
             .map(|j| off_tp + pos_q(&sq.group_tp, *j))
@@ -655,7 +706,8 @@ impl Shaper<'_> {
             sq.group_tp.links_for_field_side(),
             off_tp,
         );
-        let s_next_prev = *sq.group_tp.re_expose.last().expect("s_next re-exposed");
+        let s_next_prev = re[re.len() - 2];
+        let g_prev = re[re.len() - 1];
         let _ = prev_sp;
         StepPChain {
             group_tq,
@@ -670,6 +722,8 @@ impl Shaper<'_> {
             slot_proof,
             used,
             prev_s_next: Some(off_tp + pos_q(&sq.group_tp, s_next_prev)),
+            prev_g: Some(off_tp + pos_q(&sq.group_tp, g_prev)),
+            base_pos: Some(off_tp + base_slot_q(&sq.group_tp)),
         }
     }
 }
@@ -861,6 +915,8 @@ impl ChainKeys {
             slot_proof: Vec::new(),
             used: Vec::new(),
             prev_s_next: None,
+            prev_g: None,
+            base_pos: None,
         };
         let sq1 = shaper0.step_q(&caps, &cap_p0, &p0_as_chain, &cap_q0, true);
         let vk_q1 = plonk::keygen_vk(&outer, &sq1.without_witnesses())
@@ -1050,7 +1106,7 @@ impl ChainKeys {
         );
         let s0 = genesis.digest();
         let mut instance_p0 = sp0.group_tq.instance(&cap_q0f);
-        instance_p0.extend([s0, s0, Fp::from(0u64)]);
+        instance_p0.extend([s0, s0, Fp::from(0u64), s0]);
         let mut claims_p0f = claims_t.clone();
         claims_p0f.push(claim_at::<vesta::Affine>(
             &sq0.instance(),
@@ -1435,6 +1491,30 @@ impl ChainDecider<'_> {
     /// Decide step `index` (1 for the first real block) against the
     /// client's state digest; the digest after on success.
     pub fn decide(&self, step: &ProvenStep, index: usize, s_prev: Fp) -> Result<Fp, String> {
+        self.verify(step)?;
+        let sq = &self.keys.step_q;
+        let off_tp = sq.offsets()[self.keys.n_proofs];
+        let want_base = if index == 1 {
+            pallas::Scalar::from(1u64)
+        } else {
+            pallas::Scalar::from(0u64)
+        };
+        if step.instance_q[off_tp + base_slot_q(&sq.group_tp)] != want_base {
+            return Err("the base bit is not the step's".into());
+        }
+        let ip = &step.instance_p;
+        if ip[ip.len() - 4] != s_prev {
+            return Err("s_prev is not the client's state".into());
+        }
+        Ok(self.public_values(step)?.1)
+    }
+
+    /// Both proofs verified natively with the claims and the keys read out
+    /// of the public inputs: `T_q(i)` with `T_q(i−1)`'s claim (re-exposed
+    /// from `T_p(i−1)`'s instance), `T_p(i)` with the transfers' claims and
+    /// `T_p(i−1)`'s (from `T_q(i)`'s instance); both keys' commitments
+    /// against the deployment's.
+    fn verify(&self, step: &ProvenStep) -> Result<(), String> {
         let k = self.keys;
         let sq = &k.step_q;
         let sp = &k.step_p;
@@ -1442,9 +1522,13 @@ impl ChainDecider<'_> {
         let off_tp = offsets[k.n_proofs];
         let iq = &step.instance_q;
         let ip = &step.instance_p;
+        if ip.len() < 4 {
+            return Err("short T_p instance".into());
+        }
         // the claims T_q opened: T_q(i−1)'s, re-exposed from T_p(i−1)'s instance
+        // (the last two re-exposed values are its s_next and g)
         let re = &sq.group_tp.re_expose;
-        let claim_q_prev_pos: Vec<usize> = re[..re.len() - 1]
+        let claim_q_prev_pos: Vec<usize> = re[..re.len() - 2]
             .iter()
             .map(|j| off_tp + pos_q(&sq.group_tp, *j))
             .collect();
@@ -1455,7 +1539,7 @@ impl ChainDecider<'_> {
             .map(|v| Option::from(Fp::from_repr(v.to_repr())).ok_or("a value above p"))
             .collect::<Result<_, _>>()?;
         let claim_q_prev = claim_at::<pallas::Affine>(&as_fp, &claim_q_prev_pos)?;
-        // T_p(i−1)'s key and the base bit
+        // T_p(i−1)'s key
         let keys_p = key_commitments_q(&sq.group_tp);
         for (i, pos) in key_slots_q(&sq.group_tp).chunks(2).enumerate() {
             use pasta_curves::arithmetic::CurveAffine;
@@ -1463,20 +1547,6 @@ impl ChainDecider<'_> {
             if iq[off_tp + pos[0]] != *c.x() || iq[off_tp + pos[1]] != *c.y() {
                 return Err("T_p's key is not the deployment's".into());
             }
-        }
-        let base_pos = sq
-            .group_tp
-            .layout()
-            .iter()
-            .position(|s| matches!(s, q::Slot::Base))
-            .expect("base");
-        let want_base = if index == 1 {
-            pallas::Scalar::from(1u64)
-        } else {
-            pallas::Scalar::from(0u64)
-        };
-        if iq[off_tp + base_pos] != want_base {
-            return Err("the base bit is not the step's".into());
         }
         let mut tr = crate::native::PoseidonRead::<_, pallas::Affine>::init(&step.proof_q[..]);
         plonk::verify_proof_with_openings(
@@ -1522,17 +1592,37 @@ impl ChainDecider<'_> {
             &claims,
         )
         .map_err(|e| format!("T_p: {e:?}"))?;
+        Ok(())
+    }
+
+    /// Decide the latest step alone, from the keys and the deployment's
+    /// genesis digest: the step's `g` must be the genesis — the base step
+    /// set it to its `s_prev` and every step since carried it — so one
+    /// step attests the whole history from the genesis. Returns the
+    /// block height and the state digest after it.
+    pub fn decide_latest(&self, step: &ProvenStep) -> Result<(u32, Fp), String> {
+        self.verify(step)?;
+        let (_, s_next) = self.public_values(step)?;
+        Ok((step.height, s_next))
+    }
+
+    /// Both proofs verified with the claims and keys read out of the
+    /// public inputs; `D` and `s_next` against the step's data; `g`
+    /// against the genesis. What `decide` adds is the base bit for the
+    /// index and `s_prev` for the running digest.
+    fn public_values(&self, step: &ProvenStep) -> Result<(Fp, Fp), String> {
+        let ip = &step.instance_p;
         let n = ip.len();
-        if ip[n - 3] != s_prev {
-            return Err("s_prev is not the client's state".into());
-        }
-        if ip[n - 1] != sba_core::batch::batch_digest(&step.slots) {
+        if ip[n - 2] != sba_core::batch::batch_digest(&step.slots) {
             return Err("D is not the digest of the statements".into());
         }
-        if ip[n - 2] != step.opening_after.digest() {
+        if ip[n - 3] != step.opening_after.digest() {
             return Err("s_next is not the opening's digest".into());
         }
-        Ok(ip[n - 2])
+        if ip[n - 1] != self.keys.genesis_digest() {
+            return Err("the chain's genesis is not the deployment's".into());
+        }
+        Ok((ip[n - 4], ip[n - 3]))
     }
 }
 
@@ -1641,6 +1731,29 @@ mod chain_tests {
         );
         s = decider.decide(&step2, 2, s).unwrap();
         assert_eq!(s, o1.digest());
+        // the client of constant size: step 2 alone, from the genesis
+        assert_eq!(decider.decide_latest(&step2).unwrap(), (1001, o1.digest()));
+        assert_eq!(decider.decide_latest(&step1).unwrap(), (1000, o0.digest()));
+        // a rogue prover restarting the chain at block 1001 (a base step over
+        // the real T_p(1)): its g is block 1001's s_prev, not the genesis
+        let mut rogue = ChainProver::resume(&keys, &restored).unwrap();
+        rogue.steps = 0;
+        let t = std::time::Instant::now();
+        let rogue2 = rogue.prove(1001, &w1, &o1, &tr1).unwrap();
+        println!(
+            "rogue base step at block 1001: {:.1} s",
+            t.elapsed().as_secs_f64()
+        );
+        assert_eq!(
+            rogue2.instance_p.last(),
+            Some(&o0.digest()),
+            "its g is its s_prev"
+        );
+        assert!(decider.decide_latest(&rogue2).is_err(), "not the genesis");
+        assert!(
+            decider.decide(&rogue2, 2, o0.digest()).is_err(),
+            "base at index 2"
+        );
         // block 1002: one transfer (alice's change), padded to the fragment
         let ev = &idx.state.events[2];
         let (pk_eph, ct) = &ev.outputs[1];
@@ -1683,5 +1796,14 @@ mod chain_tests {
         // the wrong index (base bit) and a wrong state are refused
         assert!(decider.decide(&step3, 1, o1.digest()).is_err());
         assert!(decider.decide(&step3, 3, genesis.digest()).is_err());
+        let t = std::time::Instant::now();
+        assert_eq!(decider.decide_latest(&step3).unwrap(), (1002, o2.digest()));
+        println!("decide_latest: {:.2} s", t.elapsed().as_secs_f64());
+        let mut other = step3.clone();
+        *other.instance_p.last_mut().unwrap() = o0.digest();
+        assert!(
+            decider.decide_latest(&other).is_err(),
+            "g is a public input of the proof"
+        );
     }
 }
