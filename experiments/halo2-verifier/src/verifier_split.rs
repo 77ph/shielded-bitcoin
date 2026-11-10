@@ -168,6 +168,60 @@ fn embed(s: &Fp) -> F {
 }
 
 impl SplitCircuit {
+    /// Public inputs: 1 (the key) + the statement + 25 challenges + 19
+    /// claimed + 2 (`G`).
+    pub fn n_challenges(&self) -> usize {
+        self.plan
+            .kinds
+            .iter()
+            .filter(|k| matches!(k, SKind::SqueezeNative | SKind::SqueezeWitnessed))
+            .count()
+    }
+    pub fn n_claimed(&self) -> usize {
+        5 + self.plan.rounds.len()
+    }
+    pub fn instance_len(&self) -> usize {
+        1 + self.lagrange.len() + self.n_challenges() + self.n_claimed() + 2
+    }
+    /// Positions of the statement's values.
+    pub fn statement_positions(&self) -> Vec<usize> {
+        (1..1 + self.lagrange.len()).collect()
+    }
+    /// How a `p` circuit carries this circuit's instance values: one cell
+    /// each but `G`'s two coordinates.
+    pub fn instance_limbs_when_verified(&self) -> Vec<usize> {
+        let n = self.instance_len();
+        let mut v = vec![1; n];
+        v[n - 2] = 2;
+        v[n - 1] = 2;
+        v
+    }
+    /// For the split field side of the same proof (its inputs in transcript
+    /// order, then its 19 outputs), the positions among this circuit's
+    /// public inputs that carry each value; an evaluation has none.
+    pub fn links_for_field_side(&self, n_evals: usize, n_multiopen_u: usize) -> Vec<Vec<usize>> {
+        let ch0 = 1 + self.lagrange.len();
+        let k = self.plan.rounds.len();
+        let mut v: Vec<Vec<usize>> = vec![vec![0]]; // vk_repr
+        v.extend((0..5).map(|i| vec![ch0 + i])); // θ β γ y x
+        v.extend((0..n_evals).map(|_| vec![])); // the evaluations
+        v.push(vec![ch0 + 5]); // x_1
+        v.push(vec![ch0 + 6]); // x_2
+        v.push(vec![ch0 + 7]); // x_3
+        v.extend((0..n_multiopen_u).map(|_| vec![])); // the multi-point evaluations
+        v.push(vec![ch0 + 8]); // x_4
+        v.push(vec![ch0 + 9]); // ξ
+        v.push(vec![ch0 + 10]); // z
+        v.extend((0..k).map(|j| vec![ch0 + 11 + j])); // u_j
+        v.push(vec![]); // c
+        v.push(vec![]); // f
+        let cl0 = ch0 + self.n_challenges();
+        v.extend((0..self.n_claimed()).map(|i| vec![cl0 + i]));
+        v
+    }
+}
+
+impl SplitCircuit {
     /// The claimed scalars, natively: `x^n, −v, −c, −f, −c·b·z, u_j^{−1}`.
     pub fn claimed(sh: &Shadow) -> Vec<Fp> {
         let t = &sh.typed;
@@ -306,11 +360,25 @@ impl Circuit<F> for SplitCircuit {
 
     fn synthesize(&self, cfg: VerifierConfig, mut layouter: impl Layouter<F>) -> Result<(), Error> {
         cfg.assign_table(&mut layouter)?;
+        self.synthesize_from(&cfg, &mut layouter, 0).map(|_| ())
+    }
+}
+
+impl SplitCircuit {
+    /// The circuit but the table, its public inputs from `first_row`;
+    /// returns the row after its last.
+    pub fn synthesize_from(
+        &self,
+        cfg: &VerifierConfig,
+        layouter: &mut impl Layouter<F>,
+        first_row: usize,
+    ) -> Result<usize, Error> {
+        let mut layouter = layouter.namespace(|| "split group side");
         let l = &mut layouter;
         let mut g = Gadgets {
-            cfg: &cfg,
+            cfg,
             ecc: EccChip::construct(cfg.ecc.clone(), CircuitVersion::AnchoredBase),
-            exposed: 0,
+            exposed: first_row,
             muls: 0,
         };
         let mut t = Transcript::new(&cfg.transcript, l)?;
@@ -465,9 +533,11 @@ impl Circuit<F> for SplitCircuit {
         )?;
         eprintln!(
             "split group side: {} permutations, {} multiplications, {} public inputs",
-            t.permutations, g.muls, g.exposed
+            t.permutations,
+            g.muls,
+            g.exposed - first_row
         );
-        Ok(())
+        Ok(g.exposed)
     }
 }
 
