@@ -674,7 +674,10 @@ improves with time. **For A, recursion is not an option on top of a
 working per-batch chain; it is the way the light client gets back to
 a constant-size download.** With it: one `T` proof (≈ 6–7 KB), two
 accumulators (≈ 1 KB), the state opening: independent of the number of
-blocks.
+blocks. Built as the chain of §3.8 with the genesis digest carried
+through it (10 November): the newest step alone — two proofs, two
+instances, the slot statements and the opening, 69 716 bytes measured —
+is decided from the keys and the deployment's genesis digest.
 
 ### 3.6 Fewer values across the cycle: the split transcript [design]
 
@@ -1096,6 +1099,36 @@ prover 277.9 s; step 3 through the runner (the block synced and proven
 in one call, the witness consumed, a block not yet on the chain reported
 as none) 271.8 s; the decider **1.94 s** a step; the whole test 1 897 s.
 
+**The client of constant size** (`chain.rs`, `ChainDecider::decide_latest`,
+`sb a replay-decide --latest`, 10 November, after the review) [built].
+The decider so far took a step against the client's running digest, so
+a client had to take every step in order — the download of §3.5 was not
+yet constant. What was missing is one value carried through the chain:
+**`g`, the genesis digest**, `T_p`'s fourth public value after
+`[s_prev, s_next, D]`. In the base step the circuit sets `g := s_prev`
+(the chain starts where it starts); in every other step `g := g` of
+`T_p(i−1)`, re-exposed through `T_q(i)` as `s_next` is and
+copy-constrained — one relation, `g = prev_g + base · (s_prev − prev_g)`,
+with `base` the bit `T_q(i)` exposes. The decider of the latest step
+checks `g` against the deployment's genesis digest, both keys, both
+proofs with their claims, `D` and `s_next`; it needs no index: a prover
+who restarts the chain with a base step at a later block gets `g` equal
+to that block's `s_prev`, which is not the genesis — the opening's
+height is in the digest, so no later state can equal the genesis
+opening. No step counter is carried: the height is in the step and in
+the digests. Cost: one public value and three rows in `T_p`, one more
+re-exposed value in `T_q`. The sequential decider stays (`decide`) with
+`g` checked too. The chain test takes steps 1–3 alone from the genesis,
+proves a rogue base step at block 1001 and sees it refused by both
+deciders, and refuses a step whose `g` was replaced (a public input of
+the proof). [measured, the server, 10 November]: keys 931.2 s; steps
+276.4 s, 280.8 s, 309.1 s, each **69 780 bytes** on the wire (64 more
+than without `g`: one value in each instance), the saved state 92 546
+bytes; the rogue base step 309.5 s to prove and refused; the sequential
+decider 2.10 s a step, **the decider of the latest step alone 2.06 s**
+— the light client of §3.5: one step of 69 780 bytes, two seconds, the
+keys, and the deployment's genesis digest, whatever the history's length.
+
 **Reviewed** (S7, 10 November 2026, the auditor's firsthand pass at
 664d013 and 50fdca6, the document to follow on an audit branch at the
 owner's go): `capture`, `step4`, `wire`, `prover`, `verifier_body`,
@@ -1184,7 +1217,11 @@ ba08e74); the k = 18 tests stay server runs with their figures here.
   as public inputs, a dummy previous proof with a `base` flag), one key
   set for the whole chain bootstrapped from fake captures and run over
   three blocks on the server with the figures above; four facts about
-  the verifier mirror learnt from the bootstrap.
+  the verifier mirror learnt from the bootstrap. The same day: the chain
+  between runs and in the CLI (`replay-prove`, `replay-decide`); the S7
+  review (§3.6, §3.8: no soundness finding, a-0.4 sound); the genesis
+  digest carried through the chain — the client of constant size of
+  §3.5 built and measured (one step, two seconds).
 * **v0.7** (5 November 2026) — the second step composed and run on the
   server, the loop closed (§3.4); opened claims through the field side;
   the batch relation designed (§3.7), ported natively into `sba-core`
