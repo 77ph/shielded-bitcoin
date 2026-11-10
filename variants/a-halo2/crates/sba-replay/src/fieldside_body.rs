@@ -270,7 +270,7 @@ impl Structure {
                 Source::Read(i) => read[*i],
                 Source::Common => t.instance_commitment,
                 Source::Opened(i) => cap.common_points()[1 + *i],
-                Source::Constant(c) => *c,
+                Source::Constant(c) | Source::Key(c) => *c,
                 Source::Claim => cap.g,
             }
         };

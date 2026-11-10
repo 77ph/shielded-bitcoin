@@ -111,6 +111,9 @@ pub(crate) mod tests_support {
             expose_instance: true,
             opened_u_slots: vec![],
             re_expose: vec![],
+            keys_as_inputs: false,
+            allow_base: false,
+            base: false,
             capture: Some(cap.clone()),
         }
     }
@@ -198,5 +201,77 @@ mod tests {
                 .verify()
                 .is_err()
         );
+    }
+}
+
+#[cfg(test)]
+mod chain_tests {
+    use super::tests_support::{q_circuit, real};
+    use crate::capture::capture;
+    use ff::Field;
+    use halo2_proofs::dev::MockProver;
+    use halo2_proofs::plonk;
+    use halo2_proofs::poly::commitment::Params;
+    use pasta_curves::vesta;
+    use rand::SeedableRng;
+    use rand::rngs::StdRng;
+    use sba_circuit::{K, TransferCircuit, TransferParams};
+
+    /// The key's commitments as public inputs, and the base bit: a real
+    /// proof verifies with `base = 0`; a dummy proof (one commitment's sign
+    /// flipped — valid points, no proof) only with `base = 1`.
+    #[test]
+    fn keys_as_inputs_and_the_base_bit() {
+        let (params, vk, cap) = real();
+        let mut circuit = q_circuit(&params, &vk, &cap);
+        circuit.keys_as_inputs = true;
+        circuit.allow_base = true;
+        let n_keys = circuit
+            .sources
+            .iter()
+            .filter(|s| matches!(s, super::q::Source::Key(_)))
+            .count();
+        let instance = circuit.instance(&cap);
+        println!(
+            "with the key's {n_keys} commitments as inputs and the base bit: {} public inputs",
+            instance.len()
+        );
+        assert_eq!(instance.len(), 221 + 2 * n_keys + 1);
+        MockProver::run(15, &circuit, vec![instance.clone()])
+            .unwrap()
+            .assert_satisfied();
+        // a wrong key commitment coordinate is refused (the MSM moves)
+        let mut bad = instance.clone();
+        bad[221] += super::q::F::ONE;
+        assert!(
+            MockProver::run(15, &circuit, vec![bad])
+                .unwrap()
+                .verify()
+                .is_err()
+        );
+        // a dummy proof: the real proof with one commitment's sign flipped
+        let tp = TransferParams::build().unwrap();
+        let (st, w) = crate::sample::sample();
+        let mut proof = tp.prove(&st, &w, &mut StdRng::seed_from_u64(5)).unwrap();
+        proof[31] ^= 0x80;
+        let halo_params: Params<vesta::Affine> = Params::new(K);
+        let vk2 = plonk::keygen_vk(&halo_params, &TransferCircuit::default()).unwrap();
+        let dummy = capture(&halo_params, &vk2, &st.to_field_elements(), &proof, &[]).unwrap();
+        let mut over_dummy = q_circuit(&params, &vk, &dummy);
+        over_dummy.keys_as_inputs = true;
+        over_dummy.allow_base = true;
+        over_dummy.base = false;
+        let pi = over_dummy.instance(&dummy);
+        assert!(
+            MockProver::run(15, &over_dummy, vec![pi])
+                .unwrap()
+                .verify()
+                .is_err()
+        );
+        over_dummy.base = true;
+        let pi = over_dummy.instance(&dummy);
+        MockProver::run(15, &over_dummy, vec![pi])
+            .unwrap()
+            .assert_satisfied();
     }
 }

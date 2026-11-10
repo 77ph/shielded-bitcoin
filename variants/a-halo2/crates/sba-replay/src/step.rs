@@ -204,6 +204,9 @@ pub(crate) mod tests_support {
             expose_instance: true,
             opened_u_slots: vec![],
             re_expose: vec![],
+            keys_as_inputs: false,
+            allow_base: false,
+            base: false,
             capture: Some(cap_q.clone()),
         };
         let (_, sources) = q::VerifierCircuit::shape(
@@ -302,6 +305,9 @@ mod tests {
             expose_instance: true,
             opened_u_slots: vec![],
             re_expose: vec![],
+            keys_as_inputs: false,
+            allow_base: false,
+            base: false,
             capture: Some(cap_q.clone()),
         };
         let nonzero = circuit
@@ -383,6 +389,9 @@ mod tests {
             expose_instance: true,
             opened_u_slots: vec![],
             re_expose: vec![],
+            keys_as_inputs: false,
+            allow_base: false,
+            base: false,
             capture: Some(cap_q.clone()),
         };
         // the field side of the transfer proof, over the q circuit's sources
@@ -545,6 +554,9 @@ mod second_step {
             expose_instance: false,
             opened_u_slots: vec![],
             re_expose: vec![],
+            keys_as_inputs: false,
+            allow_base: false,
+            base: false,
             capture: Some(cap_p.clone()),
         };
         let nonzero = circuit

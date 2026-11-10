@@ -356,6 +356,9 @@ mod tests {
             expose_instance: false,
             opened_u_slots: vec![u_in_tp1],
             re_expose: vec![],
+            keys_as_inputs: false,
+            allow_base: false,
+            base: false,
             capture: Some(cap_p1.clone()),
         };
         // the field side of T_q(1): its values are T_p(1)'s instance values,
@@ -476,6 +479,9 @@ mod tests {
             expose_instance: false,
             opened_u_slots: vec![],
             re_expose: vec![],
+            keys_as_inputs: false,
+            allow_base: false,
+            base: false,
             capture: Some(cap_q2.clone()),
         };
         let (_, sources2) = q::VerifierCircuit::shape(
