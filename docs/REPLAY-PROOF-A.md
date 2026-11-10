@@ -624,14 +624,21 @@ statements themselves are witnesses of `T_p` (bound by `D`) and the
 instance values of the transfer proofs' group sides in `T_q` (bound by
 their instance commitments and, through the step, by `D`).
 
-**A proven block** (the wire format the light client reads): the block
-hash, the state opening after the block, and per fragment the `n`
-statements (18 elements each, for the client's own tree), the two
-proofs (≈ 6–8 KB each at k = 18–19 [computed as §3.5]), the two
-claims (480 bytes each) and the cross values (`203 n` field elements,
-≈ 100 KB for `n = 16`, 26 KB for `n = 4`), the last being the part
-that does not shrink with recursion: a client that keeps only the
-latest step keeps one fragment's worth. The paper's proven block
+**A proven step** (the wire format the light client reads; built,
+`experiments/halo2-verifier/src/wire.rs`, 10 November): the height,
+the slots in replay order (16 elements each, an empty slot all zeros),
+the state opening after, `T_q`'s public inputs and proof, `T_p`'s
+first-column public inputs and proof — a versioned byte string, read
+back and decided. The transfer proofs' claims are not shipped: each
+`G` and each claim's challenges are among `T_q`'s public inputs, and
+the decider reads them by the `q` group side's layout
+(`claims_of`), then verifies `T_q` natively in full, `T_p` with those
+claims, and checks `T_p`'s last three public values — `s_prev` is the
+client's own state digest, `D` is the client's own digest of the
+slots, `s_next` is the opening's digest. What does not shrink with
+recursion is `T_q`'s public inputs, `221 n` field elements (the
+crossing values, §3.6): ≈ 14 KB for `n = 2`, 57 KB for `n = 8`; the
+proofs are ≈ 5 and ≈ 8 KB. The paper's proven block
 (`REPLAY-PROOF.md` §4.5) ships, per slot, the envelope's own 192-byte
 proof instead; here the transfer proofs are not shipped at all, the
 step having verified them.
