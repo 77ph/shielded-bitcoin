@@ -952,6 +952,33 @@ challenges today (`opened_u_slots`), plus the `G`s. Then
 `Prover::prove_next(previous: &ProvenStep, …)` and a `Decider` that
 takes the previous step's public inputs along.
 
+**Where that design breaks, and the fix** [found 10 November, while
+starting to build it]. Two key sets are not enough, because a group
+side bakes the verified circuit's *verifying key* — its fixed and
+permutation commitments — into its constraints as constants
+(`Source::Constant`). `T_q(i)` verifies `T_p(i−1)`, so `T_q`'s
+circuit depends on `T_p`'s key; `T_p(i)` verifies `T_q(i)`, so `T_p`'s
+depends on `T_q`'s: a cycle, which the pieces built so far never met
+because each step's circuits were made after the previous step's keys
+existed — a different key set per step, which no deployment can have.
+With a genesis step, step 2 verifies a genesis `T_p` and step 3 a
+steady one: different constants, different keys; and so on. The way
+out is Halo's and Pickles': the verified proof's key commitments are
+*public inputs* of the verifying circuit (≈ 50 points, 100 cells per
+verified proof, which the decider checks against the deployment's
+keys), not constants; then the two circuits' *structures* fix each
+other but their keys do not, and one key set serves every step. The
+base case then needs a *dummy previous proof* — valid-looking bytes
+(points on the curve, scalars) of no proof at all — and a `base` flag
+that relaxes the one hard check the group side has on it, the final
+identity (`(1 − base) · Σ = 0`); the field side asserts nothing of its
+own (it only computes the scalars the group side uses), and the claims
+a dummy opened are the trivial one `(G_0, 0)`. The decider knows step 1
+is the base. Cost: the key commitments as public inputs add ≈ 100
+cells to each `T_q` and `T_p` instance per verified proof. This is the
+next thing to build; until then the chain exists only step by step with
+keys made after the fact, as its tests do.
+
 ## 4. What this study decides
 
 * **Now, no profile change:** batch verification in the indexer (§2),
