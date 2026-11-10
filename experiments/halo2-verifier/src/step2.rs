@@ -31,6 +31,11 @@ pub fn bind<F: PrimeField>(
 ) -> Result<(), Error> {
     let two_128 = ch.constant(l, F::from_u128(1u128 << 64).square())?;
     for (cell, m) in cells.iter().zip(links) {
+        if m.is_empty() {
+            // a value this side binds by other means (an evaluation under
+            // the split transcript, bound by the sponge)
+            continue;
+        }
         let limbs: Vec<_> = m
             .iter()
             .flat_map(|i| instance_values[offset + *i].iter().cloned())

@@ -17,6 +17,7 @@ pub mod step;
 pub mod step2;
 pub mod step3;
 pub mod step4;
+pub mod step5;
 pub mod transcript;
 pub mod verifier;
 pub mod verifier_split;

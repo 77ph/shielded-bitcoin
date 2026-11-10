@@ -118,6 +118,18 @@ impl World {
         input: Option<(NotePlaintext, Fp, u64, u64)>, // note, h_body_create, j, pos
         outputs: [(sba_core::address::PaymentAddress, u64); 2],
     ) -> TransferEnvelope {
+        self.transfer_full(idx, h_anchor, input, outputs).0
+    }
+
+    /// [`transfer`](Self::transfer) with the circuit's statement and witness
+    /// too (for proving the same transfer again, under another transcript).
+    pub fn transfer_full(
+        &mut self,
+        idx: &Indexer,
+        h_anchor: u32,
+        input: Option<(NotePlaintext, Fp, u64, u64)>,
+        outputs: [(sba_core::address::PaymentAddress, u64); 2],
+    ) -> (TransferEnvelope, TransferStatement, TransferWitness) {
         let size = idx.state.size_at(h_anchor).expect("anchor replayed");
         let r_anchor = idx.root_at(h_anchor).unwrap();
         let (_, a_dummy) = self.alice.ivk.find_address(5);
@@ -185,6 +197,6 @@ impl World {
             outputs: outs,
         };
         let proof = self.params.prove(&st, &w, &mut self.rng).unwrap();
-        TransferEnvelope { body, proof }
+        (TransferEnvelope { body, proof }, st, w)
     }
 }

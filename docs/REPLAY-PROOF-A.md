@@ -761,9 +761,17 @@ and the multi-point evaluations, squeezes `x_4` likewise, absorbs
 `ξ, z, u_j, c, f` — and outputs the 19 claimed scalars in place of the
 93 combined ones: 128 public inputs (109 in, 19 out), **4 451 rows,
 k = 13**; a changed evaluation moves `x_1` and is refused, so the
-evaluations never cross and are bound all the same. Next: the step with
-both split sides — `T_q` of `SplitCircuit`s, `T_p`'s group side over an
-instance of `64 n`, the split field sides linked to it.
+evaluations never cross and are bound all the same. **The step with
+both sides split** (`step5.rs`, the same day, the indexer's two-transfer
+block with its transfers proven again under the split transcript from
+the same statements and witnesses) [measured]: `T_q` of two
+`SplitCircuit`s — **128 public inputs** in place of 442, 38 684 rows,
+k = 16 (keygen 22 s, prove 8.8 s on the laptop, 5 024 bytes); `T_p` with
+the `p` group side of that `T_q`, the two split field sides (their
+evaluations bound by their sponges, their challenges and claimed
+scalars linked) and the three-slot relation — **560 public inputs** in
+place of 874, k = 17 with the relation's 110 464 rows still the maximum.
+On the wire that is ≈ 36 KB for the block in place of 57.
 
 ### 3.7 The batch relation in `T_p` [design]
 
