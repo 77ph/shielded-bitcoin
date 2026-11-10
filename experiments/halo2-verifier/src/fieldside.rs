@@ -278,3 +278,98 @@ mod opened_tests {
             .is_err());
     }
 }
+
+#[cfg(test)]
+mod split_tests {
+    use super::fp::*;
+    use crate::split::{capture_split, SplitWrite};
+    use crate::verifier::q::VerifierCircuit;
+    use ff::Field;
+    use halo2_proofs::dev::MockProver;
+    use halo2_proofs::plonk;
+    use halo2_proofs::poly::commitment::Params;
+    use pasta_curves::vesta;
+    use rand::rngs::StdRng;
+    use rand::SeedableRng;
+    use sba_circuit::{TransferCircuit, K};
+    use sba_primitives::Fp;
+
+    /// The field side under the split transcript (§3.6): the evaluations
+    /// absorbed into this side's sponge, `x_1 x_2 x_4` squeezed and matched,
+    /// the 19 claimed scalars as outputs.
+    #[test]
+    fn the_field_side_under_the_split_transcript() {
+        let (st, w) = crate::sample::sample();
+        let params: Params<vesta::Affine> = Params::new(K);
+        let vk = plonk::keygen_vk(&params, &TransferCircuit::default()).unwrap();
+        let pk = plonk::keygen_pk(&params, vk.clone(), &TransferCircuit::default()).unwrap();
+        let circuit = TransferCircuit {
+            statement: Some(st.clone()),
+            witness: Some(w),
+            negate_g_d: false,
+        };
+        let instance = st.to_field_elements();
+        let mut tr = SplitWrite::init(vec![]);
+        plonk::create_proof(
+            &params,
+            &pk,
+            &[circuit],
+            &[&[&instance[..]]],
+            &mut StdRng::seed_from_u64(81),
+            &mut tr,
+        )
+        .unwrap();
+        let proof = tr.finalize();
+        let (cap, _froms) = capture_split(&params, &vk, &instance, &proof).unwrap();
+        let (_, sources) = VerifierCircuit::shape(
+            &cap,
+            &params,
+            vk.fixed_commitments(),
+            vk.permutation_commitments(),
+        );
+        let (mut structure, shadow) = Structure::build(&params, &vk, &cap, &sources);
+        structure.split = true;
+        let circuit = FieldSideCircuit {
+            structure,
+            shadow: Some(shadow),
+        };
+        let pi = circuit.instance();
+        let n_in = st_transcript_len(&circuit.structure);
+        println!(
+            "split field side: {} public inputs ({n_in} inputs, {} claimed)",
+            pi.len(),
+            pi.len() - n_in
+        );
+        assert_eq!(pi.len() - n_in, 19);
+        let mut k = 13;
+        let prover = loop {
+            match MockProver::run(k, &circuit, vec![pi.clone()]) {
+                Ok(p) => break p,
+                Err(_) => {
+                    k += 1;
+                    assert!(k <= 18);
+                }
+            }
+        };
+        prover.assert_satisfied();
+        println!("split field side fits k = {k}");
+        println!(
+            "{:?}",
+            halo2_proofs::dev::CircuitCost::<vesta::Point, _>::measure(k, &circuit)
+        );
+        // an evaluation changed: the sponge's x_1 no longer matches
+        let mut bad = pi.clone();
+        bad[7] += Fp::ONE;
+        assert!(MockProver::run(k, &circuit, vec![bad])
+            .unwrap()
+            .verify()
+            .is_err());
+        // a claimed scalar changed
+        let mut bad = pi.clone();
+        bad[n_in + 1] += Fp::ONE;
+        assert!(MockProver::run(k, &circuit, vec![bad])
+            .unwrap()
+            .verify()
+            .is_err());
+    }
+}

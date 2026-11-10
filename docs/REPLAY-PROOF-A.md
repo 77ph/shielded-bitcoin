@@ -751,10 +751,19 @@ inputs** (the key's representative, the 17-element statement, 25
 challenges, 19 claimed scalars, `G`) in place of 221, 61 permutations
 in place of 101, 112 multiplications, **19 343 rows** in place of
 ≈ 33 000, so k = 15 with room (2^14 is 16 384). A wrong witnessed
-challenge or claimed scalar is refused. Next: the field side over `Fp`
-with the second sponge (the evaluations absorbed there, `x_1, x_2, x_4`
-squeezed and matched, the 19 claimed scalars checked), then the step's
-`T_p` group side over a `T_q` whose instance is a quarter of today's.
+challenge or claimed scalar is refused. **The field side under it**
+(`fieldside_body.rs`, `Structure::split`, the same day) [measured]: the
+`Fp` circuit runs the scalars' sponge over its inputs in the rule's
+order — the key's representative, the five challenges the points
+produced, the 83 evaluations, then squeezes `x_1` and `x_2` and
+constrains them equal to the values the group side used, absorbs `x_3`
+and the multi-point evaluations, squeezes `x_4` likewise, absorbs
+`ξ, z, u_j, c, f` — and outputs the 19 claimed scalars in place of the
+93 combined ones: 128 public inputs (109 in, 19 out), **4 451 rows,
+k = 13**; a changed evaluation moves `x_1` and is refused, so the
+evaluations never cross and are bound all the same. Next: the step with
+both split sides — `T_q` of `SplitCircuit`s, `T_p`'s group side over an
+instance of `64 n`, the split field sides linked to it.
 
 ### 3.7 The batch relation in `T_p` [design]
 

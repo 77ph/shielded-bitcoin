@@ -21,7 +21,7 @@ use halo2_gadgets::poseidon::primitives::{Absorbing, Domain, P128Pow5T3, Spec, S
 use halo2_gadgets::poseidon::{
     PaddedWord, PoseidonInstructions, PoseidonSpongeInstructions, Pow5Chip, Pow5Config,
 };
-use halo2_proofs::circuit::{AssignedCell, Layouter};
+use halo2_proofs::circuit::{AssignedCell, Layouter, Value};
 use halo2_proofs::plonk::{
     Advice, Column, ConstraintSystem, Constraints, Error, Expression, Selector, TableColumn,
 };
@@ -72,6 +72,8 @@ pub struct TranscriptConfig<F: TranscriptField> {
     /// `[s0, c, h]` of the challenge split, one row.
     pub split: [Column<Advice>; 3],
     q_split: Selector,
+    /// The 10-bit table the range checks look up (shared or own).
+    pub table: TableColumn,
 }
 
 impl<F: TranscriptField> TranscriptConfig<F> {
@@ -101,7 +103,21 @@ impl<F: TranscriptField> TranscriptConfig<F> {
             range,
             split,
             q_split,
+            table: table_idx,
         }
+    }
+
+    /// Fill the 10-bit table (once per circuit, by whoever owns it).
+    pub fn assign_table(&self, layouter: &mut impl Layouter<F>) -> Result<(), Error> {
+        layouter.assign_table(
+            || "10-bit table",
+            |mut t| {
+                for i in 0..(1 << 10) {
+                    t.assign_cell(|| "idx", self.table, i, || Value::known(F::from(i as u64)))?;
+                }
+                Ok(())
+            },
+        )
     }
 
     /// `v < 2^(10·words + short)`: `words` 10-bit words through the table

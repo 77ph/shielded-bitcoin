@@ -167,7 +167,7 @@ impl Circuit<vesta::Scalar> for StepPN {
         let ex = self.group.synthesize_core(&cfg.group, &mut l, 0)?;
         let mut ch = FieldChip::new(&cfg.field);
         for (field, links, offset) in &self.fields {
-            let (inputs, outputs) = field.synthesize_core(&cfg.field, None, &mut l)?;
+            let (inputs, outputs) = field.synthesize_core(&cfg.field, None, None, &mut l)?;
             let cells: Vec<_> = inputs.into_iter().chain(outputs).collect();
             bind(&mut ch, &mut l, &cells, links, &ex.instance_values, *offset)?;
         }

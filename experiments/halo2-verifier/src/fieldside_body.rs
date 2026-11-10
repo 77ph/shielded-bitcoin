@@ -25,6 +25,7 @@ use halo2_proofs::poly::commitment::Params;
 use halo2_proofs::poly::Rotation;
 
 use crate::capture::{Capture, Event};
+use crate::transcript::{Transcript, TranscriptConfig};
 use field::{Cell, FieldChip, FieldConfig};
 use shadow::{CRef, Commitment, Shadow};
 use group::Source;
@@ -95,6 +96,10 @@ pub struct Structure {
     pub omega: F,
     /// Challenges per opened claim.
     pub opened_k: Vec<usize>,
+    /// The split transcript (§3.6): the evaluations are absorbed into this
+    /// side's sponge and `x_1, x_2, x_4` squeezed from it; the outputs are
+    /// the 19 claimed scalars instead of the combined ones.
+    pub split: bool,
 }
 
 fn rot_of(
@@ -302,6 +307,7 @@ impl Structure {
             outputs,
             omega: domain.get_omega(),
             opened_k: cap.opened.iter().map(|u| u.len()).collect(),
+            split: false,
         };
         (st, sh)
     }
@@ -322,6 +328,7 @@ impl std::fmt::Debug for FieldSideCircuit {
 #[derive(Clone, Debug)]
 pub struct FieldSideConfig {
     pub field: FieldConfig,
+    pub sponge: TranscriptConfig<F>,
     pub instance: Column<Instance>,
 }
 
@@ -332,6 +339,10 @@ impl FieldSideCircuit {
         let sh = self.shadow.as_ref().expect("values");
         let t = &sh.typed;
         let mut v = transcript_order(t);
+        if self.structure.split {
+            v.extend(claimed_scalars(sh));
+            return v;
+        }
         let merged = sh.merged();
         let n_out = self.structure.outputs.len();
         // the outputs, in source order: sum of the terms' scalars
@@ -343,6 +354,15 @@ impl FieldSideCircuit {
         v.push(sh.u_scalar);
         v
     }
+}
+
+/// The split transcript's claimed scalars, natively:
+/// `x^n, −v, −c, −f, −c·b·z, u_1^{−1} … u_k^{−1}`.
+pub fn claimed_scalars(sh: &Shadow) -> Vec<F> {
+    let t = &sh.typed;
+    let mut v = vec![sh.xn, -sh.v, -t.c, -t.f, sh.u_scalar];
+    v.extend(t.rounds.iter().map(|(_, _, u)| u.invert().unwrap()));
+    v
 }
 
 /// Challenges and evaluations as the transcript produced them.
@@ -425,9 +445,14 @@ impl Circuit<F> for FieldSideCircuit {
 
     fn configure(meta: &mut ConstraintSystem<F>) -> FieldSideConfig {
         let field = FieldSideCircuit::configure_field(meta);
+        let sponge = FieldSideCircuit::configure_sponge(meta, &field);
         let instance = meta.instance_column();
         meta.enable_equality(instance);
-        FieldSideConfig { field, instance }
+        FieldSideConfig {
+            field,
+            sponge,
+            instance,
+        }
     }
 
     fn synthesize(
@@ -435,7 +460,10 @@ impl Circuit<F> for FieldSideCircuit {
         cfg: FieldSideConfig,
         mut layouter: impl Layouter<F>,
     ) -> Result<(), Error> {
-        self.synthesize_core(&cfg.field, Some(cfg.instance), &mut layouter)
+        if self.structure.split {
+            cfg.sponge.assign_table(&mut layouter)?;
+        }
+        self.synthesize_core(&cfg.field, Some(&cfg.sponge), Some(cfg.instance), &mut layouter)
             .map(|_| ())
     }
 }
@@ -453,13 +481,37 @@ impl FieldSideCircuit {
         FieldConfig::configure(meta, advices, fixed)
     }
 
+    /// This side's sponge for the split transcript: the Poseidon chip on
+    /// its own columns, the challenge split on the field chip's `a, b, c`.
+    pub fn configure_sponge(meta: &mut ConstraintSystem<F>, field: &FieldConfig) -> TranscriptConfig<F> {
+        use halo2_gadgets::poseidon::{Pow5Chip, primitives as poseidon};
+        let state: [Column<Advice>; 3] = core::array::from_fn(|_| meta.advice_column());
+        let sbox = meta.advice_column();
+        let running = meta.advice_column();
+        for c in state.iter().chain([&sbox, &running]) {
+            meta.enable_equality(*c);
+        }
+        let rc: [Column<Fixed>; 6] = core::array::from_fn(|_| meta.fixed_column());
+        let table = meta.lookup_table_column();
+        let poseidon = Pow5Chip::configure::<poseidon::P128Pow5T3>(
+            meta,
+            state,
+            sbox,
+            rc[0..3].try_into().unwrap(),
+            rc[3..6].try_into().unwrap(),
+        );
+        TranscriptConfig::configure(meta, poseidon, running, table, [field.a, field.b, field.c])
+    }
+
     /// The whole circuit; with an instance column its inputs and outputs
     /// are exposed as public inputs, without one they are returned for the
     /// embedding circuit to bind: (the inputs in transcript order, the
-    /// output scalars then `W`'s and `U`'s).
+    /// output scalars then `W`'s and `U`'s — or, split, the 19 claimed
+    /// scalars). The sponge configuration is needed when split.
     pub fn synthesize_core(
         &self,
         field: &FieldConfig,
+        sponge: Option<&TranscriptConfig<F>>,
         instance: Option<Column<Instance>>,
         layouter: &mut impl Layouter<F>,
     ) -> Result<(Vec<Cell>, Vec<Cell>), Error> {
@@ -536,6 +588,49 @@ impl FieldSideCircuit {
         let f = take(1).remove(0);
         let opened_u: Vec<Vec<Cell>> = st.opened_k.iter().map(|k| take(*k)).collect();
         assert!(it.next().is_none());
+
+        if st.split {
+            // the scalars' sponge: the key's representative, the points'
+            // challenges as they came, the evaluations; x_1, x_2 squeezed
+            // here must be the inputs; x_3 absorbed; the multi-point
+            // evaluations; x_4 squeezed; ξ, z, the u_j absorbed; c, f absorbed
+            let cfg = sponge.expect("the split transcript needs the sponge");
+            let mut sp = Transcript::new(cfg, l)?;
+            let absorb = |sp: &mut Transcript<F>, l: &mut _, cells: &[Cell]| -> Result<(), Error> {
+                for c in cells {
+                    sp.absorb(l, c.clone())?;
+                }
+                Ok(())
+            };
+            absorb(&mut sp, l, &cells[..1])?; // vk_repr
+            absorb(&mut sp, l, &[theta.clone(), beta.clone(), gamma.clone(), y.clone(), x.clone()])?;
+            absorb(&mut sp, l, &instance_evals)?;
+            absorb(&mut sp, l, &advice_evals)?;
+            absorb(&mut sp, l, &fixed_evals)?;
+            absorb(&mut sp, l, &[random_eval.clone()])?;
+            absorb(&mut sp, l, &perm_common)?;
+            for (e, n, last) in &perm_sets {
+                absorb(&mut sp, l, &[e.clone(), n.clone()])?;
+                if let Some(last) = last {
+                    absorb(&mut sp, l, &[last.clone()])?;
+                }
+            }
+            for ev in &lookup_evals {
+                absorb(&mut sp, l, ev)?;
+            }
+            let (_, x_1s) = sp.squeeze(l)?;
+            ch.assert_equal(l, &x_1s, &x_1)?;
+            let (_, x_2s) = sp.squeeze(l)?;
+            ch.assert_equal(l, &x_2s, &x_2)?;
+            absorb(&mut sp, l, &[x_3.clone()])?;
+            absorb(&mut sp, l, &multiopen_u)?;
+            let (_, x_4s) = sp.squeeze(l)?;
+            ch.assert_equal(l, &x_4s, &x_4)?;
+            absorb(&mut sp, l, &[xi.clone(), z.clone()])?;
+            absorb(&mut sp, l, &u)?;
+            absorb(&mut sp, l, &[c.clone(), f.clone()])?;
+            eprintln!("field side sponge: {} permutations", sp.permutations);
+        }
 
         // x^n and (x^n - 1)
         let mut xn = x.clone();
@@ -844,7 +939,7 @@ impl FieldSideCircuit {
             .iter()
             .map(|uj| ch.invert(l, uj))
             .collect::<Result<_, _>>()?;
-        for terms in &st.outputs {
+        for terms in st.outputs.iter().filter(|_| !st.split) {
             let mut sum: Option<Cell> = None;
             for term in terms {
                 let s = match term {
@@ -880,12 +975,23 @@ impl FieldSideCircuit {
         let w_s = ch.neg(l, &f)?;
         let cb = ch.mul(l, &neg_c, &b)?;
         let u_s = ch.mul(l, &cb, &z)?;
-        if let Some(col) = instance {
-            l.constrain_instance(w_s.cell(), col, row)?;
-            l.constrain_instance(u_s.cell(), col, row + 1)?;
+        if st.split {
+            // the claimed scalars: x^n, −v, −c, −f, −c·b·z, the u_j^{−1}
+            outs = vec![xn.clone(), neg_v.clone(), neg_c.clone(), w_s, u_s];
+            outs.extend(u_inv.iter().cloned());
+            if let Some(col) = instance {
+                for (i, o) in outs.iter().enumerate() {
+                    l.constrain_instance(o.cell(), col, row + i)?;
+                }
+            }
+        } else {
+            if let Some(col) = instance {
+                l.constrain_instance(w_s.cell(), col, row)?;
+                l.constrain_instance(u_s.cell(), col, row + 1)?;
+            }
+            outs.push(w_s);
+            outs.push(u_s);
         }
-        outs.push(w_s);
-        outs.push(u_s);
         eprintln!("field side rows: {}", ch.rows);
         Ok((cells, outs))
     }
