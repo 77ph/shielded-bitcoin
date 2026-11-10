@@ -261,3 +261,175 @@ mod tests {
         }
     }
 }
+
+/// A transcript that reads no proof: every point and scalar it would read
+/// is drawn at random (valid points, random scalars) and recorded, so that
+/// `verify_proof` run over it produces a capture of exactly the *shape* a
+/// proof of `vk` has — the events, the commitments, the point sets — with
+/// no proof behind it. The chain's circuits are shaped from such captures
+/// before any real proof exists, and the base step's "previous proof" is
+/// one (§3.8).
+pub struct FakeRead<C: Limbs, R: rand::RngCore>
+where
+    C::Base: PoseidonField,
+{
+    sponge: crate::native::Sponge<C>,
+    rng: R,
+    pub events: Vec<Event<C>>,
+    /// The bytes a real proof would have carried: the points and scalars
+    /// in order (a dummy proof of the right shape).
+    pub bytes: Vec<u8>,
+}
+
+impl<C: Limbs, R: rand::RngCore> FakeRead<C, R>
+where
+    C::Base: PoseidonField,
+{
+    pub fn new(rng: R) -> Self {
+        FakeRead {
+            sponge: crate::native::Sponge::default(),
+            rng,
+            events: Vec::new(),
+            bytes: Vec::new(),
+        }
+    }
+}
+
+impl<C: Limbs, R: rand::RngCore> Transcript<C, Challenge<C>> for FakeRead<C, R>
+where
+    C::Base: PoseidonField,
+    C::Curve: group::Group<Scalar = C::Scalar>,
+{
+    fn squeeze_challenge(&mut self) -> Challenge<C> {
+        let c = Challenge::new(&self.sponge.squeeze());
+        self.events.push(Event::Squeeze(c.get_scalar()));
+        c
+    }
+    fn common_point(&mut self, point: C) -> io::Result<()> {
+        self.events.push(Event::CommonPoint(point));
+        self.sponge.absorb_point(point)
+    }
+    fn common_scalar(&mut self, scalar: C::Scalar) -> io::Result<()> {
+        self.events.push(Event::CommonScalar(scalar));
+        self.sponge.absorb_scalar(scalar);
+        Ok(())
+    }
+}
+
+impl<C: Limbs, R: rand::RngCore> TranscriptRead<C, Challenge<C>> for FakeRead<C, R>
+where
+    C::Base: PoseidonField,
+    C::Curve: group::Group<Scalar = C::Scalar>,
+{
+    fn read_point(&mut self) -> io::Result<C> {
+        use group::{Curve, Group};
+        let p = (C::Curve::generator() * C::Scalar::random(&mut self.rng)).to_affine();
+        self.bytes.extend_from_slice(p.to_bytes().as_ref());
+        self.events.push(Event::ReadPoint(p));
+        self.sponge.absorb_point(p)?;
+        Ok(p)
+    }
+    fn read_scalar(&mut self) -> io::Result<C::Scalar> {
+        let s = C::Scalar::random(&mut self.rng);
+        self.bytes
+            .extend_from_slice(ff::PrimeField::to_repr(&s).as_ref());
+        self.events.push(Event::ReadScalar(s));
+        self.sponge.absorb_scalar(s);
+        Ok(s)
+    }
+}
+
+/// The capture a proof of `vk` over `instance` *would* have, with no
+/// proof: random points and scalars of the right shape (and the dummy
+/// proof's bytes). `claims` are the claims such a proof would open.
+pub fn fake_capture<C: Limbs, R: rand::RngCore>(
+    params: &Params<C>,
+    vk: &VerifyingKey<C>,
+    instance: &[C::Scalar],
+    claims: &[Claim<C>],
+    rng: R,
+) -> Result<(Capture<C>, Vec<u8>), Error>
+where
+    C::Base: PoseidonField,
+    C::Curve: group::Group<Scalar = C::Scalar>,
+{
+    let mut transcript = FakeRead::<C, R>::new(rng);
+    let out = plonk::verify_proof_with_openings(
+        params,
+        vk,
+        Deferred(params),
+        &[&[instance]],
+        &mut transcript,
+        claims,
+    )?;
+    let (g_scalars, w_scalar, u_scalar, other) = out.msm.fingerprint_terms();
+    let mut terms: Vec<(C::Scalar, C)> = other
+        .into_iter()
+        .map(|(s, x, y)| (s, C::from_xy(x, y).unwrap()))
+        .collect();
+    if let Some(gs) = g_scalars {
+        let g = params.get_g();
+        for (i, s) in gs.iter().enumerate() {
+            if !bool::from(s.is_zero()) {
+                terms.push((*s, g[i]));
+            }
+        }
+    }
+    Ok((
+        Capture {
+            instance: instance.to_vec(),
+            events: transcript.events,
+            terms,
+            w_scalar: w_scalar.unwrap_or(C::Scalar::ZERO),
+            u_scalar: u_scalar.unwrap_or(C::Scalar::ZERO),
+            g: out.g,
+            u: out.u,
+            opened: claims.iter().map(|c| c.u.clone()).collect(),
+        },
+        transcript.bytes,
+    ))
+}
+
+#[cfg(test)]
+mod fake_tests {
+    use super::*;
+    use crate::verifier::tests_support::real;
+    use halo2_proofs::plonk;
+    use pasta_curves::vesta;
+    use rand::SeedableRng;
+    use rand::rngs::StdRng;
+
+    /// A fake capture has a real one's shape (events by kind, terms), its
+    /// bytes read back as a proof of that shape, and its sum is not the
+    /// identity.
+    #[test]
+    fn a_fake_capture_has_the_real_shape() {
+        use group::Curve;
+        use group::prime::PrimeCurveAffine;
+        let (params, vk, cap) = real();
+        let (fake, bytes) =
+            fake_capture(&params, &vk, &cap.instance, &[], StdRng::seed_from_u64(1)).unwrap();
+        assert_eq!(fake.events.len(), cap.events.len());
+        for (a, b) in fake.events.iter().zip(&cap.events) {
+            assert_eq!(std::mem::discriminant(a), std::mem::discriminant(b));
+        }
+        assert_eq!(fake.terms.len(), cap.terms.len());
+        assert_eq!(fake.u.len(), cap.u.len());
+        assert!(!bool::from(fake.sum(&params).to_affine().is_identity()));
+        // the bytes are a proof of the shape: the real verifier parses them
+        // to the end (and refuses them)
+        let mut tr = crate::native::PoseidonRead::<_, vesta::Affine>::init(&bytes[..]);
+        assert!(
+            plonk::verify_proof(
+                &params,
+                &vk,
+                plonk::SingleVerifier::new(&params),
+                &[&[&cap.instance[..]]],
+                &mut tr,
+            )
+            .is_err()
+        );
+        let again = capture(&params, &vk, &cap.instance, &bytes, &[]).unwrap();
+        assert_eq!(again.events.len(), cap.events.len());
+    }
+}
