@@ -982,9 +982,20 @@ mechanism is built** (`verifier_body.rs`, `keys_as_inputs` and
 bit (288 public inputs in place of 221), a wrong key coordinate moves
 the sum and is refused, and a dummy proof — the real proof with one
 commitment's sign flipped, valid points and no proof — is refused with
-`base = 0` and accepted with `base = 1`. Next: the chain's two circuits
-with it, one key set, the dummy step 0, `prove_next` and the decider
-reading the previous claims.
+`base = 0` and accepted with `base = 1`. **The chain's `T_q`** with it
+(`chain.rs`, the same night) [measured]: the `q` group side of the next
+transfer proof, the `q` group side of `T_p(1)` with its key's
+commitments as inputs, the base bit, the opened claim's challenges and
+`T_q(1)`'s claim re-exposed, and the field side of `T_q(1)` bound to
+`T_p(1)`'s instance values — 601 public inputs, 140 846 rows, **k = 18**
+(the same rows as the second step without the mechanism); over a dummy
+`T_p(1)` of the same shape (`fake_capture`: random points and scalars,
+the real instance and claim) it is refused with `base = 0` and accepted
+with `base = 1`. The `T_p` of the chain (`StepPChain`) is written with
+`s_prev` chained to the previous `s_next`; what remains is the key
+bootstrap — the two circuits' shapes from fake captures of each other
+until they are stable, two or three key generations a side — the dummy
+step 0, `prove_next` and the decider reading the previous claims.
 
 ## 4. What this study decides
 

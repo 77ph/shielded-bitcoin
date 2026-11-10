@@ -19,6 +19,7 @@
 )]
 pub mod batch;
 pub mod capture;
+pub mod chain;
 pub mod field;
 pub mod fieldside;
 pub mod fixed;
