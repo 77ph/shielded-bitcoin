@@ -60,7 +60,17 @@ pub struct BatchCircuit {
 }
 
 impl BatchConfig {
+    /// The relation alone: with an instance column of its own.
     pub fn configure(meta: &mut ConstraintSystem<Fp>) -> Self {
+        let instance = meta.instance_column();
+        Self::configure_in(meta, instance)
+    }
+
+    /// The relation inside a step: its public values go to the step's
+    /// instance column (a proof's verifier mirror takes one instance
+    /// column; a second, empty one would commit to `W` and be mistaken
+    /// for an opened claim's `G`).
+    pub fn configure_in(meta: &mut ConstraintSystem<Fp>, instance: Column<Instance>) -> Self {
         let advices: [Column<Advice>; 11] = core::array::from_fn(|_| meta.advice_column());
         for a in &advices {
             meta.enable_equality(*a);
@@ -68,7 +78,6 @@ impl BatchConfig {
         let fixed: [Column<Fixed>; 7] = core::array::from_fn(|_| meta.fixed_column());
         let fx = fixed[0];
         meta.enable_constant(fx);
-        let instance = meta.instance_column();
         meta.enable_equality(instance);
         let table_idx = meta.lookup_table_column();
         let range = PallasLookupRangeCheckConfig::configure(meta, advices[10], table_idx);

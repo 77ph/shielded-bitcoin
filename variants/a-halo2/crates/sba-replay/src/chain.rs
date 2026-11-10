@@ -200,10 +200,11 @@ impl Circuit<vesta::Scalar> for StepPChain {
         }
     }
     fn configure(meta: &mut ConstraintSystem<Fp>) -> StepPChainConfig {
+        let group = p::VerifierCircuit::configure(meta);
         StepPChainConfig {
-            group: p::VerifierCircuit::configure(meta),
+            batch: BatchConfig::configure_in(meta, group.instance),
+            group,
             field: fieldside::fp::FieldSideCircuit::configure_field(meta),
-            batch: BatchConfig::configure(meta),
         }
     }
     fn synthesize(&self, cfg: StepPChainConfig, mut l: impl Layouter<Fp>) -> Result<(), Error> {
@@ -1152,7 +1153,7 @@ impl<'k> ChainProver<'k> {
             &k.pparams,
             &k.ppk,
             std::slice::from_ref(&sp),
-            &[&[&instance_p[..], &[]]],
+            &[&[&instance_p[..]]],
             &claims,
             OsRng,
             &mut tr,
@@ -1274,7 +1275,7 @@ impl ChainDecider<'_> {
             &k.pparams,
             &k.pvk,
             plonk::SingleVerifier::new(&k.pparams),
-            &[&[&ip[..], &[]]],
+            &[&[&ip[..]]],
             &mut tr,
             &claims,
         )
@@ -1296,6 +1297,18 @@ impl ChainDecider<'_> {
 #[cfg(test)]
 mod chain_tests {
     use super::*;
+
+    /// The verifier mirror takes one instance column: the relation shares
+    /// the step's.
+    #[test]
+    fn the_chain_circuits_have_one_instance_column() {
+        let mut cs = ConstraintSystem::<pallas::Base>::default();
+        StepPChain::configure(&mut cs);
+        assert_eq!(cs.num_instance_columns(), 1);
+        let mut cs = ConstraintSystem::<vesta::Base>::default();
+        StepQChain::configure(&mut cs);
+        assert_eq!(cs.num_instance_columns(), 1);
+    }
     use sb_common::carrier::carrier_output;
     use sba_core::envelope::{Envelope, parse_envelope};
     use sba_core::event::EventKind;

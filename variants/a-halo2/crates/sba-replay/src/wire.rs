@@ -244,7 +244,7 @@ impl Decider<'_> {
             self.pparams,
             self.pvk,
             plonk::SingleVerifier::new(self.pparams),
-            &[&[&step.instance_p[..], &[]]],
+            &[&[&step.instance_p[..]]],
             &mut tr,
             &claims,
         )
