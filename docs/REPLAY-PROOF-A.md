@@ -926,6 +926,25 @@ chain of §3.4 is in its tests, not behind `Prover`), persistence of the
 batch witnesses (the indexer keeps them in memory per run), and the
 split transcript as the default (§3.6, the owner's decision).
 
+**The chain behind the prover** [design, 10 November]. Two key sets,
+not three: a *genesis* step (`T_q(1)` the `n` group sides; `T_p(1)` the
+`n` field sides, the relation, the group side of `T_q(1)`) and a
+*steady* step (`T_q(i)` adds the group side of `T_p(i−1)` and the field
+side of `T_q(i−1)` and opens `T_q(i−1)`'s claim; `T_p(i)` adds the field
+side of `T_p(i−1)` and opens `T_p(i−1)`'s claim beside the `n` transfer
+claims). Step 2 would differ from the steady state only in how many
+claims `T_p(i−1)` opened (`n` against `n + 1`), so `T_p(1)` opens one
+claim more — a *dummy* claim `(G_0, u = 0)`, valid by construction
+since `s(0) = 1` and so `⟨s(0), g⟩ = G_0`, costing one query — and the
+steady keys fit from step 2 on. What the decider of step `i` needs
+beyond the two proofs: the claims they opened — the `n` transfer claims
+and `T_p(i−1)`'s for `T_p(i)`, `T_q(i−1)`'s for `T_q(i)` — all of which
+are values `T_q(i)` witnessed (the previous step's public inputs) and
+must re-expose for the client, as it re-exposes the opened claims'
+challenges today (`opened_u_slots`), plus the `G`s. Then
+`Prover::prove_next(previous: &ProvenStep, …)` and a `Decider` that
+takes the previous step's public inputs along.
+
 ## 4. What this study decides
 
 * **Now, no profile change:** batch verification in the indexer (§2),
