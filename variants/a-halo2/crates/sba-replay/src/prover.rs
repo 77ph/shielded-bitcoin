@@ -128,7 +128,7 @@ impl Keys {
     /// captures in proof order (`caps[0]` repeated when fewer are given —
     /// the shape is the same); the relation over `witness`.
     #[allow(clippy::too_many_arguments)]
-    fn step_p(
+    pub(crate) fn step_p(
         step_q: &StepQN,
         cap_q: &crate::capture::Capture<pallas::Affine>,
         outer: &Params<pallas::Affine>,
