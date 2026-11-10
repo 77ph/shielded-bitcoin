@@ -702,6 +702,36 @@ a 128-bit variable-base multiplication worth adding to the chip) and
 of `fieldside.rs` (the second sponge and the challenge derivation).
 Decided for later: the structure of the step comes first, then this.
 
+**The rule, worked out (10 November 2026)** [design]. Two sponges: one
+over `Fq` that absorbs the points, one over `Fp` that absorbs the
+scalars — natively, no embedding either way. A challenge is squeezed
+from the sponge that absorbed last, and every challenge, once produced,
+is absorbed into the *other* sponge before that one absorbs anything
+else, so each sponge's state depends on the whole history through the
+challenges (128-bit values that fit both fields). For a transfer proof
+that gives: `θ, β, γ, y, x` from the `Fq` sponge (points only so far);
+the evaluations into the `Fp` sponge, seeded by `x`; `x_1, x_2` from
+`Fp`; `q'` into `Fq` after `x_1, x_2`; `x_3` from `Fq`; the multi-point
+evaluations into `Fp` after `x_3`; `x_4` from `Fp`; the `s`-polynomial
+commitment into `Fq` after `x_4`; `ξ, z` from `Fq`; `L_j, R_j` into
+`Fq`, `u_j` from `Fq`; `c, f` into `Fp`. The group side (over `Fq`)
+then absorbs no evaluation and squeezes every challenge but `x_1, x_2,
+x_4`, which it takes as witnesses and absorbs; the field side (over
+`Fp`) absorbs the evaluations, takes the `Fq`-derived challenges as
+inputs and squeezes `x_1, x_2, x_4` itself — the binding of the
+evaluations is the equality of those three with what the group side
+used. The group side combines the commitments by Horner's rule in
+`x_1` within a point set and in `x_4` across sets (the same number of
+multiplications as now, by 128-bit scalars — a 128-bit variable-base
+multiplication in the chip would halve each), and the quotient chunks
+in `x^n`; what still crosses as prover-claimed values the field side
+checks is `x^n`, `−v`, `c`, `f`, `−c·b·z` and the fourteen `u_j^{−1}`.
+Per transfer proof the `T_q` instance is then ≈ 64 values — 26
+challenges, 20 claimed scalars, `G`, the 17-element statement — in
+place of 221, and `T_p`'s recomputation of it a quarter of today's.
+The transfer prover changes only in its transcript (a-0.4); the proof
+bytes do not change.
+
 ### 3.7 The batch relation in `T_p` [design]
 
 What `T_p(i)` adds to the verifier circuits is `REPLAY-PROOF.md` §4.2's
