@@ -3,8 +3,13 @@ on:
   push:
     branches: [main]
   pull_request:
+  # The recursion's mock tests, weekly (the job `recursion` below).
+  schedule:
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
 jobs:
   test:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -49,6 +54,7 @@ jobs:
   # its own job, so the paper's job keeps its length; the variant's crates
   # are unit-tested and measured in the job above, its CLI only here.
   variant-a:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -57,6 +63,7 @@ jobs:
       - run: cargo test --release -p sb-cli --test variant_a_e2e
   # The static binary (README "Static build") must keep building.
   static:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -69,3 +76,31 @@ jobs:
         env:
           CC_x86_64_unknown_linux_musl: musl-gcc
       - run: file target/x86_64-unknown-linux-musl/release/sb && target/x86_64-unknown-linux-musl/release/sb --version
+  # The accumulated replay proof's recursion end to end in the mock prover
+  # (docs/REPLAY-PROOF-A.md §3.3–3.8), weekly and on demand: the `#[ignore]`d
+  # tests of `sba-replay` that fit a hosted runner (k ≤ 17, minutes each) —
+  # one transfer proof verified in both circuits, the group and field sides
+  # over real T_q/T_p proofs, the batch relation inside a step, a block of
+  # two transfers, the split transcript's step with its negative link check.
+  # The k = 18 tests (the closed loop, the fragment prover, the chain) need
+  # about 15 GB and an hour: they run on the server, with figures in the study.
+  recursion:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: >-
+          cargo test -p sba-replay --release -- --ignored --nocapture --test-threads 1
+          zs_and_us_of_one_point
+          prove_the_field_side
+          the_field_side_of_a_tq_proof_verifies_in_circuit
+          the_field_side_of_a_tp_proof_with_an_opened_claim
+          the_p_group_side_of_a_tq_proof_verifies_in_circuit
+          the_q_group_side_of_a_tp_proof_verifies_in_circuit
+          one_transfer_proof_verified_recursively
+          a_replayed_blocks_relation_inside_the_step
+          a_block_with_two_transfers_in_one_step
+          two_transfers_both_sides_split
