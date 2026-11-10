@@ -221,6 +221,7 @@ mod tests {
         plonk::VerifyingKey<vesta::Affine>,
         Vec<Capture<vesta::Affine>>,
         Fp,
+        sba_core::batch::StateOpening,
     ) {
         let mut w = World::new();
         let (_, alice0) = w.alice.ivk.find_address(0);
@@ -261,7 +262,8 @@ mod tests {
         assert_eq!((r.accepted, r.rejected), (3, 0));
         let witness = idx.state.batches[1].clone();
         let params = idx.batch_params();
-        let s_next = idx.state.opening(idx.next_height()).digest();
+        let opening_after = idx.state.opening(idx.next_height());
+        let s_next = opening_after.digest();
         let halo_params: Params<vesta::Affine> = Params::new(K);
         let vk = plonk::keygen_vk(&halo_params, &TransferCircuit::default()).unwrap();
         let caps: Vec<Capture<vesta::Affine>> = idx
@@ -285,7 +287,15 @@ mod tests {
             })
             .collect();
         assert_eq!(caps.len(), 2);
-        (witness, params, halo_params, vk, caps, s_next)
+        (
+            witness,
+            params,
+            halo_params,
+            vk,
+            caps,
+            s_next,
+            opening_after,
+        )
     }
 
     /// `cargo test --release a_block_with_two_transfers -- --ignored --nocapture`
@@ -293,7 +303,8 @@ mod tests {
     #[test]
     #[ignore]
     fn a_block_with_two_transfers_in_one_step() {
-        let (witness, bparams, params, vk, caps, s_next) = replayed_block_with_two_transfers();
+        let (witness, bparams, params, vk, caps, s_next, opening_after) =
+            replayed_block_with_two_transfers();
         let st = witness
             .check(&bparams)
             .expect("the native relation accepts");
@@ -449,6 +460,13 @@ mod tests {
                 .verify()
                 .is_err()
         );
+        // the wire: the claims read back from T_q's public inputs are the
+        // transfer proofs' own
+        let read_claims = crate::wire::claims_of(&step_q, K as usize, &instance_q).unwrap();
+        for (c, cap) in read_claims.iter().zip(&caps) {
+            assert_eq!(c.g, cap.g);
+            assert_eq!(c.u, cap.u);
+        }
         if std::env::var("SB_PROVE_STEP4").is_err() {
             println!("SB_PROVE_STEP4 unset: stopping before the real T_p proof");
             return;
@@ -501,5 +519,40 @@ mod tests {
             "decider (both): {:.1} ms",
             t.elapsed().as_secs_f64() * 1000.0
         );
+        // the proven step on the wire, decided by a client from its state digest
+        let step = crate::wire::ProvenStep {
+            height: 1001,
+            slots: witness
+                .slots
+                .iter()
+                .map(|s| s.as_ref().map(|s| s.statement))
+                .collect(),
+            opening_after,
+            instance_q: instance_q.clone(),
+            proof_q: proof_q.clone(),
+            instance_p: instance_p.clone(),
+            proof_p: proof_p.clone(),
+        };
+        let bytes = step.to_bytes();
+        println!("proven step on the wire: {} bytes", bytes.len());
+        let back = crate::wire::ProvenStep::from_bytes(&bytes).unwrap();
+        let decider = crate::wire::Decider {
+            outer: &outer,
+            ovk: &ovk,
+            pparams: &pparams,
+            pvk: &pvk,
+            step_q: &step_q,
+            transfer_k: K as usize,
+        };
+        let t = std::time::Instant::now();
+        let s_next_got = decider.decide(&back, witness.prev.digest()).unwrap();
+        println!("decide: {:.1} ms", t.elapsed().as_secs_f64() * 1000.0);
+        assert_eq!(s_next_got, s_next);
+        assert!(decider
+            .decide(&back, witness.prev.digest() + Fp::ONE)
+            .is_err());
+        let mut tampered = back.clone();
+        tampered.slots.swap(0, 1);
+        assert!(decider.decide(&tampered, witness.prev.digest()).is_err());
     }
 }
