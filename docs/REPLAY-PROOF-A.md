@@ -730,7 +730,15 @@ Per transfer proof the `T_q` instance is then ≈ 64 values — 26
 challenges, 20 claimed scalars, `G`, the 17-element statement — in
 place of 221, and `T_p`'s recomputation of it a quarter of today's.
 The transfer prover changes only in its transcript (a-0.4); the proof
-bytes do not change.
+bytes do not change. **Built natively** (`experiments/halo2-verifier/src/split.rs`,
+10 November): a transfer proof made under the two sponges verifies
+under them, its 4 416 bytes unchanged, its challenges come from the
+sponges exactly as listed above (five from the points, `x_1 x_2` from
+the scalars, `x_3` points, `x_4` scalars, then `ξ z u_1 … u_14` points),
+the a-0.3 verifier refuses it and a flipped bit fails. The key's
+representative goes into both sponges so that every challenge depends
+on the key. Next: the group side over `Fq` absorbing no evaluation and
+combining by Horner, the field side over `Fp` with the second sponge.
 
 ### 3.7 The batch relation in `T_p` [design]
 
