@@ -771,7 +771,18 @@ the `p` group side of that `T_q`, the two split field sides (their
 evaluations bound by their sponges, their challenges and claimed
 scalars linked) and the three-slot relation — **560 public inputs** in
 place of 874, k = 17 with the relation's 110 464 rows still the maximum.
-On the wire that is ≈ 36 KB for the block in place of 57.
+Proven on the server: `T_p` keygen 185 s, **prove 131 s, 9 760 bytes**,
+the decider 2.7 s for both, **38 484 bytes on the wire** in place of
+57 076, 13.1 GB for the run. The honest reading: the split cuts what
+crosses (and so the wire, and `T_p`'s recomputation of `T_q`'s instance)
+by a third to two thirds, but `T_p`'s proof grows and its proving slows
+(84 → 131 s), because the split field sides bring their sponge's
+columns into `T_p` — 83 columns in all, each a commitment and an
+evaluation — while the rows are still the relation's. The gain is on
+the client's side (the wire, the decider's instance) and in `T_q`;
+the prover pays for it. Which way to adopt it — as a-0.4 for the
+transfer proofs (and the recursion's own proofs by the mirrored rule)
+or not — is the owner's decision; the numbers are these.
 
 ### 3.7 The batch relation in `T_p` [design]
 
