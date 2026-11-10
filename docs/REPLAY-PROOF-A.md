@@ -635,10 +635,13 @@ the decider reads them by the `q` group side's layout
 (`claims_of`), then verifies `T_q` natively in full, `T_p` with those
 claims, and checks `T_p`'s last three public values — `s_prev` is the
 client's own state digest, `D` is the client's own digest of the
-slots, `s_next` is the opening's digest. What does not shrink with
-recursion is `T_q`'s public inputs, `221 n` field elements (the
-crossing values, §3.6): ≈ 14 KB for `n = 2`, 57 KB for `n = 8`; the
-proofs are ≈ 5 and ≈ 8 KB. The paper's proven block
+slots, `s_next` is the opening's digest. Measured for the two-transfer
+block (the server): **57 076 bytes** on the wire — `T_q`'s 442 public
+inputs (14 KB) and proof (5 KB), `T_p`'s 877 (28 KB) and proof (8 KB),
+the three slots (1.5 KB) — read back and decided in **1.2 s**. What does
+not shrink with recursion is the public inputs, `221 n` on `T_q`'s side
+and about twice that on `T_p`'s (the crossing values, §3.6: the split
+transcript brings `T_q`'s to `64 n`). The paper's proven block
 (`REPLAY-PROOF.md` §4.5) ships, per slot, the envelope's own 192-byte
 proof instead; here the transfer proofs are not shipped at all, the
 step having verified them.
