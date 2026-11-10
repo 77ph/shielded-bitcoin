@@ -101,9 +101,14 @@ pub struct StepPN {
     /// `T_q`'s instance values, and where that part starts.
     pub fields: Vec<(FieldSideCircuit, Vec<Vec<usize>>, usize)>,
     pub batch: BatchCircuit,
-    /// Per slot: the positions among `T_q`'s instance values of the
-    /// statement it is bound to (`None` for a mint or an empty slot).
-    pub slot_links: Vec<Option<Vec<usize>>>,
+    /// Per transfer proof, the positions among `T_q`'s instance values of
+    /// its statement (the circuit's structure).
+    pub statement_positions: Vec<Vec<usize>>,
+    /// Per slot, the index of the proof it is bound to (`None` for a mint
+    /// or an empty slot): witness data; the circuit's shape does not
+    /// depend on it — a slot links to a proof through witnessed bits with
+    /// one proof per active transfer slot and one slot per proof.
+    pub slot_proof: Vec<Option<usize>>,
 }
 
 #[derive(Clone, Debug)]
@@ -149,7 +154,8 @@ impl Circuit<vesta::Scalar> for StepPN {
                 .map(|(f, l, o)| (f.without_witnesses(), l.clone(), *o))
                 .collect(),
             batch: self.batch.without_witnesses(),
-            slot_links: self.slot_links.clone(),
+            statement_positions: self.statement_positions.clone(),
+            slot_proof: vec![None; self.slot_proof.len()],
         }
     }
 
@@ -176,16 +182,74 @@ impl Circuit<vesta::Scalar> for StepPN {
             &mut l,
             Some((cfg.group.instance, ex.cells.len())),
         )?;
-        let zero = ch.constant(&mut l, Fp::ZERO)?;
-        for (slot, link) in slots.iter().zip(&self.slot_links) {
-            let Some(positions) = link else { continue };
+        // the slots' binding to the proofs' statements, by witnessed bits:
+        // link[s][p] ∈ {0, 1}; Σ_p link[s][p] = active_s · (1 − kind_s) (an
+        // active transfer slot binds to exactly one proof, a mint or an
+        // empty slot to none); Σ_s link[s][p] = 1 (every proof is some
+        // slot's); link[s][p] · (slot_s[i] − statement_p[i]) = 0
+        let known = self.batch.witness.is_some();
+        let one = ch.constant(&mut l, Fp::ONE)?;
+        let n_p = self.statement_positions.len();
+        let mut per_proof: Vec<Option<_>> = vec![None; n_p];
+        for (s, slot) in slots.iter().enumerate() {
             assert_eq!(slot.len(), SLOT_ELEMENTS);
-            for (si, sti) in SLOT_FROM_STATEMENT {
-                let cell = &ex.instance_values[positions[sti]];
-                assert_eq!(cell.len(), 1);
-                ch.assert_equal(&mut l, &slot[si], &cell[0])?;
+            let kind = &slot[SLOT_ELEMENTS - 1];
+            // active: the slot is not all zeros — its h_body is non-zero for
+            // a real statement; use the witness to say so, bound below
+            let active_v = self.batch.witness.as_ref().map(|w| w.slots[s].is_some());
+            let active = ch.witness(
+                &mut l,
+                active_v
+                    .map(|a| halo2_proofs::circuit::Value::known(Fp::from(a as u64)))
+                    .unwrap_or(halo2_proofs::circuit::Value::unknown()),
+            )?;
+            let aa = ch.mul(&mut l, &active, &active)?;
+            ch.assert_equal(&mut l, &aa, &active)?;
+            // an inactive slot is all zeros (h_body = 0); an active one has
+            // h_body ≠ 0 — bind `active` to that through an inverse witness
+            let h_body = &slot[sba_core::batch::SLOT_H_BODY];
+            let inv = ch.witness(
+                &mut l,
+                h_body.value().map(|v| v.invert().unwrap_or(Fp::ZERO)),
+            )?;
+            let hi = ch.mul(&mut l, h_body, &inv)?;
+            ch.assert_equal(&mut l, &hi, &active)?;
+            let not_kind = ch.sub(&mut l, &one, kind)?;
+            let want = ch.mul(&mut l, &active, &not_kind)?;
+            let mut row_sum: Option<_> = None;
+            for p in 0..n_p {
+                let bit_v = match (known, self.slot_proof[s]) {
+                    (true, Some(q)) => {
+                        halo2_proofs::circuit::Value::known(Fp::from((q == p) as u64))
+                    }
+                    (true, None) => halo2_proofs::circuit::Value::known(Fp::ZERO),
+                    (false, _) => halo2_proofs::circuit::Value::unknown(),
+                };
+                let bit = ch.witness(&mut l, bit_v)?;
+                let bb = ch.mul(&mut l, &bit, &bit)?;
+                ch.assert_equal(&mut l, &bb, &bit)?;
+                for (si, sti) in SLOT_FROM_STATEMENT {
+                    let cell = &ex.instance_values[self.statement_positions[p][sti]];
+                    assert_eq!(cell.len(), 1);
+                    let d = ch.sub(&mut l, &slot[si], &cell[0])?;
+                    let t = ch.mul(&mut l, &bit, &d)?;
+                    ch.assert_constant(&mut l, &t, Fp::ZERO)?;
+                }
+                row_sum = Some(match row_sum {
+                    None => bit.clone(),
+                    Some(acc) => ch.add(&mut l, &acc, &bit)?,
+                });
+                per_proof[p] = Some(match per_proof[p].take() {
+                    None => bit,
+                    Some(acc) => ch.add(&mut l, &acc, &bit)?,
+                });
             }
-            ch.assert_equal(&mut l, &slot[SLOT_ELEMENTS - 1], &zero)?;
+            if let Some(rs) = row_sum {
+                ch.assert_equal(&mut l, &rs, &want)?;
+            }
+        }
+        for col in per_proof.into_iter().flatten() {
+            ch.assert_equal(&mut l, &col, &one)?;
         }
         eprintln!("step: {} proofs, {} slots", self.fields.len(), self.batch.n);
         Ok(())
@@ -401,14 +465,13 @@ mod tests {
         }
         // transfer slots in order are the transfer proofs in order
         let mut next_transfer = 0;
-        let slot_links: Vec<Option<Vec<usize>>> = witness
+        let slot_proof: Vec<Option<usize>> = witness
             .slots
             .iter()
             .map(|s| match s {
                 Some(s) if !s.statement.mint => {
-                    let l = statement_positions[next_transfer].clone();
                     next_transfer += 1;
-                    Some(l)
+                    Some(next_transfer - 1)
                 }
                 _ => None,
             })
@@ -423,7 +486,8 @@ mod tests {
                 params: bparams,
                 witness: Some(witness.clone()),
             },
-            slot_links,
+            statement_positions,
+            slot_proof,
         };
         let instance_p = step_p.instance();
         println!(
@@ -453,7 +517,7 @@ mod tests {
         );
         // the second transfer's slot bound to the first proof's statement is refused
         let mut swapped = step_p.clone();
-        swapped.slot_links.swap(0, 1);
+        swapped.slot_proof.swap(0, 1);
         assert!(
             MockProver::run(k_p, &swapped, vec![instance_p.clone(), vec![]])
                 .unwrap()

@@ -103,6 +103,25 @@ pub struct Exposed {
 }
 
 impl VerifierCircuit {
+    /// The circuit over a capture of a proof of `vk` under `params`, its
+    /// instance values exposed one cell each (the usual first use: the
+    /// verified proof's scalars are this side's base-field elements).
+    pub fn over(params: &Params<C>, vk: &halo2_proofs::plonk::VerifyingKey<C>, cap: &Capture<C>) -> Self {
+        let (kinds, sources) =
+            Self::shape(cap, params, vk.fixed_commitments(), vk.permutation_commitments());
+        VerifierCircuit {
+            kinds,
+            sources,
+            params_w: params.get_w(),
+            params_u: params.get_u(),
+            lagrange: params.get_g_lagrange()[..cap.instance.len()].to_vec(),
+            instance_limbs: vec![1; cap.instance.len()],
+            expose_instance: true,
+            opened_u_slots: vec![],
+            capture: Some(cap.clone()),
+        }
+    }
+
     /// The structure of a capture: the event kinds and, for every term of
     /// its MSM, where the point comes from; `terms` of a later capture of
     /// the same circuit are matched to these sources by coordinates.
