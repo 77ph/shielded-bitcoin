@@ -684,7 +684,11 @@ pub struct ChainKeys {
     pub step_q: StepQChain,
     pub step_p: StepPChain,
     pub batch_params: BatchParams,
-    pub padding: (TransferStatement, Vec<u8>),
+    /// One valid transfer proof of the sample statement per fragment slot,
+    /// all distinct: the verifier's MSM merges equal points, so identical
+    /// proofs in two slots would open identical claims and `T_p`'s proof
+    /// would have one term fewer than the keys' shape.
+    pub padding: Vec<(TransferStatement, Vec<u8>)>,
     pub step0: Artifacts,
 }
 
@@ -717,11 +721,16 @@ impl ChainKeys {
         use crate::step4::{StepPN, StepQN};
         let tp = TransferParams::build().map_err(err)?;
         let (st, w) = crate::sample::sample();
-        let proof = tp.prove(&st, &w, &mut OsRng).map_err(err)?;
         let tparams: Params<vesta::Affine> = Params::new(K);
         let tvk = plonk::keygen_vk(&tparams, &TransferCircuit::default()).map_err(err)?;
-        let cap_t = capture(&tparams, &tvk, &st.to_field_elements(), &proof, &[]).map_err(err)?;
-        let caps: Vec<Capture<vesta::Affine>> = vec![cap_t.clone(); n_proofs];
+        // n proofs of the sample, distinct (see `padding`)
+        let mut padding = Vec::with_capacity(n_proofs);
+        let mut caps: Vec<Capture<vesta::Affine>> = Vec::with_capacity(n_proofs);
+        for _ in 0..n_proofs {
+            let proof = tp.prove(&st, &w, &mut OsRng).map_err(err)?;
+            caps.push(capture(&tparams, &tvk, &st.to_field_elements(), &proof, &[]).map_err(err)?);
+            padding.push((st.clone(), proof));
+        }
         let outer: Params<pallas::Affine> = Params::new(k_q);
         let pparams: Params<vesta::Affine> = Params::new(k_p);
         // placeholders of the right columns: a T_q of the transfer group
@@ -758,7 +767,7 @@ impl ChainKeys {
         let k_p = k_p as usize;
         let mut claims_p0 = claims_t.clone();
         claims_p0.push(Claim {
-            g: claims_t[0].g,
+            g: group::Curve::to_affine(&<vesta::Point as group::Group>::random(OsRng)),
             u: (1..=k_p as u64).map(Fp::from).collect(),
         });
         let (cap_p0, _) =
@@ -1020,7 +1029,7 @@ impl ChainKeys {
             step_q: sq3.without_witnesses(),
             step_p: sp3.without_witnesses(),
             batch_params,
-            padding: (st, proof),
+            padding,
             step0: Artifacts {
                 cap_q: cap_q0f,
                 cap_p: cap_p0f,
@@ -1092,7 +1101,7 @@ impl<'k> ChainProver<'k> {
         let used: Vec<bool> = (0..k.n_proofs).map(|i| i < transfers.len()).collect();
         let mut transfers = transfers.to_vec();
         while transfers.len() < k.n_proofs {
-            transfers.push(k.padding.clone());
+            transfers.push(k.padding[transfers.len()].clone());
         }
         let mut next = 0;
         let slot_proof: Vec<Option<usize>> = witness
