@@ -1458,7 +1458,9 @@ mod chain_tests {
             t.elapsed().as_secs_f64(),
             step3.to_bytes().len()
         );
+        let t = std::time::Instant::now();
         s = decider.decide(&step3, 3, s).unwrap();
+        println!("decide: {:.2} s", t.elapsed().as_secs_f64());
         assert_eq!(s, o2.digest());
         // the wrong index (base bit) and a wrong state are refused
         assert!(decider.decide(&step3, 1, o1.digest()).is_err());
