@@ -436,6 +436,18 @@ mod tests {
             "T_p (split) fits k = {k_p} (mock {:.1} s)",
             t.elapsed().as_secs_f64()
         );
+        // the links, negatively (the auditor's S7 note N3): a field side fed
+        // one evaluation the group side did not expose — its own sponge then
+        // squeezes another x_1 too — is refused by the copy constraints
+        let mut tampered = step_p.clone();
+        let sh = tampered.fields[0].0.shadow.as_mut().unwrap();
+        sh.typed.instance_evals[0] += Fp::ONE;
+        let bad = MockProver::run(k_p, &tampered, vec![instance_p.clone()]).unwrap();
+        assert!(
+            bad.verify().is_err(),
+            "a field-side evaluation that is not the group's must break its link"
+        );
+        println!("T_p (split): a tampered field-side evaluation is refused");
         println!(
             "{:?}",
             halo2_proofs::dev::CircuitCost::<vesta::Point, _>::measure(k_p, &step_p)
