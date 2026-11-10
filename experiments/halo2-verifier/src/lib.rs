@@ -12,6 +12,7 @@ pub mod fixed;
 pub mod native;
 pub mod sample;
 pub mod shadow;
+pub mod split;
 pub mod step;
 pub mod step2;
 pub mod step3;
