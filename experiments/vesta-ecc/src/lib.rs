@@ -1,4 +1,6 @@
-// Vendored upstream code: not held to this repository's clippy settings.
+// Vendored upstream code: not held to this repository's lint settings (CI runs
+// clippy with -D warnings on a newer toolchain than the code was written for).
+#![allow(warnings)]
 #![allow(clippy::all)]
 //! `halo2_gadgets`' elliptic-curve chip (v0.5.0, MIT OR Apache-2.0, Zcash
 //! Foundation and Electric Coin Company) ported from Pallas points in a

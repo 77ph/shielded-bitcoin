@@ -1,4 +1,6 @@
-// Vendored upstream code: not held to this repository's clippy settings.
+// Vendored upstream code: not held to this repository's lint settings (CI runs
+// clippy with -D warnings on a newer toolchain than the code was written for).
+#![allow(warnings)]
 #![allow(clippy::all)]
 //! # halo2_proofs
 
