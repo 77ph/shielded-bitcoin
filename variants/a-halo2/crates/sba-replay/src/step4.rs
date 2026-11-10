@@ -217,7 +217,7 @@ impl Circuit<vesta::Scalar> for StepPN {
             let not_kind = ch.sub(&mut l, &one, kind)?;
             let want = ch.mul(&mut l, &active, &not_kind)?;
             let mut row_sum: Option<_> = None;
-            for p in 0..n_p {
+            for (p, proof_sum) in per_proof.iter_mut().enumerate() {
                 let bit_v = match (known, self.slot_proof[s]) {
                     (true, Some(q)) => {
                         halo2_proofs::circuit::Value::known(Fp::from((q == p) as u64))
@@ -239,7 +239,7 @@ impl Circuit<vesta::Scalar> for StepPN {
                     None => bit.clone(),
                     Some(acc) => ch.add(&mut l, &acc, &bit)?,
                 });
-                per_proof[p] = Some(match per_proof[p].take() {
+                *proof_sum = Some(match proof_sum.take() {
                     None => bit,
                     Some(acc) => ch.add(&mut l, &acc, &bit)?,
                 });
@@ -257,28 +257,26 @@ impl Circuit<vesta::Scalar> for StepPN {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
+pub(crate) mod tests_support {
     use crate::capture::{Capture, capture};
-    use crate::fieldside::fp::Structure;
-    use crate::native::{PoseidonRead, PoseidonWrite};
-    use crate::verifier::tests_support::q_circuit;
-    use halo2_proofs::dev::MockProver;
     use halo2_proofs::plonk;
-    use halo2_proofs::poly::commitment::{Claim, Params};
-    use rand::SeedableRng;
-    use rand::rngs::StdRng;
+    use halo2_proofs::poly::commitment::Params;
+    use pasta_curves::vesta;
     use sb_common::carrier::carrier_output;
     use sba_circuit::{K, TransferCircuit, TransferStatement};
     use sba_core::envelope::{Envelope, parse_envelope};
     use sba_core::event::EventKind;
     use sba_core::note::decrypt_as_recipient;
     use sba_indexer::testing::{ACTIVATION, MockChain, World, tx_with};
+    use sba_primitives::Fp;
 
     /// Two mints to alice; then a block with two transfers (each spending
-    /// one mint, to bob) and a mint. The second block's witness and the
-    /// captures of its two transfer proofs, in slot order.
-    fn replayed_block_with_two_transfers() -> (
+    /// one mint, to bob) and a mint. The second block's witness and
+    /// parameters, the transfer circuit's keys, the captures of its two
+    /// transfer proofs in slot order, `s_next`, the opening after, and the
+    /// transfers as (statement, proof).
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn replayed_block_with_two_transfers() -> (
         sba_core::batch::BatchWitness,
         sba_core::batch::BatchParams,
         Params<vesta::Affine>,
@@ -286,6 +284,7 @@ mod tests {
         Vec<Capture<vesta::Affine>>,
         Fp,
         sba_core::batch::StateOpening,
+        Vec<(TransferStatement, Vec<u8>)>,
     ) {
         let mut w = World::new();
         let (_, alice0) = w.alice.ivk.find_address(0);
@@ -330,26 +329,28 @@ mod tests {
         let s_next = opening_after.digest();
         let halo_params: Params<vesta::Affine> = Params::new(K);
         let vk = plonk::keygen_vk(&halo_params, &TransferCircuit::default()).unwrap();
-        let caps: Vec<Capture<vesta::Affine>> = idx
+        let mut caps = Vec::new();
+        let mut transfers = Vec::new();
+        for ev in idx
             .state
             .events
             .iter()
             .filter(|e| e.kind == EventKind::Transfer)
-            .map(|ev| {
-                let Envelope::Transfer(t) = parse_envelope(&ev.raw).unwrap() else {
-                    panic!("a transfer")
-                };
-                let st = TransferStatement {
-                    const_salt: w.deployment.const_salt_fp(),
-                    r_anchor: idx.root_at(t.body.h_anchor).unwrap(),
-                    nullifiers: t.body.nullifiers,
-                    pk_eph: t.body.pk_eph,
-                    ct_note: t.body.ct_note,
-                    h_body: t.body.h_body(&w.deployment.const_salt),
-                };
-                capture(&halo_params, &vk, &st.to_field_elements(), &t.proof, &[]).unwrap()
-            })
-            .collect();
+        {
+            let Envelope::Transfer(t) = parse_envelope(&ev.raw).unwrap() else {
+                panic!("a transfer")
+            };
+            let st = TransferStatement {
+                const_salt: w.deployment.const_salt_fp(),
+                r_anchor: idx.root_at(t.body.h_anchor).unwrap(),
+                nullifiers: t.body.nullifiers,
+                pk_eph: t.body.pk_eph,
+                ct_note: t.body.ct_note,
+                h_body: t.body.h_body(&w.deployment.const_salt),
+            };
+            caps.push(capture(&halo_params, &vk, &st.to_field_elements(), &t.proof, &[]).unwrap());
+            transfers.push((st, t.proof.clone()));
+        }
         assert_eq!(caps.len(), 2);
         (
             witness,
@@ -359,15 +360,32 @@ mod tests {
             caps,
             s_next,
             opening_after,
+            transfers,
         )
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tests_support::replayed_block_with_two_transfers;
+    use super::*;
+    use crate::capture::capture;
+    use crate::fieldside::fp::Structure;
+    use crate::native::{PoseidonRead, PoseidonWrite};
+    use crate::verifier::tests_support::q_circuit;
+    use halo2_proofs::dev::MockProver;
+    use halo2_proofs::plonk;
+    use halo2_proofs::poly::commitment::{Claim, Params};
+    use rand::SeedableRng;
+    use rand::rngs::StdRng;
+    use sba_circuit::K;
 
     /// `cargo test --release a_block_with_two_transfers -- --ignored --nocapture`
     /// (`SB_PROVE_STEP4=1`: both proofs for real and the decider).
     #[test]
     #[ignore]
     fn a_block_with_two_transfers_in_one_step() {
-        let (witness, bparams, params, vk, caps, s_next, opening_after) =
+        let (witness, bparams, params, vk, caps, s_next, opening_after, _transfers) =
             replayed_block_with_two_transfers();
         let st = witness
             .check(&bparams)
