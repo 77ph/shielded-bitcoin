@@ -891,6 +891,41 @@ for the light client's own copy of the statements.
   transfers is `T_q` at k = 17 and `T_p` at k = 18 (the relation's
   ≈ 150 000 rows), eight at k = 18 / k = 19.
 
+### 3.8 The crate [built]
+
+Since 10 November the pieces are the family's crate `sba-replay`
+(`variants/a-halo2/crates/sba-replay`, development-grade), built on the
+vendored `halo2_proofs` — now the whole workspace's through the root
+`[patch.crates-io]`, so every crate's proofs are made by the same code
+— and on the Vesta chip port, both workspace members. Its surface:
+
+* `prover::Keys::generate(n_proofs, n_slots, k_q, k_p, params)`: a
+  fragment's two circuits and their keys, made once per deployment. The
+  shapes come from one sample transfer proof (every transfer proof has
+  the same structure) and from a sample `T_q` proven with those keys;
+  the relation's shape from the counts. A step's circuit depends only on
+  `(n_proofs, n_slots)`: a slot binds to a proof through witnessed bits
+  — one proof per active transfer slot (a slot is active when its
+  `h_body` is non-zero, shown by an inverse), one slot per proof, the
+  bits selecting which statement the slot's elements equal — so a block
+  with its mints in any position uses the same keys.
+* `prover::Prover::prove_block(height, witness, opening_after,
+  transfers)`: the indexer's batch witness and the block's accepted
+  transfer proofs in slot order to a `wire::ProvenStep` — `T_q` over
+  the proofs' group sides, `T_p` over its group side, the field sides
+  and the relation, opening the transfer proofs' claims.
+* `wire::Decider` from the same keys: `decide(step, s_prev)` verifies
+  `T_q` natively, reads the claims out of its public inputs, verifies
+  `T_p` with them and checks the three public values; the client never
+  sees a transfer proof.
+
+The keys are in memory (`halo2_proofs` 0.3 serialises verifying keys,
+not proving keys): a prover process makes them at start, minutes at
+k = 17. What the crate does not do yet: steps after the first (the
+chain of §3.4 is in its tests, not behind `Prover`), persistence of the
+batch witnesses (the indexer keeps them in memory per run), and the
+split transcript as the default (§3.6, the owner's decision).
+
 ## 4. What this study decides
 
 * **Now, no profile change:** batch verification in the indexer (§2),
