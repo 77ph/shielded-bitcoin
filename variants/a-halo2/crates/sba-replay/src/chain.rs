@@ -749,8 +749,15 @@ impl ChainKeys {
         )?;
         let vk_p0 = plonk::keygen_vk(&pparams, &p0.without_witnesses()).map_err(err)?;
         let claims_t: Vec<Claim<vesta::Affine>> = caps.iter().map(|c| c.claim()).collect();
+        // the placeholder opens what a chain T_p opens: the transfers' claims
+        // and a previous T_p's — one of k_p challenges (any values: a claim's
+        // shape is its challenge count)
+        let k_p = k_p as usize;
         let mut claims_p0 = claims_t.clone();
-        claims_p0.push(claims_t[0].clone());
+        claims_p0.push(Claim {
+            g: claims_t[0].g,
+            u: (1..=k_p as u64).map(Fp::from).collect(),
+        });
         let (cap_p0, _) =
             fake_capture(&pparams, &vk_p0, &p0.instance(), &claims_p0, OsRng).map_err(err)?;
         // the placeholder T_p as a StepPChain shape is not available; the
@@ -783,7 +790,7 @@ impl ChainKeys {
                                 .map(|p| q0.offsets()[i] + p),
                         );
                     }
-                    v.extend(gq_dummy_u(K as usize, q0.instance().len()));
+                    v.extend(gq_dummy_u(k_p, q0.instance().len()));
                     v
                 };
                 g
