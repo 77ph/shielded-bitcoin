@@ -2816,6 +2816,7 @@ dependencies = [
  "sba-core",
  "sba-indexer",
  "sba-primitives",
+ "sba-replay",
  "sba-wallet",
  "serde",
  "serde_json",
@@ -2877,6 +2878,8 @@ dependencies = [
 name = "sba-replay"
 version = "0.1.0"
 dependencies = [
+ "bitcoin",
+ "blake2",
  "ff",
  "group",
  "halo2_gadgets",

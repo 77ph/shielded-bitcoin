@@ -35,20 +35,20 @@ pub struct ProvenStep {
     pub proof_p: Vec<u8>,
 }
 
-fn put_u32(out: &mut Vec<u8>, v: u32) {
+pub(crate) fn put_u32(out: &mut Vec<u8>, v: u32) {
     out.extend_from_slice(&v.to_le_bytes());
 }
-fn put_u64(out: &mut Vec<u8>, v: u64) {
+pub(crate) fn put_u64(out: &mut Vec<u8>, v: u64) {
     out.extend_from_slice(&v.to_le_bytes());
 }
-fn put_bytes(out: &mut Vec<u8>, b: &[u8]) {
+pub(crate) fn put_bytes(out: &mut Vec<u8>, b: &[u8]) {
     put_u32(out, b.len() as u32);
     out.extend_from_slice(b);
 }
 
-struct Rd<'a>(&'a [u8]);
+pub(crate) struct Rd<'a>(pub(crate) &'a [u8]);
 impl<'a> Rd<'a> {
-    fn take(&mut self, n: usize) -> Result<&'a [u8], String> {
+    pub(crate) fn take(&mut self, n: usize) -> Result<&'a [u8], String> {
         if self.0.len() < n {
             return Err("short read".into());
         }
@@ -56,7 +56,7 @@ impl<'a> Rd<'a> {
         self.0 = b;
         Ok(a)
     }
-    fn u32(&mut self) -> Result<u32, String> {
+    pub(crate) fn u32(&mut self) -> Result<u32, String> {
         Ok(u32::from_le_bytes(self.take(4)?.try_into().unwrap()))
     }
     fn u64(&mut self) -> Result<u64, String> {
@@ -70,7 +70,7 @@ impl<'a> Rd<'a> {
         let b: [u8; 32] = self.take(32)?.try_into().unwrap();
         Option::from(Fq::from_repr(b)).ok_or_else(|| "non-canonical Fq".to_string())
     }
-    fn bytes(&mut self) -> Result<Vec<u8>, String> {
+    pub(crate) fn bytes(&mut self) -> Result<Vec<u8>, String> {
         let n = self.u32()? as usize;
         Ok(self.take(n)?.to_vec())
     }

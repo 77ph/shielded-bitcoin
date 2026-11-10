@@ -19,7 +19,9 @@ ff.workspace = true
 group.workspace = true
 rand.workspace = true
 hex.workspace = true
+sb-common.workspace = true
+bitcoin.workspace = true
+blake2.workspace = true
 
 [dev-dependencies]
 sba-indexer = { workspace = true, features = ["testing"] }
-sb-common.workspace = true

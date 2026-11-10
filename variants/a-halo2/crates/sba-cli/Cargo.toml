@@ -11,6 +11,7 @@ sba-primitives.workspace = true
 sba-core.workspace = true
 sba-circuit.workspace = true
 sba-indexer.workspace = true
+sba-replay.workspace = true
 sba-wallet.workspace = true
 sb-common.workspace = true
 bitcoin.workspace = true

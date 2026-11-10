@@ -360,13 +360,19 @@ mod tests {
 // ---------------------------------------------------------------- keys, prover, decider
 
 use crate::capture::{Capture, capture, fake_capture};
+use crate::persist::ChainState;
 use crate::wire::ProvenStep;
+use bitcoin::{Block, BlockHash};
+use blake2::{Blake2s256, Digest};
 use ff::PrimeField;
+use halo2_proofs::arithmetic::CurveAffine;
 use halo2_proofs::plonk::{self, ProvingKey, VerifyingKey};
 use halo2_proofs::poly::commitment::{Claim, Params};
+use halo2_proofs::transcript::{Blake2bWrite, Challenge255, EncodedChallenge, Transcript};
 use rand::rngs::OsRng;
 use sba_circuit::{K, TransferCircuit, TransferParams, TransferStatement};
 use sba_core::batch::{BatchParams, BatchWitness, StateOpening};
+use sba_indexer::{BlockId, ChainError, ChainSource, Indexer, StateStore};
 
 /// Positions in a group side's layout: its claim's `G` and `u`.
 fn claim_positions(g: &q::VerifierCircuit, k: usize) -> Vec<usize> {
@@ -705,7 +711,48 @@ fn err<E: std::fmt::Debug>(e: E) -> String {
     format!("{e:?}")
 }
 
+/// A key's representative (its `transcript_repr`, through the Blake2b
+/// transcript), as bytes.
+fn key_repr<C: CurveAffine>(vk: &VerifyingKey<C>) -> Vec<u8>
+where
+    C::Scalar: ff::FromUniformBytes<64>,
+{
+    let mut t = Blake2bWrite::<Vec<u8>, C, Challenge255<C>>::init(vec![]);
+    vk.hash_into(&mut t).expect("hashing a key cannot fail");
+    t.squeeze_challenge()
+        .get_scalar()
+        .to_repr()
+        .as_ref()
+        .to_vec()
+}
+
 impl ChainKeys {
+    /// The key set's identifier: the fragment's sizes, both `k`, and both
+    /// verifying keys' representatives, hashed. Keys are a function of the
+    /// circuits' structure alone, so two bootstraps of one configuration
+    /// agree on it; a chain state names the key set it was made under.
+    pub fn id(&self) -> [u8; 32] {
+        let mut h = Blake2s256::new();
+        h.update(b"sba-replay chain keys v1");
+        for v in [
+            self.n_proofs as u32,
+            self.n_slots as u32,
+            self.outer.k(),
+            self.pparams.k(),
+        ] {
+            h.update(v.to_le_bytes());
+        }
+        h.update(key_repr(&self.ovk));
+        h.update(key_repr(&self.pvk));
+        h.finalize().into()
+    }
+
+    /// The digest of the genesis opening, as the dummy step 0 exposes it.
+    pub fn genesis_digest(&self) -> Fp {
+        let i = &self.step0.cap_p.instance;
+        i[i.len() - 2]
+    }
+
     /// Keys for fragments of `n_proofs` over `n_slots` at `k_q`, `k_p`,
     /// starting the chain from `genesis` (the state opening before the
     /// first block). Minutes: the two circuits are shaped from fake
@@ -1064,6 +1111,9 @@ pub struct ChainProver<'k> {
     pub keys: &'k ChainKeys,
     pub prev: Artifacts,
     pub steps: usize,
+    /// The state digest after the last step (the genesis digest before
+    /// the first): the next block's witness must open from it.
+    pub s: Fp,
 }
 
 impl<'k> ChainProver<'k> {
@@ -1072,6 +1122,38 @@ impl<'k> ChainProver<'k> {
             keys,
             prev: keys.step0.clone(),
             steps: 0,
+            s: keys.genesis_digest(),
+        }
+    }
+
+    /// The prover as a saved state left it: the previous step's captures
+    /// with the keys' shapes (a step's shape is the keys', values apart).
+    pub fn resume(keys: &'k ChainKeys, state: &ChainState) -> Result<Self, String> {
+        if state.keys_id != keys.id() {
+            return Err("the chain state is of another key set".into());
+        }
+        Ok(ChainProver {
+            keys,
+            prev: Artifacts {
+                cap_q: state.cap_q.clone(),
+                cap_p: state.cap_p.clone(),
+                sq: keys.step_q.clone(),
+                sp: keys.step_p.clone(),
+            },
+            steps: state.index as usize,
+            s: state.s,
+        })
+    }
+
+    /// What to save: `next_height` is the block the next step takes.
+    pub fn state(&self, next_height: u32) -> ChainState {
+        ChainState {
+            keys_id: self.keys.id(),
+            index: self.steps as u32,
+            next_height,
+            s: self.s,
+            cap_q: self.prev.cap_q.clone(),
+            cap_p: self.prev.cap_p.clone(),
         }
     }
 
@@ -1095,6 +1177,9 @@ impl<'k> ChainProver<'k> {
         let statement = witness
             .check(&k.batch_params)
             .ok_or("the relation refuses the witness")?;
+        if statement.s_prev != self.s {
+            return Err("the witness does not open from the chain's state".into());
+        }
         if statement.s_next != opening_after.digest() {
             return Err("the opening after is not the witness's".into());
         }
@@ -1187,6 +1272,7 @@ impl<'k> ChainProver<'k> {
             sp: sp.without_witnesses(),
         };
         self.steps += 1;
+        self.s = statement.s_next;
         Ok(ProvenStep {
             height,
             slots: witness
@@ -1201,6 +1287,143 @@ impl<'k> ChainProver<'k> {
             proof_p,
         })
     }
+}
+
+/// The transfer statements and proofs of block `height` as the indexer
+/// accepted them, the statement rebuilt as its verifier saw it.
+pub fn transfers_of(
+    idx: &Indexer,
+    height: u32,
+) -> Result<Vec<(TransferStatement, Vec<u8>)>, String> {
+    use sba_core::envelope::{Envelope, parse_envelope};
+    use sba_core::event::EventKind;
+    let d = &idx.deployment;
+    idx.state
+        .events
+        .iter()
+        .filter(|e| e.kind == EventKind::Transfer && e.height == height)
+        .map(|ev| {
+            let Envelope::Transfer(t) = parse_envelope(&ev.raw).map_err(err)? else {
+                return Err("a transfer event carrying another envelope".into());
+            };
+            let r_anchor = idx
+                .root_at(t.body.h_anchor)
+                .ok_or("the anchor's root is not replayed")?;
+            Ok((
+                TransferStatement {
+                    const_salt: d.const_salt_fp(),
+                    r_anchor,
+                    nullifiers: t.body.nullifiers,
+                    pk_eph: t.body.pk_eph,
+                    ct_note: t.body.ct_note,
+                    h_body: t.body.h_body(&d.const_salt),
+                },
+                t.proof.clone(),
+            ))
+        })
+        .collect()
+}
+
+/// A chain source whose tip is held at `tip`: the indexer replays up to
+/// that block and no further, one step's block at a time.
+pub struct Capped<'c> {
+    pub inner: &'c dyn ChainSource,
+    pub tip: u32,
+}
+
+impl ChainSource for Capped<'_> {
+    fn tip(&self) -> Result<BlockId, ChainError> {
+        let t = self.inner.tip()?;
+        if t.height <= self.tip {
+            return Ok(t);
+        }
+        match self.inner.block_hash(self.tip)? {
+            Some(hash) => Ok(BlockId {
+                height: self.tip,
+                hash,
+            }),
+            None => Ok(t),
+        }
+    }
+    fn block_hash(&self, height: u32) -> Result<Option<BlockHash>, ChainError> {
+        if height > self.tip {
+            return Ok(None);
+        }
+        self.inner.block_hash(height)
+    }
+    fn block(&self, hash: &BlockHash) -> Result<Block, ChainError> {
+        self.inner.block(hash)
+    }
+}
+
+/// Replay the indexer's next block from `chain` (persisting through
+/// `store`, if any) and prove it as the chain's next step; `None` when the
+/// chain has no such block yet. The indexer must stand exactly where the
+/// prover does (`reconcile`); a reorganisation below the proven chain is
+/// an error — the proven chain cannot continue on another branch.
+pub fn prove_next_block(
+    prover: &mut ChainProver,
+    idx: &mut Indexer,
+    store: Option<&mut dyn StateStore>,
+    chain: &dyn ChainSource,
+) -> Result<Option<ProvenStep>, String> {
+    let height = idx.next_height();
+    if chain.tip().map_err(err)?.height < height {
+        return Ok(None);
+    }
+    let blocks_before = idx.state.blocks.len();
+    let report = idx
+        .sync_with(
+            &Capped {
+                inner: chain,
+                tip: height,
+            },
+            store,
+        )
+        .map_err(err)?;
+    if report.rolled_back_to.is_some() {
+        return Err(format!(
+            "the chain reorganised below block {height}: the proven chain cannot continue"
+        ));
+    }
+    if idx.state.blocks.len() != blocks_before + 1 || idx.state.last_height() != Some(height) {
+        return Err("the sync did not replay exactly the next block".into());
+    }
+    let witness = idx
+        .state
+        .batches
+        .pop()
+        .ok_or("the replayed block left no batch witness")?;
+    let opening_after = idx.state.opening(idx.next_height());
+    let transfers = transfers_of(idx, height)?;
+    let step = prover.prove(height, &witness, &opening_after, &transfers)?;
+    Ok(Some(step))
+}
+
+/// Put the indexer where the prover is: blocks it replayed beyond
+/// `next_height − 1` (a run that synced and did not prove) are rolled back,
+/// in memory and in `store`; batch witnesses in memory are dropped (the
+/// next sync makes the one needed).
+pub fn reconcile(
+    idx: &mut Indexer,
+    store: Option<&mut dyn StateStore>,
+    next_height: u32,
+) -> Result<(), String> {
+    if idx.next_height() > next_height {
+        let keep = next_height.saturating_sub(1);
+        idx.state.rollback_to(keep);
+        if let Some(store) = store {
+            store.rollback_to(&idx.state, keep).map_err(err)?;
+        }
+    }
+    if idx.next_height() != next_height {
+        return Err(format!(
+            "the indexer stands at block {}, the chain at {next_height}",
+            idx.next_height()
+        ));
+    }
+    idx.state.batches.clear();
+    Ok(())
 }
 
 /// The client's decider for the chain: from the keys alone.
@@ -1329,8 +1552,6 @@ mod chain_tests {
         assert_eq!(cs.num_instance_columns(), 1);
     }
     use sb_common::carrier::carrier_output;
-    use sba_core::envelope::{Envelope, parse_envelope};
-    use sba_core::event::EventKind;
     use sba_core::note::decrypt_as_recipient;
     use sba_indexer::testing::{ACTIVATION, MockChain, World, tx_with};
 
@@ -1358,30 +1579,6 @@ mod chain_tests {
         let mut prover = ChainProver::new(&keys);
         let decider = ChainDecider { keys: &keys };
         // block 1000 (the two mints) as the first step: no transfers
-        let transfers_of = |idx: &sba_indexer::Indexer,
-                            w: &World,
-                            height: u32|
-         -> Vec<(sba_circuit::TransferStatement, Vec<u8>)> {
-            idx.state
-                .events
-                .iter()
-                .filter(|e| e.kind == EventKind::Transfer && e.height == height)
-                .map(|ev| {
-                    let Envelope::Transfer(t) = parse_envelope(&ev.raw).unwrap() else {
-                        panic!("a transfer")
-                    };
-                    let st = sba_circuit::TransferStatement {
-                        const_salt: w.deployment.const_salt_fp(),
-                        r_anchor: idx.root_at(t.body.h_anchor).unwrap(),
-                        nullifiers: t.body.nullifiers,
-                        pk_eph: t.body.pk_eph,
-                        ct_note: t.body.ct_note,
-                        h_body: t.body.h_body(&w.deployment.const_salt),
-                    };
-                    (st, t.proof.clone())
-                })
-                .collect()
-        };
         let mut s = genesis.digest();
         let w0 = idx.state.batches[0].clone();
         let o0 = idx.state.opening(idx.next_height());
@@ -1394,6 +1591,15 @@ mod chain_tests {
         );
         s = decider.decide(&step1, 1, s).unwrap();
         assert_eq!(s, o0.digest());
+        // the prover put away and taken up again from its saved state
+        let saved = prover.state(idx.next_height()).to_bytes();
+        println!("chain state: {} bytes", saved.len());
+        let restored = ChainState::from_bytes(&saved).unwrap();
+        assert_eq!(
+            (restored.index, restored.next_height, restored.s),
+            (1, 1001, s)
+        );
+        let mut prover = ChainProver::resume(&keys, &restored).unwrap();
         // block 1001: two transfers and a mint
         let notes: Vec<_> = idx.state.events[..2]
             .iter()
@@ -1424,7 +1630,7 @@ mod chain_tests {
         idx.sync(&chain).unwrap();
         let w1 = idx.state.batches[1].clone();
         let o1 = idx.state.opening(idx.next_height());
-        let tr1 = transfers_of(&idx, &w, 1001);
+        let tr1 = transfers_of(&idx, 1001).unwrap();
         assert_eq!(tr1.len(), 2);
         let t = std::time::Instant::now();
         let step2 = prover.prove(1001, &w1, &o1, &tr1).unwrap();
@@ -1446,13 +1652,25 @@ mod chain_tests {
             [(bob0, 300), (alice0, 0)],
         );
         chain.push_block(vec![tx_with(vec![carrier_output(&e3.to_bytes())])]);
-        idx.sync(&chain).unwrap();
-        let w2 = idx.state.batches[2].clone();
-        let o2 = idx.state.opening(idx.next_height());
-        let tr2 = transfers_of(&idx, &w, 1002);
-        assert_eq!(tr2.len(), 1);
+        // through the runner: the indexer stands at 1002, the chain has it
+        reconcile(&mut idx, None, 1002).unwrap();
         let t = std::time::Instant::now();
-        let step3 = prover.prove(1002, &w2, &o2, &tr2).unwrap();
+        let step3 = prove_next_block(&mut prover, &mut idx, None, &chain)
+            .unwrap()
+            .expect("the block is on the chain");
+        assert_eq!(step3.height, 1002);
+        assert_eq!(idx.next_height(), 1003);
+        assert!(
+            idx.state.batches.is_empty(),
+            "the runner consumed the witness"
+        );
+        let o2 = idx.state.opening(1003);
+        assert!(
+            prove_next_block(&mut prover, &mut idx, None, &chain)
+                .unwrap()
+                .is_none(),
+            "no block 1003 yet"
+        );
         println!(
             "step 3 (one transfer, padded): {:.1} s, {} bytes",
             t.elapsed().as_secs_f64(),

@@ -29,6 +29,7 @@ use sba_primitives::encoding::fp_to_bytes;
 use sba_wallet::{Wallet, anchor_for};
 
 mod relay;
+mod replay;
 mod serve;
 
 /// The family this crate implements, as a deployment profile names it.
@@ -144,6 +145,33 @@ enum Cmd {
     },
     /// Replay the chain into the local state.
     Sync,
+    /// Prove the next blocks as steps of the accumulated replay proof (docs/REPLAY-PROOF-A.md §3.8): keys made at start (minutes), the chain's own replay and state under the data dir.
+    ReplayProve {
+        /// How many blocks to prove this run.
+        #[arg(long, default_value_t = 1)]
+        blocks: u32,
+        /// Transfer proofs per step (the fragment).
+        #[arg(long, default_value_t = 2)]
+        proofs: usize,
+        /// Statement slots per step (mints and transfers).
+        #[arg(long, default_value_t = 4)]
+        slots: usize,
+        #[arg(long, default_value_t = 18)]
+        k_q: u32,
+        #[arg(long, default_value_t = 18)]
+        k_p: u32,
+    },
+    /// Decide the proven steps on disk as a light client: from the keys and the previous digest alone.
+    ReplayDecide {
+        #[arg(long, default_value_t = 2)]
+        proofs: usize,
+        #[arg(long, default_value_t = 4)]
+        slots: usize,
+        #[arg(long, default_value_t = 18)]
+        k_q: u32,
+        #[arg(long, default_value_t = 18)]
+        k_p: u32,
+    },
     /// Show the replayed state.
     Status,
     /// Scan the replayed history for the wallet's notes.
@@ -874,6 +902,36 @@ pub fn run(args: Vec<String>) -> Result<()> {
             .serve(listener, max_requests)?;
         }
         Cmd::Status => print_status(&ctx.indexer()?.0),
+        Cmd::ReplayProve {
+            blocks,
+            proofs,
+            slots,
+            k_q,
+            k_p,
+        } => replay::prove(
+            &ctx,
+            replay::Sizes {
+                proofs,
+                slots,
+                k_q,
+                k_p,
+            },
+            blocks,
+        )?,
+        Cmd::ReplayDecide {
+            proofs,
+            slots,
+            k_q,
+            k_p,
+        } => replay::decide(
+            &ctx,
+            replay::Sizes {
+                proofs,
+                slots,
+                k_q,
+                k_p,
+            },
+        )?,
         Cmd::Scan { name } => {
             let (idx, _store) = ctx.indexer()?;
             let mut w = ctx.wallet(&name)?;
