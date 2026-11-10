@@ -145,6 +145,98 @@ impl StepPN {
     }
 }
 
+/// The slots' binding to the proofs' statements, by witnessed bits
+/// (`StepPN`'s rule; the chain's circuit uses it too).
+#[allow(clippy::too_many_arguments)]
+pub fn bind_slots(
+    ch: &mut FieldChip,
+    l: &mut impl Layouter<Fp>,
+    slots: &[Vec<crate::field::fp::Cell>],
+    instance_values: &[Vec<crate::field::fp::Cell>],
+    statement_positions: &[Vec<usize>],
+    slot_proof: &[Option<usize>],
+    used: &[bool],
+    witness: Option<&sba_core::batch::BatchWitness>,
+) -> Result<(), Error> {
+    let known = witness.is_some();
+    // the slots' binding to the proofs' statements, by witnessed bits:
+    // link[s][p] ∈ {0, 1}; Σ_p link[s][p] = active_s · (1 − kind_s) (an
+    // active transfer slot binds to exactly one proof, a mint or an
+    // empty slot to none); Σ_s link[s][p] = used_p ∈ {0, 1} (a used
+    // proof is exactly one slot's, an unused one none's — it is still
+    // verified); link[s][p] · (slot_s[i] − statement_p[i]) = 0
+    let known = known;
+    let one = ch.constant(l, Fp::ONE)?;
+    let n_p = statement_positions.len();
+    let mut per_proof: Vec<Option<_>> = vec![None; n_p];
+    for (s, slot) in slots.iter().enumerate() {
+        assert_eq!(slot.len(), SLOT_ELEMENTS);
+        let kind = &slot[SLOT_ELEMENTS - 1];
+        // active: the slot is not all zeros — its h_body is non-zero for
+        // a real statement; use the witness to say so, bound below
+        let active_v = witness.map(|w| w.slots[s].is_some());
+        let active = ch.witness(
+            l,
+            active_v
+                .map(|a| halo2_proofs::circuit::Value::known(Fp::from(a as u64)))
+                .unwrap_or(halo2_proofs::circuit::Value::unknown()),
+        )?;
+        let aa = ch.mul(l, &active, &active)?;
+        ch.assert_equal(l, &aa, &active)?;
+        // an inactive slot is all zeros (h_body = 0); an active one has
+        // h_body ≠ 0 — bind `active` to that through an inverse witness
+        let h_body = &slot[sba_core::batch::SLOT_H_BODY];
+        let inv = ch.witness(l, h_body.value().map(|v| v.invert().unwrap_or(Fp::ZERO)))?;
+        let hi = ch.mul(l, h_body, &inv)?;
+        ch.assert_equal(l, &hi, &active)?;
+        let not_kind = ch.sub(l, &one, kind)?;
+        let want = ch.mul(l, &active, &not_kind)?;
+        let mut row_sum: Option<_> = None;
+        for (p, proof_sum) in per_proof.iter_mut().enumerate() {
+            let bit_v = match (known, slot_proof[s]) {
+                (true, Some(q)) => halo2_proofs::circuit::Value::known(Fp::from((q == p) as u64)),
+                (true, None) => halo2_proofs::circuit::Value::known(Fp::ZERO),
+                (false, _) => halo2_proofs::circuit::Value::unknown(),
+            };
+            let bit = ch.witness(l, bit_v)?;
+            let bb = ch.mul(l, &bit, &bit)?;
+            ch.assert_equal(l, &bb, &bit)?;
+            for (si, sti) in SLOT_FROM_STATEMENT {
+                let cell = &instance_values[statement_positions[p][sti]];
+                assert_eq!(cell.len(), 1);
+                let d = ch.sub(l, &slot[si], &cell[0])?;
+                let t = ch.mul(l, &bit, &d)?;
+                ch.assert_constant(l, &t, Fp::ZERO)?;
+            }
+            row_sum = Some(match row_sum {
+                None => bit.clone(),
+                Some(acc) => ch.add(l, &acc, &bit)?,
+            });
+            *proof_sum = Some(match proof_sum.take() {
+                None => bit,
+                Some(acc) => ch.add(l, &acc, &bit)?,
+            });
+        }
+        if let Some(rs) = row_sum {
+            ch.assert_equal(l, &rs, &want)?;
+        }
+    }
+    for (p, col) in per_proof.into_iter().enumerate() {
+        let used_v = if known {
+            halo2_proofs::circuit::Value::known(Fp::from(used[p] as u64))
+        } else {
+            halo2_proofs::circuit::Value::unknown()
+        };
+        let used = ch.witness(l, used_v)?;
+        let uu = ch.mul(l, &used, &used)?;
+        ch.assert_equal(l, &uu, &used)?;
+        if let Some(col) = col {
+            ch.assert_equal(l, &col, &used)?;
+        }
+    }
+    Ok(())
+}
+
 impl Circuit<vesta::Scalar> for StepPN {
     type Config = StepPNConfig;
     type FloorPlanner = SimpleFloorPlanner;
@@ -187,86 +279,16 @@ impl Circuit<vesta::Scalar> for StepPN {
             &mut l,
             Some((cfg.group.instance, ex.cells.len())),
         )?;
-        // the slots' binding to the proofs' statements, by witnessed bits:
-        // link[s][p] ∈ {0, 1}; Σ_p link[s][p] = active_s · (1 − kind_s) (an
-        // active transfer slot binds to exactly one proof, a mint or an
-        // empty slot to none); Σ_s link[s][p] = used_p ∈ {0, 1} (a used
-        // proof is exactly one slot's, an unused one none's — it is still
-        // verified); link[s][p] · (slot_s[i] − statement_p[i]) = 0
-        let known = self.batch.witness.is_some();
-        let one = ch.constant(&mut l, Fp::ONE)?;
-        let n_p = self.statement_positions.len();
-        let mut per_proof: Vec<Option<_>> = vec![None; n_p];
-        for (s, slot) in slots.iter().enumerate() {
-            assert_eq!(slot.len(), SLOT_ELEMENTS);
-            let kind = &slot[SLOT_ELEMENTS - 1];
-            // active: the slot is not all zeros — its h_body is non-zero for
-            // a real statement; use the witness to say so, bound below
-            let active_v = self.batch.witness.as_ref().map(|w| w.slots[s].is_some());
-            let active = ch.witness(
-                &mut l,
-                active_v
-                    .map(|a| halo2_proofs::circuit::Value::known(Fp::from(a as u64)))
-                    .unwrap_or(halo2_proofs::circuit::Value::unknown()),
-            )?;
-            let aa = ch.mul(&mut l, &active, &active)?;
-            ch.assert_equal(&mut l, &aa, &active)?;
-            // an inactive slot is all zeros (h_body = 0); an active one has
-            // h_body ≠ 0 — bind `active` to that through an inverse witness
-            let h_body = &slot[sba_core::batch::SLOT_H_BODY];
-            let inv = ch.witness(
-                &mut l,
-                h_body.value().map(|v| v.invert().unwrap_or(Fp::ZERO)),
-            )?;
-            let hi = ch.mul(&mut l, h_body, &inv)?;
-            ch.assert_equal(&mut l, &hi, &active)?;
-            let not_kind = ch.sub(&mut l, &one, kind)?;
-            let want = ch.mul(&mut l, &active, &not_kind)?;
-            let mut row_sum: Option<_> = None;
-            for (p, proof_sum) in per_proof.iter_mut().enumerate() {
-                let bit_v = match (known, self.slot_proof[s]) {
-                    (true, Some(q)) => {
-                        halo2_proofs::circuit::Value::known(Fp::from((q == p) as u64))
-                    }
-                    (true, None) => halo2_proofs::circuit::Value::known(Fp::ZERO),
-                    (false, _) => halo2_proofs::circuit::Value::unknown(),
-                };
-                let bit = ch.witness(&mut l, bit_v)?;
-                let bb = ch.mul(&mut l, &bit, &bit)?;
-                ch.assert_equal(&mut l, &bb, &bit)?;
-                for (si, sti) in SLOT_FROM_STATEMENT {
-                    let cell = &ex.instance_values[self.statement_positions[p][sti]];
-                    assert_eq!(cell.len(), 1);
-                    let d = ch.sub(&mut l, &slot[si], &cell[0])?;
-                    let t = ch.mul(&mut l, &bit, &d)?;
-                    ch.assert_constant(&mut l, &t, Fp::ZERO)?;
-                }
-                row_sum = Some(match row_sum {
-                    None => bit.clone(),
-                    Some(acc) => ch.add(&mut l, &acc, &bit)?,
-                });
-                *proof_sum = Some(match proof_sum.take() {
-                    None => bit,
-                    Some(acc) => ch.add(&mut l, &acc, &bit)?,
-                });
-            }
-            if let Some(rs) = row_sum {
-                ch.assert_equal(&mut l, &rs, &want)?;
-            }
-        }
-        for (p, col) in per_proof.into_iter().enumerate() {
-            let used_v = if known {
-                halo2_proofs::circuit::Value::known(Fp::from(self.used[p] as u64))
-            } else {
-                halo2_proofs::circuit::Value::unknown()
-            };
-            let used = ch.witness(&mut l, used_v)?;
-            let uu = ch.mul(&mut l, &used, &used)?;
-            ch.assert_equal(&mut l, &uu, &used)?;
-            if let Some(col) = col {
-                ch.assert_equal(&mut l, &col, &used)?;
-            }
-        }
+        bind_slots(
+            &mut ch,
+            &mut l,
+            &slots,
+            &ex.instance_values,
+            &self.statement_positions,
+            &self.slot_proof,
+            &self.used,
+            self.batch.witness.as_ref(),
+        )?;
         eprintln!("step: {} proofs, {} slots", self.fields.len(), self.batch.n);
         Ok(())
     }
