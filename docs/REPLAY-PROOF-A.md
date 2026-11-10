@@ -992,10 +992,22 @@ commitments as inputs, the base bit, the opened claim's challenges and
 `T_p(1)` of the same shape (`fake_capture`: random points and scalars,
 the real instance and claim) it is refused with `base = 0` and accepted
 with `base = 1`. The `T_p` of the chain (`StepPChain`) is written with
-`s_prev` chained to the previous `s_next`; what remains is the key
-bootstrap — the two circuits' shapes from fake captures of each other
-until they are stable, two or three key generations a side — the dummy
-step 0, `prove_next` and the decider reading the previous claims.
+`s_prev` chained to the previous `s_next`. **The key bootstrap, the
+prover and the decider are written** (`chain.rs`, the same night):
+`ChainKeys::generate` shapes the two circuits from fake captures of
+each other — a placeholder round, then two chain-shaped rounds whose
+instance lengths and key sizes must agree, then the final keys —
+and makes the dummy step 0 under them (a fake `T_q(0)`, a `T_p(0)`
+whose instance is what its group side exposes of it with the genesis
+digest as `s_next`, both as fake proofs); `ChainProver::prove` turns
+each block into a step from the previous step's captures, the first
+with `base = 1`, padding transfers with the keys' sample proof and slots
+with empties; `ChainDecider::decide(step, index, s_prev)` reads every
+claim the two proofs opened and both keys' commitments out of the
+public inputs, checks the base bit against the step's index, verifies
+both proofs natively and the three public values. Its test runs three
+blocks (two mints; two transfers and a mint; one transfer) through one
+key set on the server; its figures follow.
 
 ## 4. What this study decides
 
