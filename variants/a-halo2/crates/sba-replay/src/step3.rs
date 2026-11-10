@@ -261,6 +261,7 @@ mod tests {
             instance_limbs: qc.instance_limbs_when_verified(),
             expose_instance: true,
             opened_u_slots: vec![],
+            re_expose: vec![],
             capture: Some(cap_q.clone()),
         };
         let (_, sources) = q::VerifierCircuit::shape(

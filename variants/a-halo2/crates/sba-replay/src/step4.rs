@@ -455,6 +455,7 @@ mod tests {
             instance_limbs: step_q.instance_limbs_when_verified(),
             expose_instance: true,
             opened_u_slots: vec![],
+            re_expose: vec![],
             capture: Some(cap_q.clone()),
         };
         let mut fields = Vec::new();
