@@ -75,17 +75,21 @@ mod tests {
         // a wrong challenge changes every scalar: refused
         let mut bad = instance.clone();
         bad[1] += Fp::ONE;
-        assert!(MockProver::run(k, &circuit, vec![bad])
-            .unwrap()
-            .verify()
-            .is_err());
+        assert!(
+            MockProver::run(k, &circuit, vec![bad])
+                .unwrap()
+                .verify()
+                .is_err()
+        );
         // a wrong output scalar: refused
         let mut bad = instance.clone();
         bad[n_in] += Fp::ONE;
-        assert!(MockProver::run(k, &circuit, vec![bad])
-            .unwrap()
-            .verify()
-            .is_err());
+        assert!(
+            MockProver::run(k, &circuit, vec![bad])
+                .unwrap()
+                .verify()
+                .is_err()
+        );
     }
 }
 
@@ -99,8 +103,8 @@ mod prove_tests {
     use halo2_proofs::poly::commitment::Params;
     use halo2_proofs::transcript::{Blake2bRead, Blake2bWrite, Challenge255};
     use pasta_curves::vesta;
-    use rand::rngs::StdRng;
     use rand::SeedableRng;
+    use rand::rngs::StdRng;
 
     /// The field circuit as a Vesta-committed proof of its own (an `Fp`
     /// circuit), at k = 13:
@@ -205,17 +209,21 @@ mod fq_tests {
         // a wrong challenge, and a wrong output scalar, are refused
         let mut bad = instance.clone();
         bad[1] += pallas::Scalar::ONE;
-        assert!(MockProver::run(k, &circuit, vec![bad])
-            .unwrap()
-            .verify()
-            .is_err());
+        assert!(
+            MockProver::run(k, &circuit, vec![bad])
+                .unwrap()
+                .verify()
+                .is_err()
+        );
         let mut bad = instance.clone();
         let n_in = st_transcript_len(&circuit.structure);
         bad[n_in] += pallas::Scalar::ONE;
-        assert!(MockProver::run(k, &circuit, vec![bad])
-            .unwrap()
-            .verify()
-            .is_err());
+        assert!(
+            MockProver::run(k, &circuit, vec![bad])
+                .unwrap()
+                .verify()
+                .is_err()
+        );
     }
 }
 
@@ -272,26 +280,28 @@ mod opened_tests {
         let n_in = st_transcript_len(&circuit.structure);
         let mut bad = instance.clone();
         bad[n_in - 1] += Fp::ONE;
-        assert!(MockProver::run(k, &circuit, vec![bad])
-            .unwrap()
-            .verify()
-            .is_err());
+        assert!(
+            MockProver::run(k, &circuit, vec![bad])
+                .unwrap()
+                .verify()
+                .is_err()
+        );
     }
 }
 
 #[cfg(test)]
 mod split_tests {
     use super::fp::*;
-    use crate::split::{capture_split, SplitWrite};
+    use crate::split::{SplitWrite, capture_split};
     use crate::verifier::q::VerifierCircuit;
     use ff::Field;
     use halo2_proofs::dev::MockProver;
     use halo2_proofs::plonk;
     use halo2_proofs::poly::commitment::Params;
     use pasta_curves::vesta;
-    use rand::rngs::StdRng;
     use rand::SeedableRng;
-    use sba_circuit::{TransferCircuit, K};
+    use rand::rngs::StdRng;
+    use sba_circuit::{K, TransferCircuit};
     use sba_primitives::Fp;
 
     /// The field side under the split transcript (§3.6): the evaluations
@@ -360,16 +370,20 @@ mod split_tests {
         // an evaluation changed: the sponge's x_1 no longer matches
         let mut bad = pi.clone();
         bad[7] += Fp::ONE;
-        assert!(MockProver::run(k, &circuit, vec![bad])
-            .unwrap()
-            .verify()
-            .is_err());
+        assert!(
+            MockProver::run(k, &circuit, vec![bad])
+                .unwrap()
+                .verify()
+                .is_err()
+        );
         // a claimed scalar changed
         let mut bad = pi.clone();
         bad[n_in + 1] += Fp::ONE;
-        assert!(MockProver::run(k, &circuit, vec![bad])
-            .unwrap()
-            .verify()
-            .is_err());
+        assert!(
+            MockProver::run(k, &circuit, vec![bad])
+                .unwrap()
+                .verify()
+                .is_err()
+        );
     }
 }

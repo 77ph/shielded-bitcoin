@@ -655,10 +655,8 @@ pub(crate) mod tests {
         },
         CircuitVersion, FixedPoints,
     };
-    use crate::{
-        utilities::lookup_range_check::{
-            VestaLookupRangeCheck, VestaLookupRangeCheck4_5BConfig, VestaLookupRangeCheckConfig,
-        },
+    use crate::utilities::lookup_range_check::{
+        VestaLookupRangeCheck, VestaLookupRangeCheck4_5BConfig, VestaLookupRangeCheckConfig,
     };
 
     #[derive(Debug, Eq, PartialEq, Clone)]
@@ -993,7 +991,6 @@ pub(crate) mod tests {
         let prover = MockProver::run(k, &circuit, vec![]).unwrap();
         assert_eq!(prover.verify(), Ok(()))
     }
-
 
     // Old proofs must still verify under the old (unanchored) verifying key, so that a node
     // can sync the chain from before the fix. These fixtures are the original (pre-fix)

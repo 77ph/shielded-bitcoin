@@ -1,13 +1,13 @@
 //! The sample transfer of `sba-circuit/tests/transfer.rs`, for the tests.
 
 use ff::Field;
-use rand::rngs::StdRng;
 use rand::SeedableRng;
+use rand::rngs::StdRng;
 use sba_circuit::{InputWitness, OutputWitness, TransferStatement, TransferWitness};
 use sba_core::envelope::TransferBody;
 use sba_core::keys::{Seed, WalletKeys};
-use sba_core::note::{encrypt_note, note_leaf, nullifier, NotePlaintext};
-use sba_core::recovery::{binding_digest, encrypt_recovery, RecoveryEntry};
+use sba_core::note::{NotePlaintext, encrypt_note, note_leaf, nullifier};
+use sba_core::recovery::{RecoveryEntry, binding_digest, encrypt_recovery};
 use sba_core::tree::NoteTree;
 use sba_primitives::Fp;
 

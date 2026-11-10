@@ -1,11 +1,11 @@
-//! The step with both sides under the split transcript (`docs/REPLAY-PROOF-A.md`
-//! §3.6): `T_q` of `SplitCircuit`s — 64 public inputs per transfer proof —
-//! and `T_p` with the `p` group side of that `T_q`, each transfer proof's
-//! split field side bound to its part (the evaluations bound by the
-//! sponge instead), and the relation with the slots bound to the
-//! statements. The block is the indexer's; its transfer proofs are made
-//! again under the split transcript from the same statements and
-//! witnesses (the family's prover is a-0.3 until the profile changes).
+//! Steps over several transfer proofs — the fragment size `n` of
+//! `docs/REPLAY-PROOF-A.md` §3.4 and §3.7: `T_q` carries the `q` group
+//! side of every transfer proof of the block, side by side in the same
+//! columns, their public inputs one after another; `T_p` carries the `p`
+//! group side of that `T_q`, every transfer proof's field side bound to
+//! its part of `T_q`'s instance values, and the relation with each
+//! transfer slot bound to its proof's statement. The block and its proofs
+//! come from the indexer's replay.
 
 use ff::Field;
 use halo2_proofs::circuit::{Layouter, SimpleFloorPlanner};
@@ -17,38 +17,43 @@ use crate::field::fp::{FieldChip, FieldConfig};
 use crate::fieldside::fp::FieldSideCircuit;
 use crate::step2::bind;
 use crate::step3::SLOT_FROM_STATEMENT;
-use crate::transcript::TranscriptConfig;
-use crate::verifier::p;
-use crate::verifier::q::VerifierConfig;
-use crate::verifier_split::SplitCircuit;
+use crate::verifier::{p, q};
 use sba_core::batch::SLOT_ELEMENTS;
 use sba_primitives::Fp;
 
-/// `T_q` over `n` transfer proofs under the split transcript.
+/// `T_q` over `n` transfer proofs (no previous step).
 #[derive(Clone)]
-pub struct StepQSplit {
-    pub groups: Vec<SplitCircuit>,
+pub struct StepQN {
+    pub groups: Vec<q::VerifierCircuit>,
 }
 
-impl std::fmt::Debug for StepQSplit {
+impl std::fmt::Debug for StepQN {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "StepQSplit({} proofs)", self.groups.len())
+        write!(f, "StepQN({} proofs)", self.groups.len())
     }
 }
 
-impl StepQSplit {
+impl StepQN {
+    /// The public inputs: each group side's, in order.
     pub fn instance(&self) -> Vec<pallas::Scalar> {
-        self.groups.iter().flat_map(|g| g.instance()).collect()
+        self.groups
+            .iter()
+            .flat_map(|g| g.instance(g.capture.as_ref().expect("values")))
+            .collect()
     }
+
+    /// Where the i-th proof's public inputs start.
     pub fn offsets(&self) -> Vec<usize> {
-        let mut v = Vec::new();
+        let mut v = Vec::with_capacity(self.groups.len());
         let mut at = 0;
         for g in &self.groups {
             v.push(at);
-            at += g.instance_len();
+            at += g.layout().len();
         }
         v
     }
+
+    /// How a `p` circuit carries this circuit's instance values.
     pub fn instance_limbs_when_verified(&self) -> Vec<usize> {
         self.groups
             .iter()
@@ -57,62 +62,71 @@ impl StepQSplit {
     }
 }
 
-impl Circuit<pallas::Scalar> for StepQSplit {
-    type Config = VerifierConfig;
+impl Circuit<pallas::Scalar> for StepQN {
+    type Config = q::VerifierConfig;
     type FloorPlanner = SimpleFloorPlanner;
+
     fn without_witnesses(&self) -> Self {
-        StepQSplit {
+        StepQN {
             groups: self.groups.iter().map(|g| g.without_witnesses()).collect(),
         }
     }
-    fn configure(meta: &mut ConstraintSystem<pallas::Scalar>) -> VerifierConfig {
-        crate::verifier::q::VerifierCircuit::configure(meta)
+
+    fn configure(meta: &mut ConstraintSystem<pallas::Scalar>) -> q::VerifierConfig {
+        q::VerifierCircuit::configure(meta)
     }
+
     fn synthesize(
         &self,
-        cfg: VerifierConfig,
+        cfg: q::VerifierConfig,
         mut l: impl Layouter<pallas::Scalar>,
     ) -> Result<(), Error> {
         cfg.assign_table(&mut l)?;
         let mut at = 0;
         for g in &self.groups {
-            at = g.synthesize_from(&cfg, &mut l, at)?;
+            let ex = g.synthesize_core(&cfg, &mut l, at)?;
+            at += ex.cells.len();
         }
         Ok(())
     }
 }
 
-/// `T_p` over the block, both sides split.
+/// `T_p` over the block: the `p` group side of `T_q`, the field side of
+/// each transfer proof bound to its part of `T_q`'s instance values, the
+/// relation with each transfer slot bound to its proof's statement.
 #[derive(Clone)]
-pub struct StepPSplit {
+pub struct StepPN {
     pub group: p::VerifierCircuit,
-    /// Per transfer proof: its split field side, its links (empty = bound
-    /// by the sponge), and where its proof's part of `T_q`'s instance starts.
+    /// Per transfer proof: its field side, the links into its part of
+    /// `T_q`'s instance values, and where that part starts.
     pub fields: Vec<(FieldSideCircuit, Vec<Vec<usize>>, usize)>,
     pub batch: BatchCircuit,
+    /// Per slot: the positions among `T_q`'s instance values of the
+    /// statement it is bound to (`None` for a mint or an empty slot).
     pub slot_links: Vec<Option<Vec<usize>>>,
 }
 
 #[derive(Clone, Debug)]
-pub struct StepPSplitConfig {
+pub struct StepPNConfig {
     pub group: p::VerifierConfig,
     pub field: FieldConfig,
-    pub sponge: TranscriptConfig<Fp>,
     pub batch: BatchConfig,
 }
 
-impl std::fmt::Debug for StepPSplit {
+impl std::fmt::Debug for StepPN {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "StepPSplit({} proofs, {} slots)",
+            "StepPN({} proofs, {} slots)",
             self.fields.len(),
             self.batch.n
         )
     }
 }
 
-impl StepPSplit {
+impl StepPN {
+    /// The first instance column: the group side's public inputs, then
+    /// `s_prev`, `s_next`, `D`; the relation's own column stays empty.
     pub fn instance(&self) -> Vec<Fp> {
         let mut v = self
             .group
@@ -122,11 +136,12 @@ impl StepPSplit {
     }
 }
 
-impl Circuit<vesta::Scalar> for StepPSplit {
-    type Config = StepPSplitConfig;
+impl Circuit<vesta::Scalar> for StepPN {
+    type Config = StepPNConfig;
     type FloorPlanner = SimpleFloorPlanner;
+
     fn without_witnesses(&self) -> Self {
-        StepPSplit {
+        StepPN {
             group: self.group.without_witnesses(),
             fields: self
                 .fields
@@ -137,25 +152,22 @@ impl Circuit<vesta::Scalar> for StepPSplit {
             slot_links: self.slot_links.clone(),
         }
     }
-    fn configure(meta: &mut ConstraintSystem<Fp>) -> StepPSplitConfig {
-        let field = FieldSideCircuit::configure_field(meta);
-        let sponge = FieldSideCircuit::configure_sponge(meta, &field);
-        StepPSplitConfig {
+
+    fn configure(meta: &mut ConstraintSystem<Fp>) -> StepPNConfig {
+        StepPNConfig {
             group: p::VerifierCircuit::configure(meta),
-            field,
-            sponge,
+            field: FieldSideCircuit::configure_field(meta),
             batch: BatchConfig::configure(meta),
         }
     }
-    fn synthesize(&self, cfg: StepPSplitConfig, mut l: impl Layouter<Fp>) -> Result<(), Error> {
+
+    fn synthesize(&self, cfg: StepPNConfig, mut l: impl Layouter<Fp>) -> Result<(), Error> {
         cfg.group.assign_table(&mut l)?;
-        cfg.sponge.assign_table(&mut l)?;
         cfg.batch.assign_table(&mut l)?;
         let ex = self.group.synthesize_core(&cfg.group, &mut l, 0)?;
         let mut ch = FieldChip::new(&cfg.field);
         for (field, links, offset) in &self.fields {
-            let (inputs, outputs) =
-                field.synthesize_core(&cfg.field, Some(&cfg.sponge), None, &mut l)?;
+            let (inputs, outputs) = field.synthesize_core(&cfg.field, None, None, &mut l)?;
             let cells: Vec<_> = inputs.into_iter().chain(outputs).collect();
             bind(&mut ch, &mut l, &cells, links, &ex.instance_values, *offset)?;
         }
@@ -175,6 +187,7 @@ impl Circuit<vesta::Scalar> for StepPSplit {
             }
             ch.assert_equal(&mut l, &slot[SLOT_ELEMENTS - 1], &zero)?;
         }
+        eprintln!("step: {} proofs, {} slots", self.fields.len(), self.batch.n);
         Ok(())
     }
 }
@@ -182,29 +195,34 @@ impl Circuit<vesta::Scalar> for StepPSplit {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::capture::capture;
+    use crate::capture::{Capture, capture};
     use crate::fieldside::fp::Structure;
     use crate::native::{PoseidonRead, PoseidonWrite};
-    use crate::shadow::fp::Shadow;
-    use crate::split::{capture_split, SplitWrite};
-    use crate::verifier::q;
-    use crate::verifier_split::SplitPlan;
+    use crate::verifier::tests_support::q_circuit;
     use halo2_proofs::dev::MockProver;
     use halo2_proofs::plonk;
     use halo2_proofs::poly::commitment::{Claim, Params};
-    use rand::rngs::StdRng;
     use rand::SeedableRng;
+    use rand::rngs::StdRng;
     use sb_common::carrier::carrier_output;
-    use sba_circuit::{TransferCircuit, K};
+    use sba_circuit::{K, TransferCircuit, TransferStatement};
+    use sba_core::envelope::{Envelope, parse_envelope};
+    use sba_core::event::EventKind;
     use sba_core::note::decrypt_as_recipient;
-    use sba_indexer::testing::{tx_with, MockChain, World, ACTIVATION};
+    use sba_indexer::testing::{ACTIVATION, MockChain, World, tx_with};
 
-    /// `cargo test --release two_transfers_both_sides_split -- --ignored --nocapture`
-    /// (`SB_PROVE_STEP5=1`: the real proofs and the decider).
-    #[test]
-    #[ignore]
-    fn two_transfers_both_sides_split() {
-        // the block, as the indexer replays it, and the two transfers' circuit inputs
+    /// Two mints to alice; then a block with two transfers (each spending
+    /// one mint, to bob) and a mint. The second block's witness and the
+    /// captures of its two transfer proofs, in slot order.
+    fn replayed_block_with_two_transfers() -> (
+        sba_core::batch::BatchWitness,
+        sba_core::batch::BatchParams,
+        Params<vesta::Affine>,
+        plonk::VerifyingKey<vesta::Affine>,
+        Vec<Capture<vesta::Affine>>,
+        Fp,
+        sba_core::batch::StateOpening,
+    ) {
         let mut w = World::new();
         let (_, alice0) = w.alice.ivk.find_address(0);
         let (_, bob0) = w.bob.ivk.find_address(0);
@@ -222,13 +240,13 @@ mod tests {
                 (pt, ev.h_body, ev.first_position)
             })
             .collect();
-        let (e1, st1, w1) = w.transfer_full(
+        let e1 = w.transfer(
             &idx,
             1000,
             Some((notes[0].0, notes[0].1, 0, notes[0].2)),
             [(bob0, 700), (alice0, 300)],
         );
-        let (e2, st2, w2) = w.transfer_full(
+        let e2 = w.transfer(
             &idx,
             1000,
             Some((notes[1].0, notes[1].1, 0, notes[1].2)),
@@ -243,68 +261,65 @@ mod tests {
         let r = idx.sync(&chain).unwrap();
         assert_eq!((r.accepted, r.rejected), (3, 0));
         let witness = idx.state.batches[1].clone();
-        let bparams = idx.batch_params();
+        let params = idx.batch_params();
         let opening_after = idx.state.opening(idx.next_height());
         let s_next = opening_after.digest();
-        assert_eq!(witness.check(&bparams).unwrap().s_next, s_next);
-        // the same two transfers proven under the split transcript
-        let params: Params<vesta::Affine> = Params::new(K);
-        let vk = plonk::keygen_vk(&params, &TransferCircuit::default()).unwrap();
-        let pk = plonk::keygen_pk(&params, vk.clone(), &TransferCircuit::default()).unwrap();
-        let mut groups = Vec::new();
-        let mut fields_data = Vec::new();
-        for (i, (st, wit)) in [(st1, w1), (st2, w2)].into_iter().enumerate() {
-            let instance = st.to_field_elements();
-            let mut tr = SplitWrite::init(vec![]);
-            plonk::create_proof(
-                &params,
-                &pk,
-                &[TransferCircuit {
-                    statement: Some(st.clone()),
-                    witness: Some(wit),
-                    negate_g_d: false,
-                }],
-                &[&[&instance[..]]],
-                &mut StdRng::seed_from_u64(90 + i as u64),
-                &mut tr,
-            )
-            .unwrap();
-            let proof = tr.finalize();
-            let (cap, froms) = capture_split(&params, &vk, &instance, &proof).unwrap();
-            let sh = Shadow::compute(&params, &vk, &cap);
-            let plan = SplitPlan::build(&params, &vk, &cap, &froms, &sh);
-            groups.push(SplitCircuit {
-                plan,
-                lagrange: params.get_g_lagrange()[..instance.len()].to_vec(),
-                values: Some((cap.clone(), sh.clone())),
-            });
-            let (_, sources) = q::VerifierCircuit::shape(
-                &cap,
-                &params,
-                vk.fixed_commitments(),
-                vk.permutation_commitments(),
-            );
-            let (mut structure, shadow) = Structure::build(&params, &vk, &cap, &sources);
-            structure.split = true;
-            fields_data.push((
-                FieldSideCircuit {
-                    structure,
-                    shadow: Some(shadow),
-                },
-                cap,
-            ));
-        }
-        let step_q = StepQSplit {
-            groups: groups.clone(),
+        let halo_params: Params<vesta::Affine> = Params::new(K);
+        let vk = plonk::keygen_vk(&halo_params, &TransferCircuit::default()).unwrap();
+        let caps: Vec<Capture<vesta::Affine>> = idx
+            .state
+            .events
+            .iter()
+            .filter(|e| e.kind == EventKind::Transfer)
+            .map(|ev| {
+                let Envelope::Transfer(t) = parse_envelope(&ev.raw).unwrap() else {
+                    panic!("a transfer")
+                };
+                let st = TransferStatement {
+                    const_salt: w.deployment.const_salt_fp(),
+                    r_anchor: idx.root_at(t.body.h_anchor).unwrap(),
+                    nullifiers: t.body.nullifiers,
+                    pk_eph: t.body.pk_eph,
+                    ct_note: t.body.ct_note,
+                    h_body: t.body.h_body(&w.deployment.const_salt),
+                };
+                capture(&halo_params, &vk, &st.to_field_elements(), &t.proof, &[]).unwrap()
+            })
+            .collect();
+        assert_eq!(caps.len(), 2);
+        (
+            witness,
+            params,
+            halo_params,
+            vk,
+            caps,
+            s_next,
+            opening_after,
+        )
+    }
+
+    /// `cargo test --release a_block_with_two_transfers -- --ignored --nocapture`
+    /// (`SB_PROVE_STEP4=1`: both proofs for real and the decider).
+    #[test]
+    #[ignore]
+    fn a_block_with_two_transfers_in_one_step() {
+        let (witness, bparams, params, vk, caps, s_next, opening_after) =
+            replayed_block_with_two_transfers();
+        let st = witness
+            .check(&bparams)
+            .expect("the native relation accepts");
+        assert_eq!(st.s_next, s_next);
+        // T_q over both transfer proofs
+        let qcs: Vec<q::VerifierCircuit> =
+            caps.iter().map(|c| q_circuit(&params, &vk, c)).collect();
+        let step_q = StepQN {
+            groups: qcs.clone(),
         };
         let instance_q = step_q.instance();
         let offsets = step_q.offsets();
-        println!(
-            "T_q (split) over 2 proofs: public inputs {}",
-            instance_q.len()
-        );
+        println!("T_q over 2 proofs: public inputs {}", instance_q.len());
         let t = std::time::Instant::now();
-        let mut k_q = 15;
+        let mut k_q = 16;
         let prover = loop {
             match MockProver::run(k_q, &step_q, vec![instance_q.clone()]) {
                 Ok(p) => break p,
@@ -316,12 +331,8 @@ mod tests {
         };
         prover.assert_satisfied();
         println!(
-            "T_q (split) fits k = {k_q} (mock {:.1} s)",
+            "T_q fits k = {k_q} (mock {:.1} s)",
             t.elapsed().as_secs_f64()
-        );
-        println!(
-            "{:?}",
-            halo2_proofs::dev::CircuitCost::<pallas::Point, _>::measure(k_q, &step_q)
         );
         let t = std::time::Instant::now();
         let outer: Params<pallas::Affine> = Params::new(k_q);
@@ -335,7 +346,7 @@ mod tests {
             &opk,
             &[step_q.clone()],
             &[&[&instance_q[..]]],
-            &mut StdRng::seed_from_u64(95),
+            &mut StdRng::seed_from_u64(51),
             &mut tr,
         )
         .unwrap();
@@ -365,25 +376,30 @@ mod tests {
             capture: Some(cap_q.clone()),
         };
         let mut fields = Vec::new();
-        let mut statement_positions = Vec::new();
-        for (i, ((field, cap), g)) in fields_data.into_iter().zip(&groups).enumerate() {
-            let n_evals = field.structure.n_instance_q
-                + field.structure.n_advice_q
-                + field.structure.n_fixed_q
-                + 1
-                + field.structure.n_perm_common
-                + (3 * field.structure.n_chunks - 1)
-                + 5 * field.structure.n_lookups;
-            let links = g.links_for_field_side(n_evals, field.structure.sets.len());
-            let _ = cap;
-            fields.push((field, links, offsets[i]));
+        let mut statement_positions: Vec<Vec<usize>> = Vec::new();
+        for (i, (cap, qc)) in caps.iter().zip(&qcs).enumerate() {
+            let (_, sources) = q::VerifierCircuit::shape(
+                cap,
+                &params,
+                vk.fixed_commitments(),
+                vk.permutation_commitments(),
+            );
+            let (structure, shadow) = Structure::build(&params, &vk, cap, &sources);
+            fields.push((
+                FieldSideCircuit {
+                    structure,
+                    shadow: Some(shadow),
+                },
+                qc.links_for_field_side(),
+                offsets[i],
+            ));
             statement_positions.push(
-                g.statement_positions()
-                    .iter()
-                    .map(|p| offsets[i] + p)
-                    .collect::<Vec<_>>(),
+                (0..cap.instance.len())
+                    .map(|j| offsets[i] + qc.instance_value_slots(j)[0])
+                    .collect(),
             );
         }
+        // transfer slots in order are the transfer proofs in order
         let mut next_transfer = 0;
         let slot_links: Vec<Option<Vec<usize>>> = witness
             .slots
@@ -399,7 +415,7 @@ mod tests {
             .collect();
         assert_eq!(next_transfer, 2);
         let n = witness.slots.len();
-        let step_p = StepPSplit {
+        let step_p = StepPN {
             group,
             fields,
             batch: BatchCircuit {
@@ -411,7 +427,7 @@ mod tests {
         };
         let instance_p = step_p.instance();
         println!(
-            "T_p (split) over the block: public inputs {}",
+            "T_p over the block ({n} slots, 2 proofs): public inputs {}",
             instance_p.len()
         );
         let t = std::time::Instant::now();
@@ -428,21 +444,34 @@ mod tests {
         };
         prover.assert_satisfied();
         println!(
-            "T_p (split) fits k = {k_p} (mock {:.1} s)",
+            "T_p fits k = {k_p} (mock {:.1} s)",
             t.elapsed().as_secs_f64()
         );
         println!(
             "{:?}",
             halo2_proofs::dev::CircuitCost::<vesta::Point, _>::measure(k_p, &step_p)
         );
-        if std::env::var("SB_PROVE_STEP5").is_err() {
-            println!("SB_PROVE_STEP5 unset: stopping before the real T_p proof");
+        // the second transfer's slot bound to the first proof's statement is refused
+        let mut swapped = step_p.clone();
+        swapped.slot_links.swap(0, 1);
+        assert!(
+            MockProver::run(k_p, &swapped, vec![instance_p.clone(), vec![]])
+                .unwrap()
+                .verify()
+                .is_err()
+        );
+        // the wire: the claims read back from T_q's public inputs are the
+        // transfer proofs' own
+        let read_claims = crate::wire::claims_of(&step_q, K as usize, &instance_q).unwrap();
+        for (c, cap) in read_claims.iter().zip(&caps) {
+            assert_eq!(c.g, cap.g);
+            assert_eq!(c.u, cap.u);
+        }
+        if std::env::var("SB_PROVE_STEP4").is_err() {
+            println!("SB_PROVE_STEP4 unset: stopping before the real T_p proof");
             return;
         }
-        let claims: Vec<Claim<vesta::Affine>> = groups
-            .iter()
-            .map(|g| g.values.as_ref().unwrap().0.claim())
-            .collect();
+        let claims: Vec<Claim<vesta::Affine>> = caps.iter().map(|c| c.claim()).collect();
         let t = std::time::Instant::now();
         let pparams: Params<vesta::Affine> = Params::new(k_p);
         let pvk = plonk::keygen_vk(&pparams, &step_p.without_witnesses()).unwrap();
@@ -456,7 +485,7 @@ mod tests {
             &[step_p.clone()],
             &[&[&instance_p[..], &[]]],
             &claims,
-            &mut StdRng::seed_from_u64(96),
+            &mut StdRng::seed_from_u64(52),
             &mut tr,
         )
         .unwrap();
@@ -490,22 +519,42 @@ mod tests {
             "decider (both): {:.1} ms",
             t.elapsed().as_secs_f64() * 1000.0
         );
-        println!(
-            "on the wire: {} bytes",
-            4 + 4
-                + 4
-                + n * SLOT_ELEMENTS * 32
-                + 3 * 32
-                + 24
-                + 4
-                + instance_q.len() * 32
-                + 4
-                + proof_q.len()
-                + 4
-                + instance_p.len() * 32
-                + 4
-                + proof_p.len()
+        // the proven step on the wire, decided by a client from its state digest
+        let step = crate::wire::ProvenStep {
+            height: 1001,
+            slots: witness
+                .slots
+                .iter()
+                .map(|s| s.as_ref().map(|s| s.statement))
+                .collect(),
+            opening_after,
+            instance_q: instance_q.clone(),
+            proof_q: proof_q.clone(),
+            instance_p: instance_p.clone(),
+            proof_p: proof_p.clone(),
+        };
+        let bytes = step.to_bytes();
+        println!("proven step on the wire: {} bytes", bytes.len());
+        let back = crate::wire::ProvenStep::from_bytes(&bytes).unwrap();
+        let decider = crate::wire::Decider {
+            outer: &outer,
+            ovk: &ovk,
+            pparams: &pparams,
+            pvk: &pvk,
+            step_q: &step_q,
+            transfer_k: K as usize,
+        };
+        let t = std::time::Instant::now();
+        let s_next_got = decider.decide(&back, witness.prev.digest()).unwrap();
+        println!("decide: {:.1} ms", t.elapsed().as_secs_f64() * 1000.0);
+        assert_eq!(s_next_got, s_next);
+        assert!(
+            decider
+                .decide(&back, witness.prev.digest() + Fp::ONE)
+                .is_err()
         );
-        let _ = s_next;
+        let mut tampered = back.clone();
+        tampered.slots.swap(0, 1);
+        assert!(decider.decide(&tampered, witness.prev.digest()).is_err());
     }
 }

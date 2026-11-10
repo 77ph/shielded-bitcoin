@@ -63,6 +63,9 @@ pub enum Term {
 }
 
 /// A column of the permutation argument: which evaluation list and index.
+/// A lookup's input and table expressions.
+pub type LookupExprs = (Vec<Expression<F>>, Vec<Expression<F>>);
+
 #[derive(Clone, Copy, Debug)]
 pub enum ColEval {
     Advice(usize),
@@ -84,7 +87,7 @@ pub struct Structure {
     pub quotient_degree: usize,
     pub gate_polys: Vec<Expression<F>>,
     pub perm_columns: Vec<ColEval>,
-    pub lookups: Vec<(Vec<Expression<F>>, Vec<Expression<F>>)>,
+    pub lookups: Vec<LookupExprs>,
     /// The rotation of each distinct evaluation point.
     pub point_rotations: Vec<i32>,
     /// Each point set as point indices.
@@ -607,12 +610,12 @@ impl FieldSideCircuit {
             absorb(&mut sp, l, &instance_evals)?;
             absorb(&mut sp, l, &advice_evals)?;
             absorb(&mut sp, l, &fixed_evals)?;
-            absorb(&mut sp, l, &[random_eval.clone()])?;
+            absorb(&mut sp, l, std::slice::from_ref(&random_eval))?;
             absorb(&mut sp, l, &perm_common)?;
             for (e, n, last) in &perm_sets {
                 absorb(&mut sp, l, &[e.clone(), n.clone()])?;
                 if let Some(last) = last {
-                    absorb(&mut sp, l, &[last.clone()])?;
+                    absorb(&mut sp, l, std::slice::from_ref(last))?;
                 }
             }
             for ev in &lookup_evals {
@@ -622,7 +625,7 @@ impl FieldSideCircuit {
             ch.assert_equal(l, &x_1s, &x_1)?;
             let (_, x_2s) = sp.squeeze(l)?;
             ch.assert_equal(l, &x_2s, &x_2)?;
-            absorb(&mut sp, l, &[x_3.clone()])?;
+            absorb(&mut sp, l, std::slice::from_ref(&x_3))?;
             absorb(&mut sp, l, &multiopen_u)?;
             let (_, x_4s) = sp.squeeze(l)?;
             ch.assert_equal(l, &x_4s, &x_4)?;

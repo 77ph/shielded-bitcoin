@@ -54,13 +54,13 @@ pub mod p {
 
 #[cfg(test)]
 pub(crate) mod tests_support {
-    use crate::capture::{capture, Capture};
+    use crate::capture::{Capture, capture};
     use halo2_proofs::plonk;
     use halo2_proofs::poly::commitment::Params;
     use pasta_curves::vesta;
-    use rand::rngs::StdRng;
     use rand::SeedableRng;
-    use sba_circuit::{TransferCircuit, TransferParams, K};
+    use rand::rngs::StdRng;
+    use sba_circuit::{K, TransferCircuit, TransferParams};
 
     /// A real transfer proof, captured.
     pub(crate) fn real() -> (
@@ -172,24 +172,30 @@ mod tests {
             })
             .sum::<usize>();
         bad[n_transcript] += F::ONE;
-        assert!(MockProver::run(k, &circuit, vec![bad])
-            .unwrap()
-            .verify()
-            .is_err());
+        assert!(
+            MockProver::run(k, &circuit, vec![bad])
+                .unwrap()
+                .verify()
+                .is_err()
+        );
         // a wrong statement value is refused too (the commitment moves)
         let mut bad = instance.clone();
         bad[1] += F::ONE;
-        assert!(MockProver::run(k, &circuit, vec![bad])
-            .unwrap()
-            .verify()
-            .is_err());
+        assert!(
+            MockProver::run(k, &circuit, vec![bad])
+                .unwrap()
+                .verify()
+                .is_err()
+        );
         // and so is a wrong G
         let mut bad = instance.clone();
         let n = bad.len();
         bad[n - 1] += F::ONE;
-        assert!(MockProver::run(k, &circuit, vec![bad])
-            .unwrap()
-            .verify()
-            .is_err());
+        assert!(
+            MockProver::run(k, &circuit, vec![bad])
+                .unwrap()
+                .verify()
+                .is_err()
+        );
     }
 }

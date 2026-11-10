@@ -18,7 +18,7 @@
 //! a soundness one.
 
 use ff::{Field, PrimeField};
-use halo2_gadgets::poseidon::{primitives as poseidon, Hash as PoseidonHash, Pow5Chip, Pow5Config};
+use halo2_gadgets::poseidon::{Hash as PoseidonHash, Pow5Chip, Pow5Config, primitives as poseidon};
 use halo2_gadgets::utilities::lookup_range_check::{
     LookupRangeCheck, PallasLookupRangeCheckConfig,
 };
@@ -29,10 +29,10 @@ use halo2_proofs::plonk::{
 };
 use halo2_proofs::poly::Rotation;
 
-use sba_core::batch::{BatchParams, BatchWitness, SlotWitness, DIGEST_CHUNK, SLOT_ELEMENTS};
+use sba_core::batch::{BatchParams, BatchWitness, DIGEST_CHUNK, SLOT_ELEMENTS, SlotWitness};
 use sba_core::tree::{DEPTH, EMPTY_ROOTS};
-use sba_primitives::tags::{t_batch, t_imt, t_leaf, t_node, t_state};
 use sba_primitives::Fp;
+use sba_primitives::tags::{t_batch, t_imt, t_leaf, t_node, t_state};
 
 pub type Cell = AssignedCell<Fp, Fp>;
 
@@ -913,9 +913,9 @@ pub(crate) mod tests_support {
     use super::*;
     use group::prime::PrimeCurveAffine;
     use pasta_curves::arithmetic::CurveAffine;
-    use sba_core::batch::{no_path, NullifierInsert, SlotStatement, StateOpening, NO_CT};
+    use sba_core::batch::{NO_CT, NullifierInsert, SlotStatement, StateOpening, no_path};
     use sba_core::imt::IndexedMerkleTree;
-    use sba_core::note::{note_leaf, NoteCiphertext};
+    use sba_core::note::{NoteCiphertext, note_leaf};
     use sba_core::tree::NoteTree;
     use sba_core::xy;
     use sba_primitives::Affine;
@@ -1098,7 +1098,7 @@ pub(crate) mod tests_support {
 
 #[cfg(test)]
 mod tests {
-    use super::tests_support::{params, two_blocks, History};
+    use super::tests_support::{History, params, two_blocks};
     use super::*;
     use halo2_proofs::dev::MockProver;
 
@@ -1255,16 +1255,20 @@ mod tests {
         // a wrong D, a wrong s_next
         let mut bad = instance.clone();
         bad[2] += Fp::ONE;
-        assert!(MockProver::run(k, &circuit, vec![bad])
-            .unwrap()
-            .verify()
-            .is_err());
+        assert!(
+            MockProver::run(k, &circuit, vec![bad])
+                .unwrap()
+                .verify()
+                .is_err()
+        );
         let mut bad = instance.clone();
         bad[1] += Fp::ONE;
-        assert!(MockProver::run(k, &circuit, vec![bad])
-            .unwrap()
-            .verify()
-            .is_err());
+        assert!(
+            MockProver::run(k, &circuit, vec![bad])
+                .unwrap()
+                .verify()
+                .is_err()
+        );
         // a nullifier out of order (below its low leaf) in the witness
         let mut tampered = witness.clone();
         tampered.slots[0].as_mut().unwrap().statement.nullifiers[0] = Fp::from(1u64);
@@ -1273,10 +1277,12 @@ mod tests {
             params,
             witness: Some(tampered),
         };
-        assert!(MockProver::run(k, &bad, vec![instance.clone()])
-            .unwrap()
-            .verify()
-            .is_err());
+        assert!(
+            MockProver::run(k, &bad, vec![instance.clone()])
+                .unwrap()
+                .verify()
+                .is_err()
+        );
         // the anchor outside the window
         let mut tampered = witness.clone();
         tampered.slots[0].as_mut().unwrap().statement.h_anchor = 900;
@@ -1286,9 +1292,11 @@ mod tests {
             params,
             witness: Some(tampered),
         };
-        assert!(MockProver::run(k, &bad, vec![instance])
-            .unwrap()
-            .verify()
-            .is_err());
+        assert!(
+            MockProver::run(k, &bad, vec![instance])
+                .unwrap()
+                .verify()
+                .is_err()
+        );
     }
 }

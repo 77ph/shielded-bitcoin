@@ -313,8 +313,12 @@ implementation of the paper? Rules this repository adopts:
   with `family`, replay over `sb-common`'s chain sources and carriers
   with the family's prefix, JSON store), `sba-wallet` (scanning,
   recovery, selection, the builder, encrypted files under
-  `sb-a/v1/wallet`), and `sba-cli`, to which `sb` dispatches when the
-  profile names family `a-halo2` (`profile-new --family a-halo2`).
+  `sb-a/v1/wallet`), `sba-cli`, to which `sb` dispatches when the
+  profile names family `a-halo2` (`profile-new --family a-halo2`), and
+  `sba-replay`, the accumulated replay proof of `REPLAY-PROOF-A.md`
+  (the verifier circuits over the Pasta cycle, the batch relation, the
+  step prover and the decider; development-grade, built on the vendored
+  `halo2_proofs` and the Vesta chip port under `experiments/`).
   Tests: unit tests per crate, a real transfer proven and verified, a
   mock-chain replay with every rejection class and a reorganisation, a
   wallet flow, and `sb` end to end on the fake node on both carriers

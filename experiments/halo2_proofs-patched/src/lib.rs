@@ -1,3 +1,5 @@
+// Vendored upstream code: not held to this repository's clippy settings.
+#![allow(clippy::all)]
 //! # halo2_proofs
 
 #![cfg_attr(docsrs, feature(doc_cfg))]

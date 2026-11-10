@@ -14,7 +14,7 @@ use std::io::{self, Read};
 use ff::Field;
 use halo2_proofs::arithmetic::CurveAffine;
 use halo2_proofs::plonk::{self, Error, VerificationStrategy, VerifyingKey};
-use halo2_proofs::poly::commitment::{Claim, Guard, Params, MSM};
+use halo2_proofs::poly::commitment::{Claim, Guard, MSM, Params};
 use halo2_proofs::transcript::{EncodedChallenge, Transcript, TranscriptRead};
 
 use crate::native::{Challenge, Limbs, PoseidonField, PoseidonRead};
@@ -222,13 +222,13 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use group::prime::PrimeCurveAffine;
     use group::Curve;
+    use group::prime::PrimeCurveAffine;
     use halo2_proofs::poly::commitment::Params;
     use pasta_curves::vesta;
-    use rand::rngs::StdRng;
     use rand::SeedableRng;
-    use sba_circuit::{TransferCircuit, TransferParams, K};
+    use rand::rngs::StdRng;
+    use sba_circuit::{K, TransferCircuit, TransferParams};
 
     #[test]
     fn a_real_proof_captures_to_an_identity_msm() {

@@ -220,88 +220,6 @@ impl<R: Read> TranscriptRead<C, Challenge<C>> for SplitRead<R> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use halo2_proofs::plonk;
-    use halo2_proofs::poly::commitment::Params;
-    use rand::rngs::StdRng;
-    use rand::SeedableRng;
-    use sba_circuit::{TransferCircuit, K};
-
-    /// A transfer proof under the split transcript: proven, verified, its
-    /// challenges by sponge as §3.6 lists them.
-    #[test]
-    fn a_transfer_proof_under_the_split_transcript() {
-        let (st, w) = crate::sample::sample();
-        let params: Params<vesta::Affine> = Params::new(K);
-        let vk = plonk::keygen_vk(&params, &TransferCircuit::default()).unwrap();
-        let pk = plonk::keygen_pk(&params, vk.clone(), &TransferCircuit::default()).unwrap();
-        let circuit = TransferCircuit {
-            statement: Some(st.clone()),
-            witness: Some(w),
-            negate_g_d: false,
-        };
-        let instance = st.to_field_elements();
-        let mut tr = SplitWrite::init(vec![]);
-        plonk::create_proof(
-            &params,
-            &pk,
-            &[circuit],
-            &[&[&instance[..]]],
-            &mut StdRng::seed_from_u64(61),
-            &mut tr,
-        )
-        .unwrap();
-        let proof = tr.finalize();
-        assert_eq!(proof.len(), 4416, "the bytes are a-0.3's");
-        let mut tr = SplitRead::init(&proof[..]);
-        plonk::verify_proof(
-            &params,
-            &vk,
-            plonk::SingleVerifier::new(&params),
-            &[&[&instance[..]]],
-            &mut tr,
-        )
-        .unwrap();
-        let froms: Vec<From> = tr
-            .events
-            .iter()
-            .filter_map(|e| match e {
-                Event::Squeeze(_, f) => Some(*f),
-                _ => None,
-            })
-            .collect();
-        // θ β γ y x from the points; x_1 x_2 from the scalars; x_3 from the
-        // points; x_4 from the scalars; ξ z and the 14 u_j from the points
-        let mut expected = vec![From::Points; 5];
-        expected.extend([From::Scalars, From::Scalars, From::Points, From::Scalars]);
-        expected.extend(vec![From::Points; 2 + K as usize]);
-        assert_eq!(froms, expected);
-        // the a-0.3 verifier refuses it, and a tampered proof fails here
-        let mut tr = crate::native::PoseidonRead::<_, vesta::Affine>::init(&proof[..]);
-        assert!(plonk::verify_proof(
-            &params,
-            &vk,
-            plonk::SingleVerifier::new(&params),
-            &[&[&instance[..]]],
-            &mut tr,
-        )
-        .is_err());
-        let mut bad = proof.clone();
-        bad[300] ^= 1;
-        let mut tr = SplitRead::init(&bad[..]);
-        assert!(plonk::verify_proof(
-            &params,
-            &vk,
-            plonk::SingleVerifier::new(&params),
-            &[&[&instance[..]]],
-            &mut tr,
-        )
-        .is_err());
-    }
-}
-
 /// The capture of a proof under the split transcript: the a-0.3 shaped
 /// capture (so that `shadow` reads it) and, per challenge, which sponge
 /// produced it.
@@ -361,4 +279,90 @@ pub fn capture_split(
         },
         froms,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use halo2_proofs::plonk;
+    use halo2_proofs::poly::commitment::Params;
+    use rand::SeedableRng;
+    use rand::rngs::StdRng;
+    use sba_circuit::{K, TransferCircuit};
+
+    /// A transfer proof under the split transcript: proven, verified, its
+    /// challenges by sponge as §3.6 lists them.
+    #[test]
+    fn a_transfer_proof_under_the_split_transcript() {
+        let (st, w) = crate::sample::sample();
+        let params: Params<vesta::Affine> = Params::new(K);
+        let vk = plonk::keygen_vk(&params, &TransferCircuit::default()).unwrap();
+        let pk = plonk::keygen_pk(&params, vk.clone(), &TransferCircuit::default()).unwrap();
+        let circuit = TransferCircuit {
+            statement: Some(st.clone()),
+            witness: Some(w),
+            negate_g_d: false,
+        };
+        let instance = st.to_field_elements();
+        let mut tr = SplitWrite::init(vec![]);
+        plonk::create_proof(
+            &params,
+            &pk,
+            &[circuit],
+            &[&[&instance[..]]],
+            &mut StdRng::seed_from_u64(61),
+            &mut tr,
+        )
+        .unwrap();
+        let proof = tr.finalize();
+        assert_eq!(proof.len(), 4416, "the bytes are a-0.3's");
+        let mut tr = SplitRead::init(&proof[..]);
+        plonk::verify_proof(
+            &params,
+            &vk,
+            plonk::SingleVerifier::new(&params),
+            &[&[&instance[..]]],
+            &mut tr,
+        )
+        .unwrap();
+        let froms: Vec<From> = tr
+            .events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Squeeze(_, f) => Some(*f),
+                _ => None,
+            })
+            .collect();
+        // θ β γ y x from the points; x_1 x_2 from the scalars; x_3 from the
+        // points; x_4 from the scalars; ξ z and the 14 u_j from the points
+        let mut expected = vec![From::Points; 5];
+        expected.extend([From::Scalars, From::Scalars, From::Points, From::Scalars]);
+        expected.extend(vec![From::Points; 2 + K as usize]);
+        assert_eq!(froms, expected);
+        // the a-0.3 verifier refuses it, and a tampered proof fails here
+        let mut tr = crate::native::PoseidonRead::<_, vesta::Affine>::init(&proof[..]);
+        assert!(
+            plonk::verify_proof(
+                &params,
+                &vk,
+                plonk::SingleVerifier::new(&params),
+                &[&[&instance[..]]],
+                &mut tr,
+            )
+            .is_err()
+        );
+        let mut bad = proof.clone();
+        bad[300] ^= 1;
+        let mut tr = SplitRead::init(&bad[..]);
+        assert!(
+            plonk::verify_proof(
+                &params,
+                &vk,
+                plonk::SingleVerifier::new(&params),
+                &[&[&instance[..]]],
+                &mut tr,
+            )
+            .is_err()
+        );
+    }
 }

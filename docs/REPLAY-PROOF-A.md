@@ -282,7 +282,7 @@ scalars live in `Fp`) — and the crate's tests that drew scalars as
 random base-field elements or `−1` were changed to draw them in `Fp`.
 The transcript gadget is the gadget crate's `Pow5Chip` over `Fq` with
 the sponge rule of `PROFILE-A.md` §1.1: **done the same day,
-`experiments/halo2-verifier/src/transcript.rs`** [measured]: the gadget
+`variants/a-halo2/crates/sba-replay/src/transcript.rs`** [measured]: the gadget
 reproduces the native sponge's challenges on random scripts (the mock
 prover refuses a wrong challenge), the 128-bit challenge is a
 constrained cell (`s0 = c + 2^128 h`, `c < 2^128`, `h < 2^127` through
@@ -291,7 +291,7 @@ the 10-bit table), and a transcript of the shape of a transfer proof's
 **k = 13** on its own, below the ≈ 9 000 rows estimated above.
 
 **The verifier gadget, measured the same day**
-(`experiments/halo2-verifier/src/{capture,verifier}.rs`). The native
+(`variants/a-halo2/crates/sba-replay/src/{capture,verifier}.rs`). The native
 verifier is run first with a recording Poseidon transcript and a
 strategy that keeps the guard's deferred form (`Guard::use_g`, the
 accumulated mode of §2), which yields for one real transfer proof: 1
@@ -328,7 +328,7 @@ Pallas-committed proof of its own: key generation 13.1 s, proving
 quarter of the ≈ 2^17 estimated in §3.3: the chip's variable-base
 multiplication costs ≈ 260 rows, not 700. Not yet in: the `Fp` side.
 
-**Towards the `Fp` side** (same day): `experiments/halo2-verifier/src/
+**Towards the `Fp` side** (same day): `variants/a-halo2/crates/sba-replay/src/
 shadow.rs` recomputes natively, from the typed transcript events and the
 key, every scalar of the final multi-scalar multiplication exactly as
 `halo2_proofs`' verifier does — `x^n`, `l_0`, `l_last`, `l_blind`, the
@@ -345,7 +345,7 @@ per operation: `a·b·m + a·sa + b·sb + c·sc + k = d`, with inversion as a
 witnessed inverse and an expression-tree evaluator).
 
 **The field side, measured the same day**
-(`experiments/halo2-verifier/src/fieldside.rs`): the circuit over `Fp`
+(`variants/a-halo2/crates/sba-replay/src/fieldside.rs`): the circuit over `Fp`
 that mirrors the shadow step by step with that chip. Its structure
 (the gate polynomials, the permutation columns and their query indices,
 the lookup expressions, the evaluation points as rotations of `x`, the
@@ -438,7 +438,7 @@ reads as a Pallas scalar: it fits unless it lies in `[p, q)`, a range of
 soundness one, since the commitment is binding.
 
 **One step, measured (4 November 2026)** [measured,
-`experiments/halo2-verifier/src/step.rs`]: the `q` group side of a
+`variants/a-halo2/crates/sba-replay/src/step.rs`]: the `q` group side of a
 real transfer proof proven for real as `T_q` at k = 15 (keygen 10.8 s,
 prove 4.2 s, 4 960 bytes, 221 public inputs, native verification 55 ms
 with the Poseidon transcript over `Fp`); its capture: 61 points and 94
@@ -625,7 +625,7 @@ instance values of the transfer proofs' group sides in `T_q` (bound by
 their instance commitments and, through the step, by `D`).
 
 **A proven step** (the wire format the light client reads; built,
-`experiments/halo2-verifier/src/wire.rs`, 10 November): the height,
+`variants/a-halo2/crates/sba-replay/src/wire.rs`, 10 November): the height,
 the slots in replay order (16 elements each, an empty slot all zeros),
 the state opening after, `T_q`'s public inputs and proof, `T_p`'s
 first-column public inputs and proof — a versioned byte string, read
@@ -733,7 +733,7 @@ Per transfer proof the `T_q` instance is then ≈ 64 values — 26
 challenges, 20 claimed scalars, `G`, the 17-element statement — in
 place of 221, and `T_p`'s recomputation of it a quarter of today's.
 The transfer prover changes only in its transcript (a-0.4); the proof
-bytes do not change. **Built natively** (`experiments/halo2-verifier/src/split.rs`,
+bytes do not change. **Built natively** (`variants/a-halo2/crates/sba-replay/src/split.rs`,
 10 November): a transfer proof made under the two sponges verifies
 under them, its 4 416 bytes unchanged, its challenges come from the
 sponges exactly as listed above (five from the points, `x_1 x_2` from
@@ -841,7 +841,7 @@ for the light client's own copy of the statements.
   state file at version 2 (nullifiers in insertion order) — **done the
   same day**, every replayed block's witness accepted by the check and
   chained through the openings in the indexer's tests; the circuit in
-  `experiments/halo2-verifier/src/batch.rs` over the Poseidon chip (a
+  `variants/a-halo2/crates/sba-replay/src/batch.rs` over the Poseidon chip (a
   Merkle gadget, the indexed insertion, the slot rules) — **done the
   same day** [measured]: two slots (a transfer anchored in the root
   tree and a mint, over a synthetic two-block history driven as the
@@ -908,14 +908,15 @@ for the light client's own copy of the statements.
   recursive `T` is a slice of ordinary size, on the paper's scale per
   slot, and the design stays the full one: every transfer proof
   verified in-circuit, no trust in the indexer for them.
-* **Next:** the step `T` as §3.4 designs it: the recursion loop is
-  closed over two steps (§3.4, 5 November) and the batch relation is
-  built and measured alone (§3.7); what remains is their composition
-  — the relation inside `T_p` with its slots bound to the transfer
-  statements, driven by the indexer's own replayed blocks (its test
-  world is now a module other crates can use) — then the fragment
-  size and the wire format, then the split transcript (§3.6) for the
-  crossing values' cost.
+* **Next:** the recursion is a crate of the family since 10 November
+  (`sba-replay`: the circuits, the steps, the relation, the wire format
+  and the decider, on the vendored `halo2_proofs` and the Vesta chip
+  port, both workspace members now); the loop is closed, the relation
+  is inside the step bound to real statements, steps take several
+  transfer proofs, and the split transcript is built on both sides
+  with its trade-off measured (§3.6). What remains is a prover API over
+  the indexer's blocks with keys made once, the adoption decision on
+  a-0.4, and the second step under whichever transcript is adopted.
 * **Not now:** porting `T` (piece 3) before the gadget is measured;
   Nova or any folding library, for the reason in §3.2.
 

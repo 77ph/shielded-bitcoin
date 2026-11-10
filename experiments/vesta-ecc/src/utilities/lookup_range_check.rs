@@ -92,7 +92,6 @@ pub trait LookupRangeCheck<F: PrimeFieldBits, const K: usize>: Eq + Copy + Debug
     where
         Self: Sized;
 
-
     /// Fill `table_idx` and `table_range_check_tag`.
     ///
     /// This is only used in testing for now, since the Sinsemilla chip provides a pre-loaded table
@@ -378,7 +377,6 @@ impl<F: PrimeFieldBits, const K: usize> LookupRangeCheck<F, K> for LookupRangeCh
         config
     }
 
-
     // Fill `table_idx` and `table_range_check_tag`.
     // This is only used in testing for now, since the Sinsemilla chip provides a pre-loaded table
     // in the Orchard context.
@@ -600,7 +598,6 @@ impl<F: PrimeFieldBits, const K: usize> LookupRangeCheck<F, K>
         Self::configure_with_tag(meta, running_sum, table_idx, table_range_check_tag)
     }
 
-
     // Fill `table_idx` and `table_range_check_tag`.
     // This is only used in testing for now, since the Sinsemilla chip provides a pre-loaded table
     // in the Orchard context.
@@ -815,14 +812,12 @@ mod tests {
         assert_eq!(prover.verify(), Ok(()));
     }
 
-
     #[test]
     fn lookup_range_check_4_5b() {
         let circuit = MyLookupCircuit::<vesta::Base, VestaLookupRangeCheck4_5BConfig>::new(6);
         let prover = MockProver::<vesta::Base>::run(11, &circuit, vec![]).unwrap();
         assert_eq!(prover.verify(), Ok(()));
     }
-
 
     #[derive(Clone, Copy)]
     struct MyShortRangeCheckCircuit<F: PrimeFieldBits, Lookup: LookupRangeCheck<F, K>> {

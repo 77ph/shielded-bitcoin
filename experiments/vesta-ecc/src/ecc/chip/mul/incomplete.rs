@@ -118,8 +118,7 @@ impl<const NUM_BITS: usize> Config<NUM_BITS> {
         // Constraints used for q_mul_{2, 3} == 1
         // https://p.z.cash/halo2-0.1:ecc-var-mul-incomplete-main-loop?partial
         // https://p.z.cash/halo2-0.1:ecc-var-mul-incomplete-last-row?partial
-        let for_loop = |meta: &mut VirtualCells<vesta::Base>,
-                        y_a_next: Expression<vesta::Base>| {
+        let for_loop = |meta: &mut VirtualCells<vesta::Base>, y_a_next: Expression<vesta::Base>| {
             let one = Expression::Constant(vesta::Base::one());
 
             // z_i

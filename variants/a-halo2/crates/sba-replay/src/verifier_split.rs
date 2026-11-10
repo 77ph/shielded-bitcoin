@@ -403,9 +403,9 @@ impl SplitCircuit {
                 SKind::ReadScalar => {}
                 SKind::CommonPoint => {
                     let mut acc: Option<Point<C, Ecc>> = None;
-                    for (j, gen) in self.lagrange.iter().enumerate() {
+                    for (j, generator) in self.lagrange.iter().enumerate() {
                         let cell = g.scalar(l, cap.map(|c| c.instance[j]))?;
-                        let base = g.pinned(l, *gen)?;
+                        let base = g.pinned(l, *generator)?;
                         let prod = g.mul(l, &base, &cell)?;
                         acc = Some(match acc {
                             None => prod,
@@ -544,12 +544,12 @@ impl SplitCircuit {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::split::{capture_split, SplitWrite};
+    use crate::split::{SplitWrite, capture_split};
     use halo2_proofs::dev::MockProver;
     use halo2_proofs::plonk;
-    use rand::rngs::StdRng;
     use rand::SeedableRng;
-    use sba_circuit::{TransferCircuit, K};
+    use rand::rngs::StdRng;
+    use sba_circuit::{K, TransferCircuit};
 
     #[test]
     fn the_group_side_under_the_split_transcript() {
@@ -608,15 +608,19 @@ mod tests {
         let n_walk = 1 + instance.len() + 25;
         let mut bad = pi.clone();
         bad[1 + instance.len() + 5] += F::ONE;
-        assert!(MockProver::run(k, &circuit, vec![bad])
-            .unwrap()
-            .verify()
-            .is_err());
+        assert!(
+            MockProver::run(k, &circuit, vec![bad])
+                .unwrap()
+                .verify()
+                .is_err()
+        );
         let mut bad = pi.clone();
         bad[n_walk] += F::ONE;
-        assert!(MockProver::run(k, &circuit, vec![bad])
-            .unwrap()
-            .verify()
-            .is_err());
+        assert!(
+            MockProver::run(k, &circuit, vec![bad])
+                .unwrap()
+                .verify()
+                .is_err()
+        );
     }
 }

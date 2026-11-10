@@ -623,8 +623,8 @@ impl Shadow {
         let mut points_by_index: Vec<F> = Vec::new();
         for q in &queries {
             let key = q.point.to_repr();
-            if !point_index.contains_key(&key) {
-                point_index.insert(key, points_by_index.len());
+            if let std::collections::btree_map::Entry::Vacant(e) = point_index.entry(key) {
+                e.insert(points_by_index.len());
                 points_by_index.push(q.point);
             }
         }

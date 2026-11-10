@@ -16,6 +16,11 @@ members = [
     "variants/a-halo2/crates/sba-indexer",
     "variants/a-halo2/crates/sba-wallet",
     "variants/a-halo2/crates/sba-cli",
+    "variants/a-halo2/crates/sba-replay",
+    # the vendored halo2_proofs (the [patch] below) and the Vesta chip port
+    # sba-replay builds on; upstream code, excluded from clippy in CI
+    "experiments/halo2_proofs-patched",
+    "experiments/vesta-ecc",
 ]
 # standalone measurements with their own dependencies (experiments/README.md)
 exclude = ["experiments/twochain"]
@@ -41,6 +46,9 @@ sba-circuit = { path = "variants/a-halo2/crates/sba-circuit" }
 sba-indexer = { path = "variants/a-halo2/crates/sba-indexer" }
 sba-wallet = { path = "variants/a-halo2/crates/sba-wallet" }
 sba-cli = { path = "variants/a-halo2/crates/sba-cli" }
+sba-replay = { path = "variants/a-halo2/crates/sba-replay" }
+# the Vesta port of halo2_gadgets' ECC chip (experiments/README.md), used by sba-replay
+vesta-ecc = { path = "experiments/vesta-ecc" }
 
 # variant A: Halo 2 over the Pasta curves
 halo2_proofs = "0.3"
@@ -107,3 +115,9 @@ overflow-checks = true
 # arkworks is unusable unoptimised; keep `cargo test` fast.
 [profile.dev.package."*"]
 opt-level = 3
+
+# halo2_proofs 0.3.5 with read-only accessors and the accumulation step's
+# extra openings (experiments/halo2_proofs-patched/Cargo.toml); the prover and
+# verifier are otherwise unchanged, so every crate's proofs are the same.
+[patch.crates-io]
+halo2_proofs = { path = "experiments/halo2_proofs-patched" }

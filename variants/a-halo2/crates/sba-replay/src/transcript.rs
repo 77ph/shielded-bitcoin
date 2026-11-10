@@ -185,16 +185,14 @@ where
             let mut input = Absorbing::<PaddedWord<F>, 2>::init_empty();
             let n = self.pending.len();
             for cell in self.pending.drain(..) {
-                input
-                    .absorb(PaddedWord::Message(cell))
-                    .ok()
-                    .expect("at most two pending");
+                if input.absorb(PaddedWord::Message(cell)).is_err() {
+                    panic!("at most two pending");
+                }
             }
             for _ in n..2 {
-                input
-                    .absorb(PaddedWord::Padding(F::ZERO))
-                    .ok()
-                    .expect("fits");
+                if input.absorb(PaddedWord::Padding(F::ZERO)).is_err() {
+                    panic!("fits");
+                }
             }
             self.state = <Chip<F> as PoseidonSpongeInstructions<
                 F,
@@ -275,8 +273,8 @@ mod tests {
     use halo2_proofs::plonk::{Circuit, Instance, TableColumn};
     use halo2_proofs::transcript::EncodedChallenge;
     use pasta_curves::vesta;
-    use rand::rngs::StdRng;
     use rand::SeedableRng;
+    use rand::rngs::StdRng;
 
     /// A sequence of absorbs (Some(value)) and squeezes (None).
     #[derive(Clone)]
@@ -418,10 +416,12 @@ mod tests {
         // a wrong expected challenge is refused
         let mut wrong = expected;
         wrong[0] += Fq::ONE;
-        assert!(MockProver::run(12, &circuit, vec![wrong])
-            .unwrap()
-            .verify()
-            .is_err());
+        assert!(
+            MockProver::run(12, &circuit, vec![wrong])
+                .unwrap()
+                .verify()
+                .is_err()
+        );
     }
 
     /// The shape of a transfer proof's transcript (REPLAY-PROOF-A.md §3.3):

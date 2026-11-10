@@ -49,6 +49,12 @@ pub struct World {
     pub rng: ChaCha20Rng,
 }
 
+impl Default for World {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl World {
     pub fn new() -> Self {
         let params = TransferParams::build().unwrap();
