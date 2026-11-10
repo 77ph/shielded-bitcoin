@@ -1052,6 +1052,33 @@ the decider needs the keys alone. What it costs: a step is a six-minute
 prove on four cores at k = 18 twice; the key bootstrap is twenty minutes
 once per deployment.
 
+**Between runs, and in the CLI** (`persist.rs`, `chain.rs`, `sb a
+replay-prove` / `replay-decide`, 10 November) [built]. What the chain
+prover needs from the past is small: the previous step's two captures
+(a step's *shape* is the keys', values apart, so the keys' shapes stand
+in for the previous step's), the step count and the digest after it, the
+next block, and which key set — `ChainState`, bytes with a version,
+about the size of the two captures; the client keeps `ClientState`: the
+key set, the step count, the digest. Keys are not persisted: `halo2`
+0.3 has no key serialisation and a proving key at k = 18 is gigabytes
+with its cosets; they are a function of the circuits' structure alone,
+so every run of one configuration makes the same keys (`ChainKeys::id`
+hashes the sizes and both keys' representatives, and a state names the
+key set it is of) — twenty minutes at every start, the lever for later
+(a proving key written without its cosets would be hundreds of
+megabytes and seconds to load). The prover runs its own replay of the
+chain, one block at a time (`Capped`: the chain source's tip held at
+the next block), proves the block the sync just replayed, writes the
+step and its state (through a temporary file), and checks the step as
+the client will; a run that synced and did not prove is rolled back to
+where the prover stands (`reconcile`); a reorganisation below the
+proven chain stops it — the proven chain is of one branch, and a step
+binds no block hash, only the statements and the state. The decider
+command takes the steps on disk in order from the client's state. The
+chain test saves the prover after step 1, resumes it from the bytes,
+and proves step 3 through the runner; its figures with the next server
+run.
+
 ## 4. What this study decides
 
 * **Now, no profile change:** batch verification in the indexer (§2),

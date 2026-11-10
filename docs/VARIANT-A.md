@@ -317,8 +317,13 @@ implementation of the paper? Rules this repository adopts:
   profile names family `a-halo2` (`profile-new --family a-halo2`), and
   `sba-replay`, the accumulated replay proof of `REPLAY-PROOF-A.md`
   (the verifier circuits over the Pasta cycle, the batch relation, the
-  step prover and the decider; development-grade, built on the vendored
-  `halo2_proofs` and the Vesta chip port under `experiments/`).
+  step prover and the decider, the chain of steps under one key set and
+  its state between runs; development-grade, built on the vendored
+  `halo2_proofs` and the Vesta chip port under `experiments/`). In `sb a`
+  since 10 November: `replay-prove` (the next blocks as steps of the
+  chain, from the prover's own replay under `replay-<deployment>/`, keys
+  made at start) and `replay-decide` (the steps on disk accepted as a
+  light client does, from the keys and the previous digest).
   Tests: unit tests per crate, a real transfer proven and verified, a
   mock-chain replay with every rejection class and a reorganisation, a
   wallet flow, and `sb` end to end on the fake node on both carriers

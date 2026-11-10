@@ -61,9 +61,17 @@ S4, the variant's crates and the `sb` dispatch, and S5, the run on
 public signet on the witness carrier, 1 November; S6, the review, in
 the 3 November batch; the accumulated replay proof studied the same
 day, `REPLAY-PROOF-A.md`, and on 4 November one transfer proof verified
-entirely in two circuits over the Pasta cycle, the step `T` designed),
-code second; the rules for post-paper variants in one
-repository are `VARIANT-A.md` §6. Before that: §22 is exhausted as of
+entirely in two circuits over the Pasta cycle, the step `T` designed;
+on 5 November the recursion loop closed and the batch relation built;
+on 10 November the recursion became the crate `sba-replay` with a
+prover and a decider, and one key set carried a chain of three blocks
+on the server — `REPLAY-PROOF-A.md` v0.8 §3.8; the S7 review of all of
+it is with the auditor), code second; the rules for post-paper variants
+in one repository are `VARIANT-A.md` §6. The slice after S7: the chain
+prover and decider in the indexer and the CLI, the chain's state
+persisted between runs, and the chain run block by block on a test
+network (the owner's ruling of 10 November: the post-quantum thread
+waits until every earlier item here is finished). Before that: §22 is exhausted as of
 29 October 2026. The three items that
 could not be implemented end in `REMAINING.md` as demonstrations with
 numbers (smaller proof systems, certified-recipient lineage, the

@@ -5,7 +5,9 @@
 //! field side (`fieldside`) — the batch relation (`batch`), the steps that
 //! compose them (`step`…`step5`), the proven step on the wire and its
 //! decider (`wire`), and the split transcript of §3.6 (`split`,
-//! `verifier_split`). Development-grade: the measurements are the study's.
+//! `verifier_split`), the chain of steps under one key set (`chain`) and
+//! what it keeps between runs (`persist`). Development-grade: the
+//! measurements are the study's.
 
 // the tests are measurement scaffolding: long tuples and clones are theirs
 #![cfg_attr(
@@ -24,6 +26,7 @@ pub mod field;
 pub mod fieldside;
 pub mod fixed;
 pub mod native;
+pub mod persist;
 pub mod prover;
 pub mod sample;
 pub mod shadow;
