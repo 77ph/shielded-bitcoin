@@ -163,6 +163,9 @@ impl Keys {
             expose_instance: true,
             opened_u_slots: vec![],
             re_expose: vec![],
+            keys_as_inputs: false,
+            allow_base: false,
+            base: false,
             capture: Some(cap_q.clone()),
         };
         let offsets = step_q.offsets();

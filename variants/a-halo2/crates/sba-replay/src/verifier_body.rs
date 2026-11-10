@@ -52,8 +52,13 @@ pub enum Source {
     Common,
     /// The i-th opened claim's `G` (the following common points).
     Opened(usize),
-    /// A constant point: a commitment of the key, `G_0`, `W`, `U`.
+    /// A constant point of the parameters: `G_0`.
     Constant(C),
+    /// A commitment of the verified circuit's key (fixed or permutation):
+    /// a constant of this circuit, or — `keys_as_inputs` — a witnessed
+    /// point exposed as public inputs, so that this circuit does not
+    /// depend on the verified circuit's key (the chain's key cycle).
+    Key(C),
     /// The prover's accumulator point `G`.
     Claim,
 }
@@ -86,6 +91,15 @@ pub struct VerifierCircuit {
     /// Further instance values of the verified proof to expose for the
     /// client (a claim's `G` the decider reads), not linked to a field side.
     pub re_expose: Vec<usize>,
+    /// The verified key's commitments as public inputs instead of
+    /// constants (§3.8, the chain).
+    pub keys_as_inputs: bool,
+    /// A base step: a witnessed bit, exposed, that relaxes the final
+    /// identity check (`(1 − base) · Σ = 0`) — the previous proof is then
+    /// a dummy of valid shape. Without it the check is unconditional.
+    pub allow_base: bool,
+    /// The bit's value when proving (`allow_base`).
+    pub base: bool,
     pub capture: Option<Capture<C>>,
 }
 
@@ -96,6 +110,8 @@ pub struct VerifierConfig {
     pub advices: [Column<Advice>; 11],
     pub instance: Column<Instance>,
     pub table_idx: TableColumn,
+    /// `base · (base − 1) = 0`, `(1 − base) · x = 0`, `(1 − base) · y = 0`.
+    pub q_base: halo2_proofs::plonk::Selector,
 }
 
 /// The cells exposed as public inputs, in the instance's order, and the
@@ -122,6 +138,9 @@ impl VerifierCircuit {
             expose_instance: true,
             opened_u_slots: vec![],
             re_expose: vec![],
+            keys_as_inputs: false,
+            allow_base: false,
+            base: false,
             capture: Some(cap.clone()),
         }
     }
@@ -167,7 +186,7 @@ impl VerifierCircuit {
             candidates.push((Source::Opened(i), *p));
         }
         for c in fixed_commitments.iter().chain(permutation_commitments) {
-            candidates.push((Source::Constant(*c), *c));
+            candidates.push((Source::Key(*c), *c));
         }
         candidates.push((Source::Constant(params.get_g()[0]), params.get_g()[0]));
         candidates.push((Source::Claim, cap.g));
@@ -201,7 +220,7 @@ impl VerifierCircuit {
                 Source::Read(i) => scalar_of(&read[*i]),
                 Source::Common => scalar_of(&commons[0]),
                 Source::Opened(i) => scalar_of(&commons[1 + *i]),
-                Source::Constant(c) => scalar_of(c),
+                Source::Constant(c) | Source::Key(c) => scalar_of(c),
                 Source::Claim => scalar_of(&cap.g),
             })
             .collect()
@@ -247,6 +266,18 @@ impl VerifierCircuit {
         let (gx, gy) = coords(&cap.g);
         v.push(gx);
         v.push(gy);
+        if self.keys_as_inputs {
+            for s in &self.sources {
+                if let Source::Key(c) = s {
+                    let (x, y) = coords(c);
+                    v.push(x);
+                    v.push(y);
+                }
+            }
+        }
+        if self.allow_base {
+            v.push(F::from(self.base as u64));
+        }
         v
     }
 }
@@ -269,6 +300,10 @@ pub enum Slot {
     U(usize),
     /// A coordinate of the claim's `G`.
     G(usize),
+    /// A coordinate of the i-th key commitment (`keys_as_inputs`).
+    Key(usize, usize),
+    /// The base-step bit (`allow_base`).
+    Base,
 }
 
 impl VerifierCircuit {
@@ -351,6 +386,16 @@ impl VerifierCircuit {
         }
         v.push(Slot::G(0));
         v.push(Slot::G(1));
+        if self.keys_as_inputs {
+            let n_keys = self.sources.iter().filter(|s| matches!(s, Source::Key(_))).count();
+            for i in 0..n_keys {
+                v.push(Slot::Key(i, 0));
+                v.push(Slot::Key(i, 1));
+            }
+        }
+        if self.allow_base {
+            v.push(Slot::Base);
+        }
         v
     }
 
@@ -363,7 +408,7 @@ impl VerifierCircuit {
         self.layout()
             .iter()
             .map(|s| match s {
-                Slot::Opened(..) | Slot::G(_) => 2,
+                Slot::Opened(..) | Slot::G(_) | Slot::Key(..) => 2,
                 _ => 1,
             })
             .collect()
@@ -569,6 +614,9 @@ impl Circuit<F> for VerifierCircuit {
             expose_instance: self.expose_instance,
             opened_u_slots: self.opened_u_slots.clone(),
             re_expose: self.re_expose.clone(),
+            keys_as_inputs: self.keys_as_inputs,
+            allow_base: self.allow_base,
+            base: false,
             capture: None,
         }
     }
@@ -604,12 +652,31 @@ impl Circuit<F> for VerifierCircuit {
             table_idx,
             [advices[0], advices[1], advices[2]],
         );
+        let q_base = meta.selector();
+        meta.create_gate("base relaxes the identity", |m| {
+            use halo2_proofs::plonk::{Constraints, Expression};
+            use halo2_proofs::poly::Rotation;
+            let q = m.query_selector(q_base);
+            let base = m.query_advice(advices[3], Rotation::cur());
+            let x = m.query_advice(advices[4], Rotation::cur());
+            let y = m.query_advice(advices[5], Rotation::cur());
+            let one = Expression::Constant(F::ONE);
+            Constraints::with_selector(
+                q,
+                [
+                    ("bool", base.clone() * (base.clone() - one.clone())),
+                    ("x", (one.clone() - base.clone()) * x),
+                    ("y", (one - base) * y),
+                ],
+            )
+        });
         VerifierConfig {
             ecc,
             transcript,
             advices,
             instance,
             table_idx,
+            q_base,
         }
     }
 
@@ -738,6 +805,7 @@ impl VerifierCircuit {
         let scalars: Option<Vec<S>> = cap.map(|c| self.scalars(c));
         let mut acc = Acc::new();
         let mut claim_point: Option<Pt> = None;
+        let mut key_points: Vec<Pt> = Vec::new();
         for (j, source) in self.sources.iter().enumerate() {
             let limbs = witness_scalar(
                 &cfg,
@@ -751,6 +819,19 @@ impl VerifierCircuit {
                 Source::Common => common_point.clone().expect("absorbed before the MSM"),
                 Source::Opened(i) => opened_points[*i].clone(),
                 Source::Constant(c) => pinned(&ecc, layouter, *c)?,
+                Source::Key(c) => {
+                    if self.keys_as_inputs {
+                        let p = NonIdentityPoint::new(
+                            ecc.clone(),
+                            layouter.namespace(|| "key"),
+                            Value::known(*c),
+                        )?;
+                        key_points.push(p.clone());
+                        p
+                    } else {
+                        pinned(&ecc, layouter, *c)?
+                    }
+                }
                 Source::Claim => {
                     let v = cap.map(|c| Value::known(c.g)).unwrap_or(Value::unknown());
                     let g = NonIdentityPoint::new(ecc.clone(), layouter.namespace(|| "G"), v)?;
@@ -773,15 +854,35 @@ impl VerifierCircuit {
         let g = claim_point.expect("a claim term");
         expose(&cfg, layouter, &g.inner().x(), &mut exposed)?;
         expose(&cfg, layouter, &g.inner().y(), &mut exposed)?;
+        for kp in &key_points {
+            expose(&cfg, layouter, &kp.inner().x(), &mut exposed)?;
+            expose(&cfg, layouter, &kp.inner().y(), &mut exposed)?;
+        }
         let sum = acc.fold(&cfg, &ecc, layouter)?;
-        layouter.assign_region(
-            || "identity",
-            |mut r| {
-                r.constrain_constant(sum.inner().x().cell(), F::ZERO)?;
-                r.constrain_constant(sum.inner().y().cell(), F::ZERO)?;
-                Ok(())
-            },
-        )?;
+        if self.allow_base {
+            // (1 − base) · Σ = 0: the base step's previous proof is a dummy
+            let base = witness(&cfg, layouter, Value::known(F::from(self.base as u64)))?;
+            expose(&cfg, layouter, &base, &mut exposed)?;
+            layouter.assign_region(
+                || "base identity",
+                |mut r| {
+                    cfg.q_base.enable(&mut r, 0)?;
+                    base.copy_advice(|| "base", &mut r, cfg.advices[3], 0)?;
+                    sum.inner().x().copy_advice(|| "x", &mut r, cfg.advices[4], 0)?;
+                    sum.inner().y().copy_advice(|| "y", &mut r, cfg.advices[5], 0)?;
+                    Ok(())
+                },
+            )?;
+        } else {
+            layouter.assign_region(
+                || "identity",
+                |mut r| {
+                    r.constrain_constant(sum.inner().x().cell(), F::ZERO)?;
+                    r.constrain_constant(sum.inner().y().cell(), F::ZERO)?;
+                    Ok(())
+                },
+            )?;
+        }
         eprintln!(
             "transcript permutations: {}, msm terms: {} ({} limbs each), public inputs {}",
             t.permutations,

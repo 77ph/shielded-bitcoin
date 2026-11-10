@@ -975,9 +975,16 @@ identity (`(1 − base) · Σ = 0`); the field side asserts nothing of its
 own (it only computes the scalars the group side uses), and the claims
 a dummy opened are the trivial one `(G_0, 0)`. The decider knows step 1
 is the base. Cost: the key commitments as public inputs add ≈ 100
-cells to each `T_q` and `T_p` instance per verified proof. This is the
-next thing to build; until then the chain exists only step by step with
-keys made after the fact, as its tests do.
+cells to each `T_q` and `T_p` instance per verified proof. **The
+mechanism is built** (`verifier_body.rs`, `keys_as_inputs` and
+`allow_base`, the same night) [measured]: over a transfer proof the
+`q` group side exposes its key's 33 commitments as 66 cells and the base
+bit (288 public inputs in place of 221), a wrong key coordinate moves
+the sum and is refused, and a dummy proof — the real proof with one
+commitment's sign flipped, valid points and no proof — is refused with
+`base = 0` and accepted with `base = 1`. Next: the chain's two circuits
+with it, one key set, the dummy step 0, `prove_next` and the decider
+reading the previous claims.
 
 ## 4. What this study decides
 
