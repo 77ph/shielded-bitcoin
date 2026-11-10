@@ -171,6 +171,18 @@ impl<'p, C: CurveAffine> VerificationStrategy<'p, C> for Deferred<'p, C> {
     }
 }
 
+/// The public inputs as the verifier takes them: `instance` is the first
+/// column, every further column of the circuit (the batch relation's, which
+/// a step leaves empty) is empty.
+fn instance_columns<'a, C: CurveAffine>(
+    vk: &VerifyingKey<C>,
+    instance: &'a [C::Scalar],
+) -> Vec<&'a [C::Scalar]> {
+    let mut columns = vec![instance];
+    columns.resize(vk.cs().num_instance_columns().max(1), &[]);
+    columns
+}
+
 /// Run the verifier on `proof` (made over `claims`, possibly none) and
 /// capture everything the circuit needs.
 pub fn capture<C: Limbs>(
@@ -184,11 +196,12 @@ where
     C::Base: PoseidonField,
 {
     let mut transcript = Recorder::<_, C>::init(proof);
+    let columns = instance_columns(vk, instance);
     let out = plonk::verify_proof_with_openings(
         params,
         vk,
         Deferred(params),
-        &[&[instance]],
+        &[&columns],
         &mut transcript,
         claims,
     )?;
@@ -354,11 +367,12 @@ where
     C::Curve: group::Group<Scalar = C::Scalar>,
 {
     let mut transcript = FakeRead::<C, R>::new(rng);
+    let columns = instance_columns(vk, instance);
     let out = plonk::verify_proof_with_openings(
         params,
         vk,
         Deferred(params),
-        &[&[instance]],
+        &[&columns],
         &mut transcript,
         claims,
     )?;
