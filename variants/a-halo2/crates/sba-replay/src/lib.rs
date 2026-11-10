@@ -23,6 +23,7 @@ pub mod field;
 pub mod fieldside;
 pub mod fixed;
 pub mod native;
+pub mod prover;
 pub mod sample;
 pub mod shadow;
 pub mod split;
