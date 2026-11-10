@@ -18,3 +18,4 @@ pub mod step3;
 pub mod step4;
 pub mod transcript;
 pub mod verifier;
+pub mod wire;
