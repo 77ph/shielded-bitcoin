@@ -786,7 +786,18 @@ for the light client's own copy of the statements.
   156 s, **prove 79 s, 8 256 bytes** (the extra columns' commitments
   and evaluations), the decider 0.7 s with the transfer proof's claim,
   9.8 GB for the run. A block with more transfer proofs needs as many
-  group and field sides, which is the fragment size's cost.
+  group and field sides, which is the fragment size's cost — measured
+  (10 November, `step4.rs`, the indexer's replay of a block with two
+  transfers and a mint): `T_q` with the two proofs' `q` group sides side
+  by side (442 public inputs) fits **k = 16** (keygen 22 s, prove 8.3 s
+  on the laptop, 5 024 bytes), so one group side is under 2^15 rows;
+  `T_p` with the `p` group side of that `T_q`, both field sides and the
+  three-slot relation: 874 public inputs, 110 464 rows, **k = 17** — the
+  relation's rows (three slots) still the maximum, the verifier parts
+  beside them in their own columns. Binding the second slot to the first
+  proof's statement is refused. By these figures a fragment of four
+  transfers is `T_q` at k = 17 and `T_p` at k = 18 (the relation's
+  ≈ 150 000 rows), eight at k = 18 / k = 19.
 
 ## 4. What this study decides
 
