@@ -107,8 +107,12 @@ pub struct StepPN {
     /// Per slot, the index of the proof it is bound to (`None` for a mint
     /// or an empty slot): witness data; the circuit's shape does not
     /// depend on it — a slot links to a proof through witnessed bits with
-    /// one proof per active transfer slot and one slot per proof.
+    /// one proof per active transfer slot and one slot per *used* proof.
     pub slot_proof: Vec<Option<usize>>,
+    /// Per proof, whether a slot uses it: a fragment holds *up to*
+    /// `n_proofs` transfers, the rest being a canned valid proof no slot
+    /// binds to (witness data).
+    pub used: Vec<bool>,
 }
 
 #[derive(Clone, Debug)]
@@ -156,6 +160,7 @@ impl Circuit<vesta::Scalar> for StepPN {
             batch: self.batch.without_witnesses(),
             statement_positions: self.statement_positions.clone(),
             slot_proof: vec![None; self.slot_proof.len()],
+            used: vec![false; self.used.len()],
         }
     }
 
@@ -185,8 +190,9 @@ impl Circuit<vesta::Scalar> for StepPN {
         // the slots' binding to the proofs' statements, by witnessed bits:
         // link[s][p] ∈ {0, 1}; Σ_p link[s][p] = active_s · (1 − kind_s) (an
         // active transfer slot binds to exactly one proof, a mint or an
-        // empty slot to none); Σ_s link[s][p] = 1 (every proof is some
-        // slot's); link[s][p] · (slot_s[i] − statement_p[i]) = 0
+        // empty slot to none); Σ_s link[s][p] = used_p ∈ {0, 1} (a used
+        // proof is exactly one slot's, an unused one none's — it is still
+        // verified); link[s][p] · (slot_s[i] − statement_p[i]) = 0
         let known = self.batch.witness.is_some();
         let one = ch.constant(&mut l, Fp::ONE)?;
         let n_p = self.statement_positions.len();
@@ -248,8 +254,18 @@ impl Circuit<vesta::Scalar> for StepPN {
                 ch.assert_equal(&mut l, &rs, &want)?;
             }
         }
-        for col in per_proof.into_iter().flatten() {
-            ch.assert_equal(&mut l, &col, &one)?;
+        for (p, col) in per_proof.into_iter().enumerate() {
+            let used_v = if known {
+                halo2_proofs::circuit::Value::known(Fp::from(self.used[p] as u64))
+            } else {
+                halo2_proofs::circuit::Value::unknown()
+            };
+            let used = ch.witness(&mut l, used_v)?;
+            let uu = ch.mul(&mut l, &used, &used)?;
+            ch.assert_equal(&mut l, &uu, &used)?;
+            if let Some(col) = col {
+                ch.assert_equal(&mut l, &col, &used)?;
+            }
         }
         eprintln!("step: {} proofs, {} slots", self.fields.len(), self.batch.n);
         Ok(())
@@ -507,6 +523,7 @@ mod tests {
             },
             statement_positions,
             slot_proof,
+            used: vec![true; 2],
         };
         let instance_p = step_p.instance();
         println!(
