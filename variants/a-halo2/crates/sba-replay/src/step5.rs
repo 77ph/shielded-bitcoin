@@ -140,11 +140,12 @@ impl Circuit<vesta::Scalar> for StepPSplit {
     fn configure(meta: &mut ConstraintSystem<Fp>) -> StepPSplitConfig {
         let field = FieldSideCircuit::configure_field(meta);
         let sponge = FieldSideCircuit::configure_sponge(meta, &field);
+        let group = p::VerifierCircuit::configure(meta);
         StepPSplitConfig {
-            group: p::VerifierCircuit::configure(meta),
+            batch: BatchConfig::configure_in(meta, group.instance),
+            group,
             field,
             sponge,
-            batch: BatchConfig::configure(meta),
         }
     }
     fn synthesize(&self, cfg: StepPSplitConfig, mut l: impl Layouter<Fp>) -> Result<(), Error> {
@@ -421,7 +422,7 @@ mod tests {
         let t = std::time::Instant::now();
         let mut k_p = 17;
         let prover = loop {
-            match MockProver::run(k_p, &step_p, vec![instance_p.clone(), vec![]]) {
+            match MockProver::run(k_p, &step_p, vec![instance_p.clone()]) {
                 Ok(p) => break p,
                 Err(e) => {
                     eprintln!("k = {k_p}: {e:?}");
@@ -458,7 +459,7 @@ mod tests {
             &pparams,
             &ppk,
             &[step_p.clone()],
-            &[&[&instance_p[..], &[]]],
+            &[&[&instance_p[..]]],
             &claims,
             &mut StdRng::seed_from_u64(96),
             &mut tr,
@@ -485,7 +486,7 @@ mod tests {
             &pparams,
             &pvk,
             plonk::SingleVerifier::new(&pparams),
-            &[&[&instance_p[..], &[]]],
+            &[&[&instance_p[..]]],
             &mut tr,
             &claims,
         )

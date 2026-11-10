@@ -97,10 +97,11 @@ impl Circuit<vesta::Scalar> for StepPBatch {
     }
 
     fn configure(meta: &mut ConstraintSystem<Fp>) -> StepPBatchConfig {
+        let group = p::VerifierCircuit::configure(meta);
         StepPBatchConfig {
-            group: p::VerifierCircuit::configure(meta),
+            batch: BatchConfig::configure_in(meta, group.instance),
+            group,
             field: FieldSideCircuit::configure_field(meta),
-            batch: BatchConfig::configure(meta),
         }
     }
 
@@ -316,7 +317,7 @@ mod tests {
         let mut k = 17;
         let t = std::time::Instant::now();
         let prover = loop {
-            match MockProver::run(k, &step, vec![instance.clone(), vec![]]) {
+            match MockProver::run(k, &step, vec![instance.clone()]) {
                 Ok(p) => break p,
                 Err(e) => {
                     eprintln!("k = {k}: {e:?}");
@@ -337,7 +338,7 @@ mod tests {
         let mut bad = step.clone();
         bad.batch.witness = Some(tampered);
         assert!(
-            MockProver::run(k, &bad, vec![instance.clone(), vec![]])
+            MockProver::run(k, &bad, vec![instance.clone()])
                 .unwrap()
                 .verify()
                 .is_err()
@@ -358,7 +359,7 @@ mod tests {
             &pparams,
             &ppk,
             &[step.clone()],
-            &[&[&instance[..], &[]]],
+            &[&[&instance[..]]],
             &[claim.clone()],
             &mut StdRng::seed_from_u64(41),
             &mut tr,
@@ -376,7 +377,7 @@ mod tests {
             &pparams,
             &pvk,
             plonk::SingleVerifier::new(&pparams),
-            &[&[&instance[..], &[]]],
+            &[&[&instance[..]]],
             &mut tr,
             &[claim],
         )

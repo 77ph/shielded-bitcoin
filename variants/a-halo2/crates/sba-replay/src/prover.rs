@@ -335,7 +335,7 @@ impl Prover<'_> {
             &k.pparams,
             &k.ppk,
             &[step_p],
-            &[&[&instance_p[..], &[]]],
+            &[&[&instance_p[..]]],
             &claims,
             OsRng,
             &mut tr,
