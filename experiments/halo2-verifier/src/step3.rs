@@ -112,9 +112,9 @@ impl Circuit<vesta::Scalar> for StepPBatch {
         cfg.group.assign_table(&mut layouter)?;
         cfg.batch.assign_table(&mut layouter)?;
         let ex = self.group.synthesize_core(&cfg.group, &mut layouter, 0)?;
-        let (inputs, outputs) = self
-            .field
-            .synthesize_core(&cfg.field, None, &mut layouter)?;
+        let (inputs, outputs) =
+            self.field
+                .synthesize_core(&cfg.field, None, None, &mut layouter)?;
         let cells: Vec<_> = inputs.into_iter().chain(outputs).collect();
         let mut ch = FieldChip::new(&cfg.field);
         bind(

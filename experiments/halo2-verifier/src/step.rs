@@ -62,9 +62,9 @@ impl Circuit<Fp> for StepP {
     fn synthesize(&self, cfg: StepPConfig, mut layouter: impl Layouter<Fp>) -> Result<(), Error> {
         cfg.group.assign_table(&mut layouter)?;
         let exposed = self.group.synthesize_core(&cfg.group, &mut layouter, 0)?;
-        let (inputs, outputs) = self
-            .field
-            .synthesize_core(&cfg.field, None, &mut layouter)?;
+        let (inputs, outputs) =
+            self.field
+                .synthesize_core(&cfg.field, None, None, &mut layouter)?;
         // bind: each field-side value is the T_q instance value its limbs say
         let mut ch = FieldChip::new(&cfg.field);
         let l = &mut layouter;

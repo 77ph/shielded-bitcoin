@@ -168,9 +168,9 @@ impl Circuit<pallas::Scalar> for StepQ {
         let ex_tp = self
             .group_tp
             .synthesize_core(&cfg.group, &mut layouter, ex_pi.cells.len())?;
-        let (inputs, outputs) = self
-            .field_tq
-            .synthesize_core(&cfg.field, None, &mut layouter)?;
+        let (inputs, outputs) =
+            self.field_tq
+                .synthesize_core(&cfg.field, None, None, &mut layouter)?;
         let cells: Vec<_> = inputs.into_iter().chain(outputs).collect();
         let mut ch = field::fq::FieldChip::new(&cfg.field);
         bind(
@@ -258,9 +258,9 @@ impl Circuit<vesta::Scalar> for StepP2 {
             .group_tq
             .synthesize_core(&cfg.group, &mut layouter, 0)?;
         let mut ch = field::fp::FieldChip::new(&cfg.field);
-        let (inputs, outputs) = self
-            .field_pi
-            .synthesize_core(&cfg.field, None, &mut layouter)?;
+        let (inputs, outputs) =
+            self.field_pi
+                .synthesize_core(&cfg.field, None, None, &mut layouter)?;
         let cells: Vec<_> = inputs.into_iter().chain(outputs).collect();
         bind(
             &mut ch,
@@ -270,9 +270,9 @@ impl Circuit<vesta::Scalar> for StepP2 {
             &ex.instance_values,
             0,
         )?;
-        let (inputs, outputs) = self
-            .field_tp
-            .synthesize_core(&cfg.field, None, &mut layouter)?;
+        let (inputs, outputs) =
+            self.field_tp
+                .synthesize_core(&cfg.field, None, None, &mut layouter)?;
         let cells: Vec<_> = inputs.into_iter().chain(outputs).collect();
         bind(
             &mut ch,
