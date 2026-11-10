@@ -149,12 +149,12 @@ impl<C: CurveAffine> Capture<C> {
     }
 }
 
-struct Deferred<'p, C: CurveAffine>(&'p Params<C>);
+pub(crate) struct Deferred<'p, C: CurveAffine>(pub(crate) &'p Params<C>);
 
-struct Out<'p, C: CurveAffine> {
-    msm: MSM<'p, C>,
-    g: C,
-    u: Vec<C::Scalar>,
+pub(crate) struct Out<'p, C: CurveAffine> {
+    pub(crate) msm: MSM<'p, C>,
+    pub(crate) g: C,
+    pub(crate) u: Vec<C::Scalar>,
 }
 
 impl<'p, C: CurveAffine> VerificationStrategy<'p, C> for Deferred<'p, C> {
