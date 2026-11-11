@@ -1193,8 +1193,14 @@ instead of 144), raised when the measured headroom allows. Built
 10–11 November): natively and in the circuit a step closes two empty
 blocks before its own, a swapped or dropped append is refused, and so
 is a prefix after statements were applied in the block in progress.
-What it does not change: the anchor rule, the digests, the decider, the
-keys' structure beyond the relation's new rows.
+[measured, the server, 11 November, the chain test with `E = 8` and
+three slots]: keys 951 s; **`T_p` 223 359 rows at k = 18** (of 262 144:
+room for about seven more appends, so `E ≤ 12` fits the CLI's four
+slots); steps 304.7, 284.1, 281.2 s, 69 784 bytes each (four more than
+before: the step's first block); the rogue base step refused; the
+decider 2.19 s, the latest step alone 2.27 s. What it does not change:
+the anchor rule, the digests, the decider, the keys' structure beyond
+the relation's new rows.
 
 **Review.** A relation change: the auditor's S7 covered the relation
 as it was; this section and its implementation go to the next batch.
