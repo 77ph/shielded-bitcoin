@@ -324,8 +324,10 @@ implementation of the paper? Rules this repository adopts:
   chain, from the prover's own replay under `replay-<deployment>/`, keys
   made at start) and `replay-decide` (the steps on disk accepted as a
   light client does, from the keys and the previous digest, or the
-  newest step alone from the genesis with `--latest`); run on the
-  private signet over ten blocks on 10–11 November (`RUNS.md`).
+  newest step alone from the genesis with `--latest`); the keys are
+  written under the replay directory after the first run and read back
+  since; `--follow` keeps proving as blocks arrive. Run on the private
+  signet over ten blocks on 10–11 November (`RUNS.md`).
   Tests: unit tests per crate, a real transfer proven and verified, a
   mock-chain replay with every rejection class and a reorganisation, a
   wallet flow, and `sb` end to end on the fake node on both carriers
