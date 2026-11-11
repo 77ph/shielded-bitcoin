@@ -16,7 +16,8 @@
         clippy::type_complexity,
         clippy::cloned_ref_to_slice_refs,
         clippy::too_many_arguments,
-        clippy::needless_range_loop
+        clippy::needless_range_loop,
+        clippy::drop_non_drop
     )
 )]
 pub mod batch;
