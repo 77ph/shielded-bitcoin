@@ -64,7 +64,9 @@ jobs:
   # The static binary (README "Static build") must keep building.
   static:
     if: github.event_name != 'schedule'
-    runs-on: ubuntu-latest
+    # pinned: ubuntu-latest became 26.04 on 11 November 2026 with apt
+    # repositories that do not answer, and musl-tools would not install
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
