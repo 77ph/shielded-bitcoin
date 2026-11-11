@@ -1148,7 +1148,20 @@ checks the key set's id against the metadata. `sb a replay-prove` and
 `replay-decide` read the keys under `replay-<deployment>/keys` when they
 are there and write them after generating them once. The chain test
 writes its keys, reads them back and proves and decides steps 2 and 3
-with the read set; its figures with the next server run.
+with the read set [measured, the server, 11 November, on a host under
+five to six times its usual load right after a reboot]: the four files
+**1 078 207 829 bytes, written in 6.0 s**; read in 1 342 s — the
+parameters and the key files 1 264 s (the two `Params::new` at k = 18,
+34 million scalars parsed, and 154 FFTs of 2^21 for the cosets), the
+transfer key and padding 51.5 s (8 s on a quiet box), the shapes 21.4 s,
+the dummy step 5.3 s; key generation on the same loaded host 969 s. So
+on this host reading was no faster than generating, and the quiet-box
+figure is still to be taken; what the run established is correctness:
+the key set read from disk has the generated set's id, proves steps 2
+and 3 and decides them (2.9 s, the latest alone 2.4 s). The lever if the
+quiet-box reading stays in minutes: write the cosets too — ten gigabytes
+a key set, read at disk speed, no FFT at load — and parse in parallel
+without the canonicity check a key's own scalars do not need.
 
 **Reviewed** (S7, 10 November 2026, the auditor's firsthand pass at
 664d013 and 50fdca6, the document to follow on an audit branch at the
