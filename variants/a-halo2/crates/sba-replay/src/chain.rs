@@ -832,6 +832,11 @@ impl ChainKeys {
         }
         let meta = std::fs::read(dir.join("meta")).map_err(err)?;
         let stored_id: [u8; 32] = meta[meta.len() - 32..].try_into().unwrap();
+        let mut t = std::time::Instant::now();
+        let lap = |t: &mut std::time::Instant, what: &str| {
+            println!("keys read: {what} {:.1} s", t.elapsed().as_secs_f64());
+            *t = std::time::Instant::now();
+        };
         let outer: Params<pallas::Affine> = Params::new(k_q);
         let pparams: Params<vesta::Affine> = Params::new(k_p);
         let open = |name: &str| -> Result<BufReader<std::fs::File>, String> {
@@ -850,6 +855,7 @@ impl ChainKeys {
         let ppk =
             ProvingKey::<vesta::Affine>::read::<_, StepPChain>(&mut open("t_p.pk")?, &pparams)
                 .map_err(|e| format!("t_p.pk: {e}"))?;
+        lap(&mut t, "params and key files");
         // the transfer key and the padding
         let tp = TransferParams::build().map_err(err)?;
         let (st, w) = crate::sample::sample();
@@ -863,6 +869,7 @@ impl ChainKeys {
             padding.push((st.clone(), proof));
         }
         let claims_t: Vec<Claim<vesta::Affine>> = caps.iter().map(|c| c.claim()).collect();
+        lap(&mut t, "transfer key and padding");
         let k_p_usize = k_p as usize;
         // the shapes: the bootstrap's rounds with the final keys throughout
         let q0 = StepQN {
@@ -993,6 +1000,7 @@ impl ChainKeys {
                 sp: sp.without_witnesses(),
             },
         };
+        lap(&mut t, "shapes");
         if keys.id() != stored_id {
             return Err("the key files are not the key set the metadata names".into());
         }
@@ -1032,6 +1040,7 @@ impl ChainKeys {
         let (cap_p0f, _) = fake_capture(&keys.pparams, &keys.pvk, &instance_p0, &claims_p0f, OsRng)
             .map_err(err)?;
         sp0.batch.witness = None;
+        lap(&mut t, "step 0");
         Ok(ChainKeys {
             step0: Artifacts {
                 cap_q: cap_q0f,
@@ -2047,12 +2056,17 @@ mod chain_tests {
             "keys written: {size} bytes in {:.1} s",
             t.elapsed().as_secs_f64()
         );
+        // the generated set goes first: a key set is about ten gigabytes in
+        // memory with its cosets, and the container holds one, not two
+        let id = keys.id();
+        drop(decider);
+        drop(prover);
+        drop(keys);
         let t = std::time::Instant::now();
-        let keys_read = ChainKeys::read(&dir, 2, 3, 8, 18, 18, bparams, &genesis).unwrap();
+        let keys = ChainKeys::read(&dir, 2, 3, 8, 18, 18, bparams, &genesis).unwrap();
         println!("keys read: {:.1} s", t.elapsed().as_secs_f64());
-        assert_eq!(keys_read.id(), keys.id());
+        assert_eq!(keys.id(), id);
         std::fs::remove_dir_all(&dir).unwrap();
-        let keys = keys_read;
         let decider = ChainDecider { keys: &keys };
         let mut prover = ChainProver::resume(&keys, &restored).unwrap();
         // block 1001: two transfers and a mint
