@@ -481,3 +481,20 @@ machine on its saved state, and its keys need no file to agree across
 runs; the cost of key generation at every start (15–17 minutes) and the
 step per empty block (five minutes of proving for nothing) are the two
 figures to bring down next.
+
+**The same blocks again, with steps over block ranges** (`REPLAY-PROOF-A.md`
+§3.9, built the same day; the container, 11 November). Keys with room
+for eight empty blocks a step: 956 s (a new key-set id — the relation
+changed). The ten blocks became **four steps**: 251–252 (one empty
+block, then the mint), 253–255 (two, then the first transfer), 256–258
+(two, then the second), 259–260 (one, then the last block, empty, at
+the tip), proved in 359, 351, 347 and 342 s, **70 296 bytes** each (the
+step's first block on the wire); the digest after each range equals the
+first run's after the same block, and the final digest is the same to
+the bit — the state transition does not depend on where the steps are
+cut. The prove phase took 2 391 s wall with the keys, against 3 738 s
+for eight of the ten blocks before. `replay-decide --latest`: keys
+977 s, then **step 4 alone, from the genesis: block 260 accepted in
+2.27 s**. A quiet day of a test network (144 blocks) is now 16 steps,
+not 144; with the measured headroom the relation can take twelve empty
+blocks a step at four slots.
