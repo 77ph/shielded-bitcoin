@@ -219,6 +219,7 @@ where
     )?;
 
     let mut fixed = batch_invert_assigned(assembly.fixed);
+    let selectors = assembly.selectors.clone();
     let (cs, selector_polys) = cs.compress_selectors(assembly.selectors);
     fixed.extend(
         selector_polys
@@ -240,6 +241,7 @@ where
         fixed_commitments,
         permutation_vk,
         cs,
+        selectors,
     ))
 }
 

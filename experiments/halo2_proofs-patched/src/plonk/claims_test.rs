@@ -13,7 +13,7 @@ use pasta_curves::{EqAffine, Fp};
 use rand_core::OsRng;
 
 #[derive(Clone, Debug)]
-struct Config {
+pub(crate) struct Config {
     a: Column<Advice>,
     b: Column<Advice>,
     c: Column<Advice>,
@@ -23,13 +23,13 @@ struct Config {
 
 /// `a · b = c` with `c` public.
 #[derive(Clone, Default)]
-struct Mul {
+pub(crate) struct Mul {
     a: Value<Fp>,
     b: Value<Fp>,
 }
 
 impl Mul {
-    fn new(a: u64, b: u64) -> (Self, Fp) {
+    pub(crate) fn new(a: u64, b: u64) -> (Self, Fp) {
         (
             Mul {
                 a: Value::known(Fp::from(a)),
