@@ -409,6 +409,7 @@ mod tests {
             fields,
             batch: BatchCircuit {
                 n,
+                n_empty: 0,
                 params: bparams,
                 witness: Some(witness.clone()),
             },

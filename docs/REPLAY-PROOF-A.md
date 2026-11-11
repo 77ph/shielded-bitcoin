@@ -1149,6 +1149,56 @@ a mint carries no proof (F-3-1). Recommendation taken: the recursion's
 mock tests that fit a hosted runner run weekly in CI (`recursion` job,
 ba08e74); the k = 18 tests stay server runs with their figures here.
 
+### 3.9 Empty blocks: a step over a block range [design]
+
+The drill of 11 November (`RUNS.md`) proved ten blocks, seven of them
+without a shielded event, each as a full step of five minutes: the
+relation (`REPLAY-PROOF.md` §4.2) appends one leaf to the root tree per
+block — position `height − activation + 1` is how a transfer's anchor
+is found — so a block with nothing in it still costs a step. On a live
+test network most blocks are such blocks; the chain's prover would
+spend most of its time proving that nothing happened.
+
+**The change.** A step covers a *range* of blocks: up to `E` blocks
+without events, then one block with its statements (or without any,
+when the range ends at the tip or at `E`). The relation gains, before
+the slots, `E` conditional root appends: for each one in use, the
+position equals the running `height − activation + 1`, the path from
+the empty leaf opens to the running `h_root`, the new `h_root` is the
+path's root with the *current* note root as the leaf (the state did
+not change), and the running height advances by one; the statements
+are then anchored against the advanced height, and the block's own
+append closes the step as before. Nothing else moves: `s_prev` and
+`s_next` still hash the opening before and after, `D` the statements,
+`g` the genesis; an empty slot of the prefix does nothing, and a used
+one is pinned by its position, so the prover cannot skip or reorder
+blocks — the same argument that pins the single append today. The
+indexer keeps its witness per block; the runner merges the witnesses
+of up to `E` empty blocks into the next block's and proves them as one
+step, which it emits when a block with events arrives, when `E` empty
+blocks have gathered, or when the tip is reached (so a follower at the
+tip still answers every block, and a prover catching up packs `E + 1`
+blocks a step). On the wire a step records its first and last block.
+
+**Cost and the choice of `E`.** One conditional append is two Merkle
+roots of depth 32 (the position empty before, the note root after) and
+a few selections: **5 184 rows** each [measured: the relation of two
+slots is 75 478 rows alone and 96 214 with room for four empty blocks,
+k = 17 for the relation by itself]. The step's `T_p` is at k = 18 with
+headroom not yet measured (it did not fit k = 17); `E = 8` to start
+(+41 k rows; a day of a quiet signet, 144 blocks, becomes 16 steps
+instead of 144), raised when the measured headroom allows. Built
+(`sba-core` `BatchWitness::empty_appends`, the circuit's prefix,
+`prove_next_step`, `ProvenStep` version 2 with the step's first block;
+10–11 November): natively and in the circuit a step closes two empty
+blocks before its own, a swapped or dropped append is refused, and so
+is a prefix after statements were applied in the block in progress.
+What it does not change: the anchor rule, the digests, the decider, the
+keys' structure beyond the relation's new rows.
+
+**Review.** A relation change: the auditor's S7 covered the relation
+as it was; this section and its implementation go to the next batch.
+
 ## 4. What this study decides
 
 * **Now, no profile change:** batch verification in the indexer (§2),

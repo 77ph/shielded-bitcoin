@@ -55,6 +55,9 @@ pub struct BatchConfig {
 #[derive(Clone, Debug)]
 pub struct BatchCircuit {
     pub n: usize,
+    /// Blocks without events the step may close before its block
+    /// (`REPLAY-PROOF-A.md` §3.9): that many conditional root appends.
+    pub n_empty: usize,
     pub params: BatchParams,
     pub witness: Option<BatchWitness>,
 }
@@ -635,6 +638,41 @@ impl BatchCircuit {
         let mut cur_applied = prev.applied.clone();
         let mut all_elems: Vec<Vec<Cell>> = Vec::with_capacity(self.n);
 
+        // ---- blocks without events before this one (§3.9): each closes by
+        // appending the unchanged note root at its height; a used prefix
+        // means nothing was applied in the block in progress
+        let mut cur_height = prev.height.clone();
+        let mut cur_h_root = prev.h_root.clone();
+        let mut any_empty = zero.clone();
+        for i in 0..self.n_empty {
+            let ra = w.and_then(|w| w.empty_appends.get(i));
+            let used = ctx.bit(
+                l,
+                if known_of(w) {
+                    Value::known(ra.is_some())
+                } else {
+                    Value::unknown()
+                },
+            )?;
+            let pos = wit(
+                ctx,
+                l,
+                w.map(|_| ra.map_or(Fp::ZERO, |p| Fp::from(p.position))),
+            )?;
+            let bits = ctx.bits32(l, &pos)?;
+            let sibs = self.siblings(ctx, l, w.is_some(), ra.map(|p| &p.siblings))?;
+            let expected = ctx.add_const(l, &cur_height, -activation + Fp::ONE)?;
+            ctx.cond_eq(l, &used, &pos, &expected)?;
+            let before = ctx.merkle_root(l, &zero, &bits, &sibs)?;
+            ctx.cond_eq(l, &used, &before, &cur_h_root)?;
+            let after = ctx.merkle_root(l, &cur_root, &bits, &sibs)?;
+            cur_h_root = ctx.select(l, &used, &after, &cur_h_root)?;
+            cur_height = ctx.add(l, &cur_height, &used)?;
+            any_empty = ctx.or(l, &any_empty, &used)?;
+        }
+        let t = ctx.mul(l, &any_empty, &prev.applied)?;
+        ctx.assert_constant(l, &t, Fp::ZERO)?;
+
         for i in 0..self.n {
             let sw: Option<&SlotWitness> = w.and_then(|w| w.slots.get(i)).and_then(|s| s.as_ref());
             let known = w.is_some();
@@ -703,13 +741,13 @@ impl BatchCircuit {
             let anchor_bits = ctx.bits32(l, &anchor_pos)?;
             let anchor_sibs = self.siblings(ctx, l, known, sw.map(|s| &s.anchor_siblings))?;
             let ar = ctx.merkle_root(l, &r_anchor, &anchor_bits, &anchor_sibs)?;
-            ctx.cond_eq(l, &in_tree, &ar, &prev.h_root)?;
+            ctx.cond_eq(l, &in_tree, &ar, &cur_h_root)?;
             // the window: h_anchor + w ≥ height ≥ h_anchor + k_min
             let hw = ctx.add_const(l, &h_anchor, f_u32(p.window_w))?;
-            let d = ctx.sub(l, &hw, &prev.height)?;
+            let d = ctx.sub(l, &hw, &cur_height)?;
             ctx.cond_range(l, &active_tx, &d, 3, 3)?;
             let hk = ctx.add_const(l, &h_anchor, f_u32(p.k_min))?;
-            let d = ctx.sub(l, &prev.height, &hk)?;
+            let d = ctx.sub(l, &cur_height, &hk)?;
             ctx.cond_range(l, &active_tx, &d, 3, 3)?;
 
             // ---- the nullifiers: absent, then inserted, in order
@@ -828,13 +866,13 @@ impl BatchCircuit {
         )?;
         let ra_bits = ctx.bits32(l, &ra_pos)?;
         let ra_sibs = self.siblings(ctx, l, w.is_some(), ra.map(|p| &p.siblings))?;
-        let expected = ctx.add_const(l, &prev.height, -activation + Fp::ONE)?;
+        let expected = ctx.add_const(l, &cur_height, -activation + Fp::ONE)?;
         ctx.cond_eq(l, &final_block, &ra_pos, &expected)?;
         let empty = ctx.merkle_root(l, &zero, &ra_bits, &ra_sibs)?;
-        ctx.cond_eq(l, &final_block, &empty, &prev.h_root)?;
+        ctx.cond_eq(l, &final_block, &empty, &cur_h_root)?;
         let appended = ctx.merkle_root(l, &cur_root, &ra_bits, &ra_sibs)?;
-        let next_h_root = ctx.select(l, &final_block, &appended, &prev.h_root)?;
-        let next_height = ctx.add(l, &prev.height, &final_block)?;
+        let next_h_root = ctx.select(l, &final_block, &appended, &cur_h_root)?;
+        let next_height = ctx.add(l, &cur_height, &final_block)?;
         let next_applied = ctx.select(l, &final_block, &zero, &cur_applied)?;
         let next = Opening {
             root: cur_root,
@@ -901,6 +939,7 @@ impl Circuit<Fp> for BatchCircuit {
     fn without_witnesses(&self) -> Self {
         BatchCircuit {
             n: self.n,
+            n_empty: self.n_empty,
             params: self.params,
             witness: None,
         }
@@ -1098,6 +1137,7 @@ pub(crate) mod tests_support {
         (
             BatchWitness {
                 prev,
+                empty_appends: Vec::new(),
                 slots,
                 final_block: true,
                 root_append: Some(root_append),
@@ -1117,6 +1157,7 @@ mod tests {
         let st = witness.check(&params).ok_or("native check refuses")?;
         let circuit = BatchCircuit {
             n,
+            n_empty: 0,
             params,
             witness: Some(witness.clone()),
         };
@@ -1186,6 +1227,7 @@ mod tests {
         let ra = h.end_block();
         let w = BatchWitness {
             prev,
+            empty_appends: Vec::new(),
             slots: vec![Some(slot)],
             final_block: true,
             root_append: Some(ra),
@@ -1198,6 +1240,7 @@ mod tests {
         let ra = h.end_block();
         let w = BatchWitness {
             prev,
+            empty_appends: Vec::new(),
             slots: vec![Some(slot)],
             final_block: true,
             root_append: Some(ra),
@@ -1211,6 +1254,7 @@ mod tests {
         let slot = h.transfer(1000, 2);
         let w = BatchWitness {
             prev,
+            empty_appends: Vec::new(),
             slots: vec![Some(slot)],
             final_block: false,
             root_append: None,
@@ -1226,11 +1270,103 @@ mod tests {
         let ra = h.end_block();
         let w = BatchWitness {
             prev,
+            empty_appends: Vec::new(),
             slots: vec![None],
             final_block: true,
             root_append: Some(ra),
         };
         assert_eq!(mock(&w, p, 1), Ok(()), "empty slot");
+    }
+
+    /// Two blocks without events closed by the step of the block after
+    /// them (§3.9): natively and in the circuit; the prefix pinned by its
+    /// positions (a swapped or dropped append is refused, as is a prefix
+    /// after statements were applied in the block in progress).
+    #[test]
+    fn empty_blocks_before_a_block_are_closed_by_its_step() {
+        let p = params();
+        let mut h = History::new(p);
+        let _ = h.mint(1);
+        h.end_block();
+        let prev = h.opening();
+        let e1 = h.end_block();
+        let e2 = h.end_block();
+        let slots = vec![Some(h.transfer(1000, 2)), None];
+        let ra = h.end_block();
+        let w = BatchWitness {
+            prev,
+            empty_appends: vec![e1.clone(), e2.clone()],
+            slots,
+            final_block: true,
+            root_append: Some(ra),
+        };
+        let st = w.check(&p).expect("two empty blocks, then the block");
+        assert_eq!(st.s_next, h.opening().digest());
+        let swapped = BatchWitness {
+            empty_appends: vec![e2.clone(), e1.clone()],
+            ..w.clone()
+        };
+        assert!(swapped.check(&p).is_none(), "positions pin the order");
+        let dropped = BatchWitness {
+            empty_appends: vec![e1.clone()],
+            ..w.clone()
+        };
+        assert!(
+            dropped.check(&p).is_none(),
+            "the block's own append then misses its position"
+        );
+        let mut mid = w.clone();
+        mid.prev.applied = 1;
+        assert!(
+            mid.check(&p).is_none(),
+            "a prefix after statements were applied"
+        );
+        // the circuit, with room for four empty blocks and two in use
+        let circuit = BatchCircuit {
+            n: 2,
+            n_empty: 4,
+            params: p,
+            witness: Some(w.clone()),
+        };
+        let instance = st.to_field_elements();
+        let t = std::time::Instant::now();
+        let mut k = 16;
+        let prover = loop {
+            match MockProver::run(k, &circuit, vec![instance.clone()]) {
+                Ok(p) => break p,
+                Err(_) => {
+                    k += 1;
+                    assert!(k <= 20);
+                }
+            }
+        };
+        prover.assert_satisfied();
+        println!(
+            "batch relation, 2 slots and 4 empty blocks (2 used): fits k = {k} (mock {:.1} s)",
+            t.elapsed().as_secs_f64()
+        );
+        // the cost of the prefix: the same relation with room for none
+        for n_empty in [0usize, 4] {
+            let c = BatchCircuit {
+                n_empty,
+                ..circuit.clone()
+            };
+            println!(
+                "{n_empty} empty blocks: {:?}",
+                halo2_proofs::dev::CircuitCost::<pasta_curves::vesta::Point, _>::measure(k, &c)
+            );
+        }
+        let bad = BatchCircuit {
+            witness: Some(dropped),
+            ..circuit.clone()
+        };
+        assert!(
+            MockProver::run(k, &bad, vec![instance])
+                .unwrap()
+                .verify()
+                .is_err(),
+            "a dropped empty block is refused in the circuit too"
+        );
     }
 
     #[test]
@@ -1239,6 +1375,7 @@ mod tests {
         let st = witness.check(&params).expect("the native check accepts");
         let circuit = BatchCircuit {
             n: 2,
+            n_empty: 0,
             params,
             witness: Some(witness.clone()),
         };
@@ -1285,6 +1422,7 @@ mod tests {
         tampered.slots[0].as_mut().unwrap().statement.nullifiers[0] = Fp::from(1u64);
         let bad = BatchCircuit {
             n: 2,
+            n_empty: 0,
             params,
             witness: Some(tampered),
         };
@@ -1300,6 +1438,7 @@ mod tests {
         tampered.slots[0].as_mut().unwrap().statement.r_anchor = EMPTY_ROOTS[DEPTH];
         let bad = BatchCircuit {
             n: 2,
+            n_empty: 0,
             params,
             witness: Some(tampered),
         };

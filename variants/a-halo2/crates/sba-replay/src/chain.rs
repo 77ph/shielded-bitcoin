@@ -521,6 +521,8 @@ fn key_slots_p(g: &p::VerifierCircuit) -> Vec<usize> {
 /// The chain's circuits from the previous step's captures (real or fake):
 /// the shapes, and the values when the captures carry them.
 pub struct Shaper<'k> {
+    /// Blocks without events a step may close before its block (§3.9).
+    pub n_empty: usize,
     pub tparams: &'k Params<vesta::Affine>,
     pub tvk: &'k VerifyingKey<vesta::Affine>,
     pub outer: &'k Params<pallas::Affine>,
@@ -715,6 +717,7 @@ impl Shaper<'_> {
             field_tp,
             batch: BatchCircuit {
                 n: self.n_slots,
+                n_empty: self.n_empty,
                 params: self.batch_params,
                 witness,
             },
@@ -733,6 +736,7 @@ impl Shaper<'_> {
 pub struct ChainKeys {
     pub n_proofs: usize,
     pub n_slots: usize,
+    pub n_empty: usize,
     pub tparams: Params<vesta::Affine>,
     pub tvk: VerifyingKey<vesta::Affine>,
     pub outer: Params<pallas::Affine>,
@@ -791,6 +795,7 @@ impl ChainKeys {
         for v in [
             self.n_proofs as u32,
             self.n_slots as u32,
+            self.n_empty as u32,
             self.outer.k(),
             self.pparams.k(),
         ] {
@@ -815,6 +820,7 @@ impl ChainKeys {
     pub fn generate(
         n_proofs: usize,
         n_slots: usize,
+        n_empty: usize,
         k_q: u32,
         k_p: u32,
         batch_params: BatchParams,
@@ -879,6 +885,7 @@ impl ChainKeys {
         // minimal StepPChain-like view of it
         let _ = StepPN::instance;
         let shaper0 = Shaper {
+            n_empty,
             tparams: &tparams,
             tvk: &tvk,
             outer: &outer,
@@ -931,6 +938,7 @@ impl ChainKeys {
         )
         .map_err(err)?;
         let shaper1 = Shaper {
+            n_empty,
             tparams: &tparams,
             tvk: &tvk,
             outer: &outer,
@@ -958,6 +966,7 @@ impl ChainKeys {
             fake_capture(&pparams, &vk_p1, &sp1.instance(), &claims_p1, OsRng).map_err(err)?;
         // round 2: over the chain-shaped fakes; the shapes must now be stable
         let shaper2 = Shaper {
+            n_empty,
             tparams: &tparams,
             tvk: &tvk,
             outer: &outer,
@@ -979,6 +988,7 @@ impl ChainKeys {
         )
         .map_err(err)?;
         let shaper3 = Shaper {
+            n_empty,
             tparams: &tparams,
             tvk: &tvk,
             outer: &outer,
@@ -1018,6 +1028,7 @@ impl ChainKeys {
         }
         // round 3: the final keys over round-2 fakes, and the dummy step 0
         let shaper4 = Shaper {
+            n_empty,
             tparams: &tparams,
             tvk: &tvk,
             outer: &outer,
@@ -1045,6 +1056,7 @@ impl ChainKeys {
         )
         .map_err(err)?;
         let shaper5 = Shaper {
+            n_empty,
             tparams: &tparams,
             tvk: &tvk,
             outer: &outer,
@@ -1077,6 +1089,7 @@ impl ChainKeys {
         // final T_q key; T_p(0)'s instance what its group side exposes of
         // it, then [s0, s0, 0] with s0 the genesis digest; its proof a fake
         let shaper = Shaper {
+            n_empty,
             tparams: &tparams,
             tvk: &tvk,
             outer: &outer,
@@ -1122,6 +1135,7 @@ impl ChainKeys {
         Ok(ChainKeys {
             n_proofs,
             n_slots,
+            n_empty,
             tparams,
             tvk,
             outer,
@@ -1145,6 +1159,7 @@ impl ChainKeys {
 
     pub fn shaper(&self) -> Shaper<'_> {
         Shaper {
+            n_empty: self.n_empty,
             tparams: &self.tparams,
             tvk: &self.tvk,
             outer: &self.outer,
@@ -1214,8 +1229,12 @@ impl<'k> ChainProver<'k> {
         }
     }
 
+    /// Prove the step closing blocks `first_height..=height`: the blocks
+    /// before `height` without events (`witness.empty_appends`), then
+    /// `height` with its statements and `transfers`.
     pub fn prove(
         &mut self,
+        first_height: u32,
         height: u32,
         witness: &BatchWitness,
         opening_after: &StateOpening,
@@ -1331,6 +1350,7 @@ impl<'k> ChainProver<'k> {
         self.steps += 1;
         self.s = statement.s_next;
         Ok(ProvenStep {
+            first_height,
             height,
             slots: witness
                 .slots
@@ -1413,48 +1433,80 @@ impl ChainSource for Capped<'_> {
     }
 }
 
-/// Replay the indexer's next block from `chain` (persisting through
-/// `store`, if any) and prove it as the chain's next step; `None` when the
-/// chain has no such block yet. The indexer must stand exactly where the
+/// Replay the indexer's next blocks from `chain` (persisting through
+/// `store`, if any) and prove them as the chain's next step: blocks
+/// without a shielded event are closed by the step of the first block
+/// with one after them, up to the keys' `n_empty` of them, or by the
+/// last block on the chain when the tip is reached (§3.9). `None` when
+/// the chain has no new block. The indexer must stand exactly where the
 /// prover does (`reconcile`); a reorganisation below the proven chain is
 /// an error — the proven chain cannot continue on another branch.
-pub fn prove_next_block(
+pub fn prove_next_step(
     prover: &mut ChainProver,
     idx: &mut Indexer,
-    store: Option<&mut dyn StateStore>,
+    mut store: Option<&mut dyn StateStore>,
     chain: &dyn ChainSource,
 ) -> Result<Option<ProvenStep>, String> {
-    let height = idx.next_height();
-    if chain.tip().map_err(err)?.height < height {
+    let first = idx.next_height();
+    if chain.tip().map_err(err)?.height < first {
         return Ok(None);
     }
-    let blocks_before = idx.state.blocks.len();
-    let report = idx
-        .sync_with(
-            &Capped {
-                inner: chain,
-                tip: height,
-            },
-            store,
-        )
-        .map_err(err)?;
-    if report.rolled_back_to.is_some() {
-        return Err(format!(
-            "the chain reorganised below block {height}: the proven chain cannot continue"
-        ));
+    let n_empty = prover.keys.n_empty;
+    let mut empties = Vec::new();
+    let mut prev = None;
+    loop {
+        let height = idx.next_height();
+        let blocks_before = idx.state.blocks.len();
+        // the store reborrowed for this block only
+        let store_now: Option<&mut dyn StateStore> = match store.as_mut() {
+            Some(s) => Some(&mut **s),
+            None => None,
+        };
+        let report = idx
+            .sync_with(
+                &Capped {
+                    inner: chain,
+                    tip: height,
+                },
+                store_now,
+            )
+            .map_err(err)?;
+        if report.rolled_back_to.is_some() {
+            return Err(format!(
+                "the chain reorganised below block {height}: the proven chain cannot continue"
+            ));
+        }
+        if idx.state.blocks.len() != blocks_before + 1 || idx.state.last_height() != Some(height) {
+            return Err("the sync did not replay exactly the next block".into());
+        }
+        let witness = idx
+            .state
+            .batches
+            .pop()
+            .ok_or("the replayed block left no batch witness")?;
+        let prev = *prev.get_or_insert(witness.prev);
+        let has_events = witness.slots.iter().any(|s| s.is_some());
+        let more = chain.tip().map_err(err)?.height > height;
+        if has_events || empties.len() == n_empty || !more {
+            let merged = BatchWitness {
+                prev,
+                empty_appends: empties,
+                slots: witness.slots,
+                final_block: true,
+                root_append: witness.root_append,
+            };
+            let opening_after = idx.state.opening(idx.next_height());
+            let transfers = transfers_of(idx, height)?;
+            let step = prover.prove(first, height, &merged, &opening_after, &transfers)?;
+            return Ok(Some(step));
+        }
+        // a block without events: its root append joins the prefix
+        empties.push(
+            witness
+                .root_append
+                .ok_or("a replayed block without its root append")?,
+        );
     }
-    if idx.state.blocks.len() != blocks_before + 1 || idx.state.last_height() != Some(height) {
-        return Err("the sync did not replay exactly the next block".into());
-    }
-    let witness = idx
-        .state
-        .batches
-        .pop()
-        .ok_or("the replayed block left no batch witness")?;
-    let opening_after = idx.state.opening(idx.next_height());
-    let transfers = transfers_of(idx, height)?;
-    let step = prover.prove(height, &witness, &opening_after, &transfers)?;
-    Ok(Some(step))
 }
 
 /// Put the indexer where the prover is: blocks it replayed beyond
@@ -1665,8 +1717,12 @@ mod chain_tests {
         idx.sync(&chain).unwrap();
         let bparams = idx.batch_params();
         let t = std::time::Instant::now();
-        let keys = ChainKeys::generate(2, 3, 18, 18, bparams, &genesis).unwrap();
+        let keys = ChainKeys::generate(2, 3, 8, 18, 18, bparams, &genesis).unwrap();
         println!("chain keys: {:.1} s", t.elapsed().as_secs_f64());
+        println!(
+            "chain T_p shape: {:?}",
+            halo2_proofs::dev::CircuitCost::<vesta::Point, _>::measure(18, &keys.step_p)
+        );
         let mut prover = ChainProver::new(&keys);
         let decider = ChainDecider { keys: &keys };
         // block 1000 (the two mints) as the first step: no transfers
@@ -1674,7 +1730,7 @@ mod chain_tests {
         let w0 = idx.state.batches[0].clone();
         let o0 = idx.state.opening(idx.next_height());
         let t = std::time::Instant::now();
-        let step1 = prover.prove(1000, &w0, &o0, &[]).unwrap();
+        let step1 = prover.prove(1000, 1000, &w0, &o0, &[]).unwrap();
         println!(
             "step 1 (two mints, base): {:.1} s, {} bytes",
             t.elapsed().as_secs_f64(),
@@ -1724,7 +1780,7 @@ mod chain_tests {
         let tr1 = transfers_of(&idx, 1001).unwrap();
         assert_eq!(tr1.len(), 2);
         let t = std::time::Instant::now();
-        let step2 = prover.prove(1001, &w1, &o1, &tr1).unwrap();
+        let step2 = prover.prove(1001, 1001, &w1, &o1, &tr1).unwrap();
         println!(
             "step 2 (two transfers, a mint): {:.1} s, {} bytes",
             t.elapsed().as_secs_f64(),
@@ -1740,7 +1796,7 @@ mod chain_tests {
         let mut rogue = ChainProver::resume(&keys, &restored).unwrap();
         rogue.steps = 0;
         let t = std::time::Instant::now();
-        let rogue2 = rogue.prove(1001, &w1, &o1, &tr1).unwrap();
+        let rogue2 = rogue.prove(1001, 1001, &w1, &o1, &tr1).unwrap();
         println!(
             "rogue base step at block 1001: {:.1} s",
             t.elapsed().as_secs_f64()
@@ -1769,7 +1825,7 @@ mod chain_tests {
         // through the runner: the indexer stands at 1002, the chain has it
         reconcile(&mut idx, None, 1002).unwrap();
         let t = std::time::Instant::now();
-        let step3 = prove_next_block(&mut prover, &mut idx, None, &chain)
+        let step3 = prove_next_step(&mut prover, &mut idx, None, &chain)
             .unwrap()
             .expect("the block is on the chain");
         assert_eq!(step3.height, 1002);
@@ -1780,7 +1836,7 @@ mod chain_tests {
         );
         let o2 = idx.state.opening(1003);
         assert!(
-            prove_next_block(&mut prover, &mut idx, None, &chain)
+            prove_next_step(&mut prover, &mut idx, None, &chain)
                 .unwrap()
                 .is_none(),
             "no block 1003 yet"

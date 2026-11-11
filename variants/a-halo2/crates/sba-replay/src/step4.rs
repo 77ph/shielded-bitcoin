@@ -543,6 +543,7 @@ mod tests {
             fields,
             batch: BatchCircuit {
                 n,
+                n_empty: 0,
                 params: bparams,
                 witness: Some(witness.clone()),
             },
@@ -646,6 +647,7 @@ mod tests {
         );
         // the proven step on the wire, decided by a client from its state digest
         let step = crate::wire::ProvenStep {
+            first_height: 1001,
             height: 1001,
             slots: witness
                 .slots

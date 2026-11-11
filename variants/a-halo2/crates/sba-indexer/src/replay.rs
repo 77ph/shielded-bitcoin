@@ -191,6 +191,7 @@ impl Indexer {
         self.state.h_tree.append(root);
         self.state.batches.push(BatchWitness {
             prev,
+            empty_appends: Vec::new(),
             slots: std::mem::take(&mut self.pending_slots),
             final_block: true,
             root_append: Some(root_append),

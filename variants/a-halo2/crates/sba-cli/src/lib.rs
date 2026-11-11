@@ -156,6 +156,9 @@ enum Cmd {
         /// Statement slots per step (mints and transfers).
         #[arg(long, default_value_t = 4)]
         slots: usize,
+        /// Blocks without events a step may close before its block.
+        #[arg(long, default_value_t = 8)]
+        empty: usize,
         #[arg(long, default_value_t = 18)]
         k_q: u32,
         #[arg(long, default_value_t = 18)]
@@ -170,6 +173,8 @@ enum Cmd {
         proofs: usize,
         #[arg(long, default_value_t = 4)]
         slots: usize,
+        #[arg(long, default_value_t = 8)]
+        empty: usize,
         #[arg(long, default_value_t = 18)]
         k_q: u32,
         #[arg(long, default_value_t = 18)]
@@ -909,6 +914,7 @@ pub fn run(args: Vec<String>) -> Result<()> {
             blocks,
             proofs,
             slots,
+            empty,
             k_q,
             k_p,
         } => replay::prove(
@@ -916,6 +922,7 @@ pub fn run(args: Vec<String>) -> Result<()> {
             replay::Sizes {
                 proofs,
                 slots,
+                empty,
                 k_q,
                 k_p,
             },
@@ -925,6 +932,7 @@ pub fn run(args: Vec<String>) -> Result<()> {
             latest,
             proofs,
             slots,
+            empty,
             k_q,
             k_p,
         } => replay::decide(
@@ -932,6 +940,7 @@ pub fn run(args: Vec<String>) -> Result<()> {
             replay::Sizes {
                 proofs,
                 slots,
+                empty,
                 k_q,
                 k_p,
             },
