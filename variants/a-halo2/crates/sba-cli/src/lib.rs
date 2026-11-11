@@ -147,9 +147,15 @@ enum Cmd {
     Sync,
     /// Prove the next blocks as steps of the accumulated replay proof (docs/REPLAY-PROOF-A.md §3.8): keys made at start (minutes), the chain's own replay and state under the data dir.
     ReplayProve {
-        /// How many blocks to prove this run.
+        /// How many steps to prove this run (ignored with --follow).
         #[arg(long, default_value_t = 1)]
         blocks: u32,
+        /// Keep running: wait for new blocks and prove them as they come.
+        #[arg(long)]
+        follow: bool,
+        /// Seconds between looks at the chain while following.
+        #[arg(long, default_value_t = 60)]
+        poll: u64,
         /// Transfer proofs per step (the fragment).
         #[arg(long, default_value_t = 2)]
         proofs: usize,
@@ -912,6 +918,8 @@ pub fn run(args: Vec<String>) -> Result<()> {
         Cmd::Status => print_status(&ctx.indexer()?.0),
         Cmd::ReplayProve {
             blocks,
+            follow,
+            poll,
             proofs,
             slots,
             empty,
@@ -926,7 +934,8 @@ pub fn run(args: Vec<String>) -> Result<()> {
                 k_q,
                 k_p,
             },
-            blocks,
+            if follow { None } else { Some(blocks) },
+            std::time::Duration::from_secs(poll),
         )?,
         Cmd::ReplayDecide {
             latest,
