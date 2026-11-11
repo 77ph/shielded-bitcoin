@@ -429,3 +429,55 @@ its broadcast, the second in the next block, 2 minutes after. The anchor policy 
 designed: a `send` attempted right after the mint's block was refused
 ("no input is confirmed under the selected anchor") with no input left
 locked, and succeeded three blocks later.
+
+## Private signet, 10–11 November 2026: the accumulated replay proof's chain over ten blocks, decided from one step
+
+The first run of `REPLAY-PROOF-A.md` §3.8 outside its tests: a family-A
+deployment on the private signet of `scripts/localsignet.sh`
+(`replay-drill`, profile a-0.3, witness carrier, activation 251), its
+history proven as one chain of steps by `sb a replay-prove`, and the
+chain accepted by a client holding only the keys and the genesis digest
+(`sb a replay-decide --latest`). The drill is `scripts/replay-chain-drill.sh`
+in three phases; its log stays with the deployment's data.
+
+**Events** (the host, beside the node, 3 minutes): the operator's
+funding script as the development vault; alice funded with 0.01 sBTC in
+block 251; a mint of 5 000 in block 252; alice pays bob 2 000 (block
+255) and the operator 1 000 (block 258), each a commit-and-reveal pair
+of 1 509 vB; three blocks mined after each so the anchor is deep
+enough; 3 accepted events, 0 rejections; blocks 251–260 to prove — ten
+steps, seven of them for blocks with no event (a step is a step: the
+relation appends a root per block).
+
+**Prove.** Started on the host with the static binary, niced on four
+cores: keys 996 s, step 1 (block 251, no slot) 1 038 s, step 2 (the
+mint) 948 s — then stopped: the prover held 21 GB and the box's swap
+was full, which is not a load the server's other projects should carry;
+the chain's state (92 546 bytes) and the two steps stayed on disk.
+Resumed inside the container `sb-s1` (4 cores, a 24 GB limit; the node
+reached across the docker bridge through a host firewall rule for that
+one port): keys **877 s, the same key-set id** as the host's — the keys
+are a function of the circuits' structure, so two bootstraps on two
+machines agree — the state taken up at step 2 ("2 steps, next block
+253"), steps 3–10 in 453, 428, 335, 325, 309, 322, 314, 327 s, each
+**70 292 bytes** on the wire (four slots), each decided by the prover's
+own sequential check in 2–7 s, then "block 261 is not on the chain
+yet"; the container's memory peaked at 17.3 GB; the phase 3 738 s wall
+with the keys.
+
+**Decide.** `replay-decide --latest`: keys 959 s (the same id), then
+**step 10 alone, from the genesis: block 260 accepted in 2.36 s**, the
+digest after it the one the prover reported. That is the light client of
+`REPLAY-PROOF-A.md` §3.5: one step of 70 292 bytes and two seconds for a
+history of any length, given the keys and the deployment's genesis
+digest. The sequential `replay-decide` that followed found the client's
+state already at step 10 and decided nothing more — the sequential path
+was exercised by the prover's self-check of every step, not by this
+command; a separate client directory would show it.
+
+What the run says beyond the study's test: the chain runs block by block
+from a live node through the CLI, survives a stop and a change of
+machine on its saved state, and its keys need no file to agree across
+runs; the cost of key generation at every start (15–17 minutes) and the
+step per empty block (five minutes of proving for nothing) are the two
+figures to bring down next.
