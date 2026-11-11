@@ -756,6 +756,294 @@ pub struct ChainKeys {
     pub step0: Artifacts,
 }
 
+const KEYS_META_VERSION: u8 = 1;
+
+impl ChainKeys {
+    /// Write the four keys and a line of metadata under `dir` (`t_q.vk`,
+    /// `t_q.pk`, `t_p.vk`, `t_p.pk`, `meta`): the keys through the vendored
+    /// `halo2_proofs`' `keys_io` (hundreds of megabytes a proving key at
+    /// k = 18, no cosets), the metadata the sizes and the key set's id.
+    /// The shapes are not written: [`Self::read`] rebuilds them from the
+    /// keys, as they are a function of the keys' structure.
+    pub fn write(&self, dir: &std::path::Path) -> std::io::Result<()> {
+        use std::io::{BufWriter, Write};
+        std::fs::create_dir_all(dir)?;
+        let file = |name: &str| -> std::io::Result<BufWriter<std::fs::File>> {
+            Ok(BufWriter::new(std::fs::File::create(dir.join(name))?))
+        };
+        self.ovk.write(&mut file("t_q.vk")?)?;
+        self.opk.write(&mut file("t_q.pk")?)?;
+        self.pvk.write(&mut file("t_p.vk")?)?;
+        self.ppk.write(&mut file("t_p.pk")?)?;
+        let mut meta = vec![KEYS_META_VERSION];
+        for v in [
+            self.n_proofs as u32,
+            self.n_slots as u32,
+            self.n_empty as u32,
+            self.outer.k(),
+            self.pparams.k(),
+        ] {
+            meta.extend_from_slice(&v.to_le_bytes());
+        }
+        meta.extend_from_slice(&self.id());
+        file("meta")?.write_all(&meta)
+    }
+
+    /// Whether `dir` holds a key set of these sizes (its metadata agrees).
+    pub fn on_disk(
+        dir: &std::path::Path,
+        n_proofs: usize,
+        n_slots: usize,
+        n_empty: usize,
+        k_q: u32,
+        k_p: u32,
+    ) -> bool {
+        let Ok(meta) = std::fs::read(dir.join("meta")) else {
+            return false;
+        };
+        let mut want = vec![KEYS_META_VERSION];
+        for v in [n_proofs as u32, n_slots as u32, n_empty as u32, k_q, k_p] {
+            want.extend_from_slice(&v.to_le_bytes());
+        }
+        meta.len() == want.len() + 32 && meta[..want.len()] == want[..]
+    }
+
+    /// Read a key set written by [`Self::write`] for these sizes, and
+    /// rebuild everything else: the transfer key and `n` fresh sample
+    /// proofs (the padding), the two circuits' shapes by the bootstrap's
+    /// rounds over fake captures — under the final keys from the start, so
+    /// no key generation — and a fresh dummy step 0 under `genesis`. The
+    /// metadata's id must be the keys' id.
+    #[allow(clippy::too_many_arguments)]
+    pub fn read(
+        dir: &std::path::Path,
+        n_proofs: usize,
+        n_slots: usize,
+        n_empty: usize,
+        k_q: u32,
+        k_p: u32,
+        batch_params: BatchParams,
+        genesis: &StateOpening,
+    ) -> Result<Self, String> {
+        use crate::step4::StepQN;
+        use std::io::BufReader;
+        if !Self::on_disk(dir, n_proofs, n_slots, n_empty, k_q, k_p) {
+            return Err("no key set of these sizes on disk".into());
+        }
+        let meta = std::fs::read(dir.join("meta")).map_err(err)?;
+        let stored_id: [u8; 32] = meta[meta.len() - 32..].try_into().unwrap();
+        let outer: Params<pallas::Affine> = Params::new(k_q);
+        let pparams: Params<vesta::Affine> = Params::new(k_p);
+        let open = |name: &str| -> Result<BufReader<std::fs::File>, String> {
+            Ok(BufReader::new(
+                std::fs::File::open(dir.join(name)).map_err(|e| format!("{name}: {e}"))?,
+            ))
+        };
+        let ovk =
+            VerifyingKey::<pallas::Affine>::read::<_, StepQChain>(&mut open("t_q.vk")?, &outer)
+                .map_err(|e| format!("t_q.vk: {e}"))?;
+        let opk = ProvingKey::<pallas::Affine>::read::<_, StepQChain>(&mut open("t_q.pk")?, &outer)
+            .map_err(|e| format!("t_q.pk: {e}"))?;
+        let pvk =
+            VerifyingKey::<vesta::Affine>::read::<_, StepPChain>(&mut open("t_p.vk")?, &pparams)
+                .map_err(|e| format!("t_p.vk: {e}"))?;
+        let ppk =
+            ProvingKey::<vesta::Affine>::read::<_, StepPChain>(&mut open("t_p.pk")?, &pparams)
+                .map_err(|e| format!("t_p.pk: {e}"))?;
+        // the transfer key and the padding
+        let tp = TransferParams::build().map_err(err)?;
+        let (st, w) = crate::sample::sample();
+        let tparams: Params<vesta::Affine> = Params::new(K);
+        let tvk = plonk::keygen_vk(&tparams, &TransferCircuit::default()).map_err(err)?;
+        let mut padding = Vec::with_capacity(n_proofs);
+        let mut caps: Vec<Capture<vesta::Affine>> = Vec::with_capacity(n_proofs);
+        for _ in 0..n_proofs {
+            let proof = tp.prove(&st, &w, &mut OsRng).map_err(err)?;
+            caps.push(capture(&tparams, &tvk, &st.to_field_elements(), &proof, &[]).map_err(err)?);
+            padding.push((st.clone(), proof));
+        }
+        let claims_t: Vec<Claim<vesta::Affine>> = caps.iter().map(|c| c.claim()).collect();
+        let k_p_usize = k_p as usize;
+        // the shapes: the bootstrap's rounds with the final keys throughout
+        let q0 = StepQN {
+            groups: caps
+                .iter()
+                .map(|c| q::VerifierCircuit::over(&tparams, &tvk, c))
+                .collect(),
+        };
+        let (cap_q0, _) = fake_capture(&outer, &ovk, &q0.instance(), &[], OsRng).map_err(err)?;
+        let p0 = crate::prover::Keys::step_p(
+            &q0,
+            &cap_q0,
+            &outer,
+            &ovk,
+            &tparams,
+            &tvk,
+            &caps,
+            n_slots,
+            batch_params,
+            None,
+            &[],
+            &vec![false; n_proofs],
+        )?;
+        let mut claims_p0 = claims_t.clone();
+        claims_p0.push(Claim {
+            g: group::Curve::to_affine(&<vesta::Point as group::Group>::random(OsRng)),
+            u: (1..=k_p_usize as u64).map(Fp::from).collect(),
+        });
+        let (cap_p0, _) =
+            fake_capture(&pparams, &pvk, &p0.instance(), &claims_p0, OsRng).map_err(err)?;
+        let shaper = Shaper {
+            n_empty,
+            tparams: &tparams,
+            tvk: &tvk,
+            outer: &outer,
+            pparams: &pparams,
+            pvk: &pvk,
+            ovk: &ovk,
+            n_slots,
+            batch_params,
+        };
+        let p0_as_chain = StepPChain {
+            group_tq: {
+                let mut g = p0.group.clone();
+                g.re_expose = {
+                    let mut v = Vec::new();
+                    for (i, gq) in q0.groups.iter().enumerate() {
+                        v.extend(
+                            gq.ipa_challenge_slots(K as usize)
+                                .iter()
+                                .map(|p| q0.offsets()[i] + p),
+                        );
+                    }
+                    v.extend(gq_dummy_u(k_p_usize, q0.instance().len()));
+                    v
+                };
+                g
+            },
+            fields_pi: Vec::new(),
+            field_tp: (p0.fields[0].0.clone(), Vec::new(), 0),
+            batch: p0.batch.clone(),
+            statement_positions: Vec::new(),
+            slot_proof: Vec::new(),
+            used: Vec::new(),
+            prev_s_next: None,
+            prev_g: None,
+            base_pos: None,
+        };
+        // rounds until the T_q instance length repeats, as generate() goes
+        let mut cap_p = cap_p0;
+        let mut sp = p0_as_chain;
+        let mut cap_q = cap_q0;
+        let mut sq_prev_len = 0usize;
+        let (sq, sp, cap_q_final, cap_p_final) = loop {
+            let sq = shaper.step_q(&caps, &cap_p, &sp, &cap_q, true);
+            let (cap_q_next, _) = fake_capture(
+                &outer,
+                &ovk,
+                &sq.instance(),
+                std::slice::from_ref(&cap_q.claim()),
+                OsRng,
+            )
+            .map_err(err)?;
+            let sp_next = shaper.step_p(
+                &cap_q_next,
+                &sq,
+                &caps,
+                &cap_p,
+                &sp,
+                None,
+                vec![None; n_slots],
+                vec![false; n_proofs],
+            );
+            let mut claims_p = claims_t.clone();
+            claims_p.push(cap_p.claim());
+            let (cap_p_next, _) =
+                fake_capture(&pparams, &pvk, &sp_next.instance(), &claims_p, OsRng).map_err(err)?;
+            let len = sq.instance().len();
+            let stable = len == sq_prev_len;
+            sq_prev_len = len;
+            if stable {
+                break (sq, sp_next, cap_q_next, cap_p_next);
+            }
+            cap_p = cap_p_next;
+            sp = sp_next;
+            cap_q = cap_q_next;
+        };
+        let keys = ChainKeys {
+            n_proofs,
+            n_slots,
+            n_empty,
+            tparams,
+            tvk,
+            outer,
+            ovk,
+            opk,
+            pparams,
+            pvk,
+            ppk,
+            step_q: sq.without_witnesses(),
+            step_p: sp.without_witnesses(),
+            batch_params,
+            padding,
+            step0: Artifacts {
+                cap_q: cap_q_final.clone(),
+                cap_p: cap_p_final.clone(),
+                sq: sq.without_witnesses(),
+                sp: sp.without_witnesses(),
+            },
+        };
+        if keys.id() != stored_id {
+            return Err("the key files are not the key set the metadata names".into());
+        }
+        // the dummy step 0 under genesis, as generate() makes it
+        let sq0 = keys
+            .shaper()
+            .step_q(&caps, &cap_p_final, &keys.step_p, &cap_q_final, true);
+        let (cap_q0f, _) = fake_capture(
+            &keys.outer,
+            &keys.ovk,
+            &sq0.instance(),
+            std::slice::from_ref(&cap_q_final.claim()),
+            OsRng,
+        )
+        .map_err(err)?;
+        let mut sp0 = keys.shaper().step_p(
+            &cap_q0f,
+            &sq0,
+            &caps,
+            &cap_p_final,
+            &keys.step_p,
+            None,
+            vec![None; n_slots],
+            vec![false; n_proofs],
+        );
+        let s0 = genesis.digest();
+        let mut instance_p0 = sp0.group_tq.instance(&cap_q0f);
+        instance_p0.extend([s0, s0, Fp::from(0u64), s0]);
+        let mut claims_p0f = claims_t.clone();
+        claims_p0f.push(claim_at::<vesta::Affine>(
+            &sq0.instance(),
+            &claim_positions(&sq0.group_tp, cap_p_final.u.len())
+                .iter()
+                .map(|p| sq0.offsets()[n_proofs] + p)
+                .collect::<Vec<_>>(),
+        )?);
+        let (cap_p0f, _) = fake_capture(&keys.pparams, &keys.pvk, &instance_p0, &claims_p0f, OsRng)
+            .map_err(err)?;
+        sp0.batch.witness = None;
+        Ok(ChainKeys {
+            step0: Artifacts {
+                cap_q: cap_q0f,
+                cap_p: cap_p0f,
+                sq: sq0.without_witnesses(),
+                sp: sp0.without_witnesses(),
+            },
+            ..keys
+        })
+    }
+}
+
 /// What a step leaves for the next.
 #[derive(Clone)]
 pub struct Artifacts {
@@ -1746,6 +2034,26 @@ mod chain_tests {
             (restored.index, restored.next_height, restored.s),
             (1, 1001, s)
         );
+        // the keys written and read back (the shapes rebuilt without key
+        // generation): the read set proves and decides from here on
+        let dir = std::env::temp_dir().join(format!("sb-chain-keys-{}", std::process::id()));
+        let t = std::time::Instant::now();
+        keys.write(&dir).unwrap();
+        let size: u64 = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().metadata().unwrap().len())
+            .sum();
+        println!(
+            "keys written: {size} bytes in {:.1} s",
+            t.elapsed().as_secs_f64()
+        );
+        let t = std::time::Instant::now();
+        let keys_read = ChainKeys::read(&dir, 2, 3, 8, 18, 18, bparams, &genesis).unwrap();
+        println!("keys read: {:.1} s", t.elapsed().as_secs_f64());
+        assert_eq!(keys_read.id(), keys.id());
+        std::fs::remove_dir_all(&dir).unwrap();
+        let keys = keys_read;
+        let decider = ChainDecider { keys: &keys };
         let mut prover = ChainProver::resume(&keys, &restored).unwrap();
         // block 1001: two transfers and a mint
         let notes: Vec<_> = idx.state.events[..2]

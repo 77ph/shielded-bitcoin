@@ -1080,9 +1080,8 @@ key set, the step count, the digest. Keys are not persisted: `halo2`
 with its cosets; they are a function of the circuits' structure alone,
 so every run of one configuration makes the same keys (`ChainKeys::id`
 hashes the sizes and both keys' representatives, and a state names the
-key set it is of) — twenty minutes at every start, the lever for later
-(a proving key written without its cosets would be hundreds of
-megabytes and seconds to load). The prover runs its own replay of the
+key set it is of) — twenty minutes at every start, the lever pulled the
+next day (below). The prover runs its own replay of the
 chain, one block at a time (`Capped`: the chain source's tip held at
 the next block), proves the block the sync just replayed, writes the
 step and its state (through a temporary file), and checks the step as
@@ -1128,6 +1127,28 @@ bytes; the rogue base step 309.5 s to prove and refused; the sequential
 decider 2.10 s a step, **the decider of the latest step alone 2.06 s**
 — the light client of §3.5: one step of 69 780 bytes, two seconds, the
 keys, and the deployment's genesis digest, whatever the history's length.
+
+**Keys on disk** (11 November) [built]. The vendored `halo2_proofs`
+gains `keys_io` — read and write for `VerifyingKey` and `ProvingKey`,
+nothing of the prover or verifier changed: a verifying key is its `k`,
+fixed and permutation commitments, selector assignments (now kept in the
+key) and transcript representative, and reading it runs the circuit's
+`configure` again and compresses the stored selectors as key generation
+did, so the constraint system is rebuilt, not stored, and the
+representative read must agree; a proving key adds the fixed and
+permutation columns' Lagrange values, their coefficient and coset forms
+and `l_0`, `l_blind`, `l_last` recomputed as `keygen_pk` computes them
+(a k = 18 key is hundreds of megabytes this way, gigabytes with its
+cosets). `ChainKeys::write` puts the four keys and the sizes under a
+directory; `ChainKeys::read` takes them back and rebuilds all the rest —
+the transfer key, fresh sample proofs for the padding, the two circuits'
+shapes by the bootstrap's rounds over fake captures under the final keys
+from the start (no key generation: seconds), a fresh dummy step 0 — and
+checks the key set's id against the metadata. `sb a replay-prove` and
+`replay-decide` read the keys under `replay-<deployment>/keys` when they
+are there and write them after generating them once. The chain test
+writes its keys, reads them back and proves and decides steps 2 and 3
+with the read set; its figures with the next server run.
 
 **Reviewed** (S7, 10 November 2026, the auditor's firsthand pass at
 664d013 and 50fdca6, the document to follow on an audit branch at the

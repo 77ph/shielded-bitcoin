@@ -85,10 +85,44 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn keys(ctx: &Ctx, sizes: Sizes) -> Result<ChainKeys> {
+/// The key set of these sizes: read from `dir/keys` when it is there,
+/// otherwise generated (minutes) and written for the next run.
+fn keys(ctx: &Ctx, dir: &Dir, sizes: Sizes) -> Result<ChainKeys> {
     let genesis = ReplayState::new().opening(ctx.deployment.activation_height);
     let verifier = ctx.deployment.verifier()?;
     let params = Indexer::new(ctx.deployment.clone(), verifier, ReplayState::new()).batch_params();
+    let kdir = dir.0.join("keys");
+    if ChainKeys::on_disk(
+        &kdir,
+        sizes.proofs,
+        sizes.slots,
+        sizes.empty,
+        sizes.k_q,
+        sizes.k_p,
+    ) {
+        println!(
+            "chain keys: {} proofs over {} slots, {} empty blocks a step, k = {}/{}; reading them …",
+            sizes.proofs, sizes.slots, sizes.empty, sizes.k_q, sizes.k_p
+        );
+        let t = Instant::now();
+        let keys = ChainKeys::read(
+            &kdir,
+            sizes.proofs,
+            sizes.slots,
+            sizes.empty,
+            sizes.k_q,
+            sizes.k_p,
+            params,
+            &genesis,
+        )
+        .map_err(|e| anyhow::anyhow!("chain keys on disk: {e}"))?;
+        println!(
+            "chain keys: read in {:.0} s, id {}",
+            t.elapsed().as_secs_f64(),
+            hex::encode(keys.id())
+        );
+        return Ok(keys);
+    }
     println!(
         "chain keys: {} proofs over {} slots, {} empty blocks a step, k = {}/{}; making them (minutes) …",
         sizes.proofs, sizes.slots, sizes.empty, sizes.k_q, sizes.k_p
@@ -109,13 +143,17 @@ fn keys(ctx: &Ctx, sizes: Sizes) -> Result<ChainKeys> {
         t.elapsed().as_secs_f64(),
         hex::encode(keys.id())
     );
+    let t = Instant::now();
+    keys.write(&kdir)
+        .with_context(|| format!("writing the keys under {}", kdir.display()))?;
+    println!("chain keys: written in {:.0} s", t.elapsed().as_secs_f64());
     Ok(keys)
 }
 
 /// Prove up to `blocks` next blocks as steps of the chain.
 pub fn prove(ctx: &Ctx, sizes: Sizes, blocks: u32) -> Result<()> {
     let dir = Dir::of(ctx)?;
-    let keys = keys(ctx, sizes)?;
+    let keys = keys(ctx, &dir, sizes)?;
     let mut store: Box<dyn StateStore> = Box::new(JsonStore::new(dir.indexer()));
     let state = store.load()?;
     let mut idx = Indexer::new(ctx.deployment.clone(), ctx.deployment.verifier()?, state);
@@ -189,7 +227,7 @@ pub fn prove(ctx: &Ctx, sizes: Sizes, blocks: u32) -> Result<()> {
 /// the genesis digest (one step attests the whole history).
 pub fn decide(ctx: &Ctx, sizes: Sizes, latest: bool) -> Result<()> {
     let dir = Dir::of(ctx)?;
-    let keys = keys(ctx, sizes)?;
+    let keys = keys(ctx, &dir, sizes)?;
     if latest {
         let (index, height, path) = dir.steps()?.into_iter().last().context("no step on disk")?;
         let step = ProvenStep::from_bytes(&std::fs::read(&path)?)
