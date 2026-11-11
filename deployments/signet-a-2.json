@@ -1,0 +1,18 @@
+{
+  "profile": "a-0.3",
+  "family": "a-halo2",
+  "name": "signet-a-2",
+  "network": "signet",
+  "activation_height": 330433,
+  "const_salt": "aad461fe39b2eb9e996aaa7bfb6a0e3f3cabef13ab208e188367dc2c875ad8c3",
+  "transfer_k": 14,
+  "transfer_vk_id": "a187598868b153c740ca763395e1cda274dd9c9718c9c1472408296f478ab028",
+  "window_w": 100,
+  "k_min": 1,
+  "anchor_depth": 3,
+  "boundary": {
+    "vault_script_hex": "00144715245e9423df9042b26362b6383b3b406024bb",
+    "operator_address": "tsba1t7tvywzsf6u26f34la3kpa9v8yrwdyxw0gewlmmra93mr5kfq93f25ys8x8ajql93ku2svaaygq"
+  },
+  "carrier": "witness"
+}
