@@ -29,6 +29,9 @@ mod verifier;
 
 #[cfg(test)]
 mod claims_test;
+mod keys_io;
+#[cfg(test)]
+mod keys_io_test;
 
 #[cfg(feature = "unstable-verifier-fingerprint")]
 #[cfg_attr(docsrs, doc(cfg(feature = "unstable-verifier-fingerprint")))]
@@ -55,6 +58,9 @@ pub struct VerifyingKey<C: CurveAffine> {
     cs_degree: usize,
     /// The representative of this `VerifyingKey` in transcripts.
     transcript_repr: C::Scalar,
+    /// The selector assignments key generation compressed into fixed
+    /// columns, kept so the key can be written and read back (`keys_io`).
+    selectors: Vec<Vec<bool>>,
 }
 
 impl<C: CurveAffine> VerifyingKey<C>
@@ -66,6 +72,7 @@ where
         fixed_commitments: Vec<C>,
         permutation: permutation::VerifyingKey<C>,
         cs: ConstraintSystem<C::Scalar>,
+        selectors: Vec<Vec<bool>>,
     ) -> Self {
         // Compute cached values.
         let cs_degree = cs.degree();
@@ -78,6 +85,7 @@ where
             cs_degree,
             // Temporary, this is not pinned.
             transcript_repr: C::Scalar::ZERO,
+            selectors,
         };
 
         let mut hasher = Blake2bParams::new()

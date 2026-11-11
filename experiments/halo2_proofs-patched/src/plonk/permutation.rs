@@ -92,3 +92,31 @@ pub(crate) struct ProvingKey<C: CurveAffine> {
     polys: Vec<Polynomial<C::Scalar, Coeff>>,
     pub(super) cosets: Vec<Polynomial<C::Scalar, ExtendedLagrangeCoeff>>,
 }
+
+impl<C: CurveAffine> ProvingKey<C> {
+    /// The permutation polynomials as Lagrange values (`keys_io`).
+    pub(crate) fn permutations(&self) -> &[Polynomial<C::Scalar, LagrangeCoeff>] {
+        &self.permutations
+    }
+
+    /// The key from its permutation polynomials, the other forms computed
+    /// as `Assembly::build_pk` computes them (`keys_io`).
+    pub(crate) fn from_permutations(
+        domain: &crate::poly::EvaluationDomain<C::Scalar>,
+        permutations: Vec<Polynomial<C::Scalar, LagrangeCoeff>>,
+    ) -> Self {
+        let polys: Vec<_> = permutations
+            .iter()
+            .map(|p| domain.lagrange_to_coeff(p.clone()))
+            .collect();
+        let cosets = polys
+            .iter()
+            .map(|p| domain.coeff_to_extended(p.clone()))
+            .collect();
+        ProvingKey {
+            permutations,
+            polys,
+            cosets,
+        }
+    }
+}

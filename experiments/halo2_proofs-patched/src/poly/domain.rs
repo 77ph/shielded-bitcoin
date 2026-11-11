@@ -177,6 +177,16 @@ impl<F: WithSmallOrderMulGroup<3>> EvaluationDomain<F> {
         }
     }
 
+    /// The domain's `k` (`keys_io`).
+    pub(crate) fn k(&self) -> u32 {
+        self.k
+    }
+
+    /// The domain's size `n = 2^k` (`keys_io`).
+    pub(crate) fn n(&self) -> u64 {
+        self.n
+    }
+
     /// Returns an empty (zero) polynomial in the Lagrange coefficient basis
     pub fn empty_lagrange(&self) -> Polynomial<F, LagrangeCoeff> {
         Polynomial {
