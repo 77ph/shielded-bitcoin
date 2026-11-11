@@ -1158,10 +1158,15 @@ the dummy step 5.3 s; key generation on the same loaded host 969 s. So
 on this host reading was no faster than generating, and the quiet-box
 figure is still to be taken; what the run established is correctness:
 the key set read from disk has the generated set's id, proves steps 2
-and 3 and decides them (2.9 s, the latest alone 2.4 s). The lever if the
+and 3 and decides them (2.9 s, the latest alone 2.4 s). The CLI path the
+same day on the same loaded host (load average above 20): `replay-decide
+--latest` generated and wrote the drill's keys (1 557 s, 2 s to write,
+1.1 GB), and a second call read them (1 385 s, the same id) and decided
+the latest step; correctness again, speed not yet. The lever if the
 quiet-box reading stays in minutes: write the cosets too — ten gigabytes
 a key set, read at disk speed, no FFT at load — and parse in parallel
-without the canonicity check a key's own scalars do not need.
+without the canonicity check a key's own scalars do not need; the fork's
+reader prints its phases under `HALO2_KEYS_IO_TIMING=1`.
 
 **Reviewed** (S7, 10 November 2026, the auditor's firsthand pass at
 664d013 and 50fdca6, the document to follow on an audit branch at the

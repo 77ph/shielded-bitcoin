@@ -196,7 +196,17 @@ where
         if &tag != PK_TAG {
             return Err(bad("not a proving key"));
         }
+        // HALO2_KEYS_IO_TIMING=1 prints where the time goes
+        let timing = std::env::var_os("HALO2_KEYS_IO_TIMING").is_some();
+        let mut t = std::time::Instant::now();
+        let mut lap = |what: &str| {
+            if timing {
+                eprintln!("keys_io: {what} {:.1} s", t.elapsed().as_secs_f64());
+                t = std::time::Instant::now();
+            }
+        };
         let vk = VerifyingKey::read::<R, ConcreteCircuit>(r, params)?;
+        lap("verifying key");
         let n = params.n as usize;
         let n_fixed = read_u32(r)? as usize;
         if n_fixed != vk.cs.num_fixed_columns {
@@ -214,15 +224,19 @@ where
         for _ in 0..n_perm {
             permutations.push(vk.domain.lagrange_from_vec(read_column(r, n)?));
         }
+        lap("columns parsed");
         let fixed_polys: Vec<_> = fixed_values
             .iter()
             .map(|poly| vk.domain.lagrange_to_coeff(poly.clone()))
             .collect();
+        lap("fixed polys (ifft)");
         let fixed_cosets = fixed_polys
             .iter()
             .map(|poly| vk.domain.coeff_to_extended(poly.clone()))
             .collect();
+        lap("fixed cosets (extended fft)");
         let permutation = permutation::ProvingKey::from_permutations(&vk.domain, permutations);
+        lap("permutation polys and cosets");
         // as keygen_pk: l_0, l_blind, l_last
         let mut l0 = vk.domain.empty_lagrange();
         l0[0] = C::Scalar::ONE;
