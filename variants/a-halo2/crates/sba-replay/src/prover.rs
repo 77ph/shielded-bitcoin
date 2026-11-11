@@ -199,6 +199,7 @@ impl Keys {
             fields,
             batch: BatchCircuit {
                 n: n_slots,
+                n_empty: 0,
                 params: batch_params,
                 witness,
             },
@@ -343,6 +344,7 @@ impl Prover<'_> {
         .map_err(|e| format!("T_p: {e:?}"))?;
         let proof_p = tr.finalize();
         Ok(ProvenStep {
+            first_height: height,
             height,
             slots: witness
                 .slots

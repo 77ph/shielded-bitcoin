@@ -24,6 +24,10 @@ type Fq = vesta::Base;
 /// One fragment of one block, proven.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProvenStep {
+    /// The first block the step closes (blocks without events before its
+    /// own, `REPLAY-PROOF-A.md` §3.9); equal to `height` for one block.
+    pub first_height: u32,
+    /// The block whose statements the step applies, its last.
     pub height: u32,
     /// The slots in replay order; an empty slot is all zeros.
     pub slots: Vec<Option<SlotStatement>>,
@@ -79,7 +83,8 @@ impl<'a> Rd<'a> {
 impl ProvenStep {
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut out = Vec::new();
-        put_u32(&mut out, 1); // version
+        put_u32(&mut out, 2); // version
+        put_u32(&mut out, self.first_height);
         put_u32(&mut out, self.height);
         put_u32(&mut out, self.slots.len() as u32);
         for s in &self.slots {
@@ -113,9 +118,12 @@ impl ProvenStep {
 
     pub fn from_bytes(b: &[u8]) -> Result<Self, String> {
         let mut r = Rd(b);
-        if r.u32()? != 1 {
+        let version = r.u32()?;
+        if version != 1 && version != 2 {
             return Err("unknown version".into());
         }
+        // version 1 steps are of one block
+        let first_height = if version == 2 { Some(r.u32()?) } else { None };
         let height = r.u32()?;
         let n = r.u32()? as usize;
         let mut slots = Vec::with_capacity(n);
@@ -157,6 +165,7 @@ impl ProvenStep {
             return Err("trailing bytes".into());
         }
         Ok(ProvenStep {
+            first_height: first_height.unwrap_or(height),
             height,
             slots,
             opening_after,
@@ -293,6 +302,7 @@ mod tests {
             mint: false,
         };
         let step = ProvenStep {
+            first_height: 1001,
             height: 1001,
             slots: vec![Some(st), None],
             opening_after: StateOpening {
@@ -313,7 +323,13 @@ mod tests {
         assert_eq!(ProvenStep::from_bytes(&bytes).unwrap(), step);
         assert!(ProvenStep::from_bytes(&bytes[..bytes.len() - 1]).is_err());
         let mut bad = bytes.clone();
-        bad[0] = 2;
+        bad[0] = 3;
         assert!(ProvenStep::from_bytes(&bad).is_err());
+        // a version-1 step (one block, no first_height) still reads
+        let mut v1 = bytes.clone();
+        v1[0] = 1;
+        v1.drain(4..8);
+        let old = ProvenStep::from_bytes(&v1).unwrap();
+        assert_eq!((old.first_height, old.height), (step.height, step.height));
     }
 }

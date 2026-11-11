@@ -223,6 +223,11 @@ pub struct SlotWitness {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct BatchWitness {
     pub prev: StateOpening,
+    /// Blocks without a shielded event before this one, each closed by
+    /// appending the unchanged note root to the root tree at its height
+    /// (`REPLAY-PROOF-A.md` §3.9); the statements below are anchored
+    /// against the height after them.
+    pub empty_appends: Vec<MerklePath>,
     pub slots: Vec<Option<SlotWitness>>,
     pub final_block: bool,
     pub root_append: Option<MerklePath>,
@@ -283,6 +288,21 @@ impl BatchWitness {
         let mut nf_root = prev.nf_root;
         let mut nf_size = prev.nf_size;
         let mut applied = prev.applied;
+        // the blocks without events first: the note root appended for each
+        // at its height; a prefix is a whole number of blocks, so nothing
+        // may be applied in the block in progress
+        let mut height = prev.height;
+        let mut h_root = prev.h_root;
+        if !self.empty_appends.is_empty() && applied != 0 {
+            return None;
+        }
+        for ra in &self.empty_appends {
+            if ra.position != (height - p.activation) as u64 + 1 || ra.root(&Fp::ZERO) != h_root {
+                return None;
+            }
+            h_root = ra.root(&root);
+            height += 1;
+        }
         let mut statements = Vec::with_capacity(self.slots.len());
         for slot in &self.slots {
             let Some(sw) = slot else {
@@ -295,7 +315,7 @@ impl BatchWitness {
                 // the anchor: in the window, its root in the root tree (an
                 // anchor below activation opens to the initial root)
                 let h = st.h_anchor as u64;
-                let height = prev.height as u64;
+                let height = height as u64;
                 if h + (p.window_w as u64) < height || height < h + (p.k_min as u64) {
                     return None;
                 }
@@ -308,7 +328,7 @@ impl BatchWitness {
                         position: (st.h_anchor - p.activation) as u64 + 1,
                         siblings: sw.anchor_siblings,
                     };
-                    if path.root(&st.r_anchor) != prev.h_root {
+                    if path.root(&st.r_anchor) != h_root {
                         return None;
                     }
                 }
@@ -346,14 +366,12 @@ impl BatchWitness {
         // the end of a block: the note root appended to the root tree
         let (h_root, height, applied) = if self.final_block {
             let ra = self.root_append.as_ref()?;
-            if ra.position != (prev.height - p.activation) as u64 + 1
-                || ra.root(&Fp::ZERO) != prev.h_root
-            {
+            if ra.position != (height - p.activation) as u64 + 1 || ra.root(&Fp::ZERO) != h_root {
                 return None;
             }
-            (ra.root(&root), prev.height + 1, 0)
+            (ra.root(&root), height + 1, 0)
         } else {
-            (prev.h_root, prev.height, applied)
+            (h_root, height, applied)
         };
         let next = StateOpening {
             root,

@@ -21,13 +21,13 @@
 #   CLI_CMD   bitcoin-cli against the node (validateaddress, getblockcount)
 #   BLOCKS    steps to prove this run (default 50; the prover stops at the tip)
 #
-# Set SB to the binary (default: target/release/sb). PROOFS/SLOTS/KQ/KP are
-# the fragment and circuit sizes (defaults 2/4/18/18; the phases must agree).
+# Set SB to the binary (default: target/release/sb). PROOFS/SLOTS/EMPTY/KQ/KP
+# are the fragment and circuit sizes (defaults 2/4/8/18/18; the phases must agree).
 # Written 10 November 2026; its first run is recorded in docs/RUNS.md when made.
 set -euo pipefail
 PHASE=${1:?events|prove|decide}; WORK=${2:?workdir}; CHAIN=${3:?chain spec}
 SB=${SB:-target/release/sb}
-PROOFS=${PROOFS:-2}; SLOTS=${SLOTS:-4}; KQ=${KQ:-18}; KP=${KP:-18}
+PROOFS=${PROOFS:-2}; SLOTS=${SLOTS:-4}; EMPTY=${EMPTY:-8}; KQ=${KQ:-18}; KP=${KP:-18}
 mkdir -p "$WORK/a" "$WORK/b"
 LOG="$WORK/LOG.md"; PROFILE="$WORK/profile.json"
 log() { echo "$*" | tee -a "$LOG"; }
@@ -35,7 +35,7 @@ log() { echo "$*" | tee -a "$LOG"; }
 a() { "$SB" --profile "$PROFILE" --data-dir "$WORK/a" --chain "$CHAIN" --passphrase-file "$WORK/pass" "$@" 2>&1 | tee -a "$LOG"; }
 b() { "$SB" --profile "$PROFILE" --data-dir "$WORK/b" --chain "$CHAIN" --passphrase-file "$WORK/pass" "$@" 2>&1 | tee -a "$LOG"; }
 field() { grep "^$2" <<<"$1" | head -1 | awk '{print $NF}'; }
-sizes=(--proofs "$PROOFS" --slots "$SLOTS" --k-q "$KQ" --k-p "$KP")
+sizes=(--proofs "$PROOFS" --slots "$SLOTS" --empty "$EMPTY" --k-q "$KQ" --k-p "$KP")
 
 case "$PHASE" in
   events)

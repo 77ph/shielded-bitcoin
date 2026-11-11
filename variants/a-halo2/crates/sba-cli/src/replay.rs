@@ -12,7 +12,7 @@ use std::time::Instant;
 use anyhow::{Context, Result, bail};
 use sba_indexer::{Indexer, JsonStore, ReplayState, StateStore};
 use sba_primitives::encoding::fp_to_bytes;
-use sba_replay::chain::{ChainDecider, ChainKeys, ChainProver, prove_next_block, reconcile};
+use sba_replay::chain::{ChainDecider, ChainKeys, ChainProver, prove_next_step, reconcile};
 use sba_replay::persist::{ChainState, ClientState};
 use sba_replay::wire::ProvenStep;
 
@@ -23,6 +23,8 @@ use crate::Ctx;
 pub struct Sizes {
     pub proofs: usize,
     pub slots: usize,
+    /// Blocks without events a step may close before its block (§3.9).
+    pub empty: usize,
     pub k_q: u32,
     pub k_p: u32,
 }
@@ -88,13 +90,14 @@ fn keys(ctx: &Ctx, sizes: Sizes) -> Result<ChainKeys> {
     let verifier = ctx.deployment.verifier()?;
     let params = Indexer::new(ctx.deployment.clone(), verifier, ReplayState::new()).batch_params();
     println!(
-        "chain keys: {} proofs over {} slots, k = {}/{}; making them (minutes) …",
-        sizes.proofs, sizes.slots, sizes.k_q, sizes.k_p
+        "chain keys: {} proofs over {} slots, {} empty blocks a step, k = {}/{}; making them (minutes) …",
+        sizes.proofs, sizes.slots, sizes.empty, sizes.k_q, sizes.k_p
     );
     let t = Instant::now();
     let keys = ChainKeys::generate(
         sizes.proofs,
         sizes.slots,
+        sizes.empty,
         sizes.k_q,
         sizes.k_p,
         params,
@@ -148,7 +151,7 @@ pub fn prove(ctx: &Ctx, sizes: Sizes, blocks: u32) -> Result<()> {
         let s_prev = prover.s;
         let t = Instant::now();
         let Some(step) =
-            prove_next_block(&mut prover, &mut idx, Some(store.as_mut()), chain.as_ref())
+            prove_next_step(&mut prover, &mut idx, Some(store.as_mut()), chain.as_ref())
                 .map_err(|e| anyhow::anyhow!("block {height}: {e}"))?
         else {
             println!("block {height} is not on the chain yet");
@@ -156,6 +159,7 @@ pub fn prove(ctx: &Ctx, sizes: Sizes, blocks: u32) -> Result<()> {
         };
         let proved = t.elapsed().as_secs_f64();
         let index = prover.steps as u32;
+        let height = step.height;
         let bytes = step.to_bytes();
         write_atomic(&dir.step(index, height), &bytes)?;
         write_atomic(
@@ -168,7 +172,9 @@ pub fn prove(ctx: &Ctx, sizes: Sizes, blocks: u32) -> Result<()> {
             .decide(&step, index as usize, s_prev)
             .map_err(|e| anyhow::anyhow!("step {index} refused by the decider: {e}"))?;
         println!(
-            "step {index}: block {height}, {} slots, {} bytes, proved in {proved:.1} s, decided in {:.2} s, digest {}",
+            "step {index}: blocks {}..={height} ({} without events), {} slots, {} bytes, proved in {proved:.1} s, decided in {:.2} s, digest {}",
+            step.first_height,
+            height - step.first_height,
             step.slots.iter().filter(|s| s.is_some()).count(),
             bytes.len(),
             t.elapsed().as_secs_f64(),
