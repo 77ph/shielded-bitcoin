@@ -775,6 +775,10 @@ impl ChainKeys {
         self.opk.write(&mut file("t_q.pk")?)?;
         self.pvk.write(&mut file("t_p.vk")?)?;
         self.ppk.write(&mut file("t_p.pk")?)?;
+        // the parameters too: `Params::new` at k = 18 hashes 2^18 points to
+        // the curve, minutes; their file is 16 MB and reads in a second
+        self.outer.write(&mut file("t_q.params")?)?;
+        self.pparams.write(&mut file("t_p.params")?)?;
         let mut meta = vec![KEYS_META_VERSION];
         for v in [
             self.n_proofs as u32,
@@ -837,8 +841,24 @@ impl ChainKeys {
             println!("keys read: {what} {:.1} s", t.elapsed().as_secs_f64());
             *t = std::time::Instant::now();
         };
-        let outer: Params<pallas::Affine> = Params::new(k_q);
-        let pparams: Params<vesta::Affine> = Params::new(k_p);
+        // the parameters from their files when present (written since 12
+        // November; made and written here otherwise, so the next read is fast)
+        fn params_from<C: CurveAffine>(dir: &std::path::Path, name: &str, k: u32) -> Params<C> {
+            if let Ok(f) = std::fs::File::open(dir.join(name)) {
+                if let Ok(p) = Params::<C>::read(&mut std::io::BufReader::new(f)) {
+                    if p.k() == k {
+                        return p;
+                    }
+                }
+            }
+            let p = Params::<C>::new(k);
+            if let Ok(f) = std::fs::File::create(dir.join(name)) {
+                let _ = p.write(&mut std::io::BufWriter::new(f));
+            }
+            p
+        }
+        let outer: Params<pallas::Affine> = params_from(dir, "t_q.params", k_q);
+        let pparams: Params<vesta::Affine> = params_from(dir, "t_p.params", k_p);
         let open = |name: &str| -> Result<BufReader<std::fs::File>, String> {
             Ok(BufReader::new(
                 std::fs::File::open(dir.join(name)).map_err(|e| format!("{name}: {e}"))?,
