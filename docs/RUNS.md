@@ -498,3 +498,28 @@ for eight of the ten blocks before. `replay-decide --latest`: keys
 2.27 s**. A quiet day of a test network (144 blocks) is now 16 steps,
 not 144; with the measured headroom the relation can take twelve empty
 blocks a step at four slots.
+
+## Public signet, 11–12 November 2026: the replay chain following the network live (deployment `signet-a-2`, activation 330433)
+
+The chain of `REPLAY-PROOF-A.md` §3.8–3.9 run as a follower of public
+signet, in the server container, by `sb a replay-prove --follow`
+(blocks from mempool.space's Esplora): a family-A deployment
+`signet-a-2` (profile a-0.3, witness carrier, the development vault the
+operator's funding script), its wallets made on the laptop, no shielded
+event yet — the funding of the first wallet awaited — so what is proven
+is the state standing still, block after block: the relation's root
+appends and the digests, which is what a light client would check for
+a quiet period too.
+
+**The first night** (started 20:05 UTC, keys generated in 1 286 s and
+written, 1.1 GB): one step per block at the tip, as the runner cut a
+step whenever it reached the tip — 59 steps for blocks 330433–330500 by
+09:30 UTC, each 70 296 bytes, proved in 370–540 s on a host still loaded
+after its reboot, the prover one or two blocks behind the tip
+throughout, no error. **The restart** (10:27 UTC, with `--settle 1800`):
+the keys read from disk instead of generated — 660 s, of which the four
+key files 122 s and the rest `Params::new` twice, hence the parameters'
+files now written next to the keys — and the chain taken up at step 60,
+block 330502; from there one step per half hour covering the blocks that
+arrived meanwhile. The events (a mint and two transfers) and the latest
+step decided from the genesis follow when the wallet is funded.
