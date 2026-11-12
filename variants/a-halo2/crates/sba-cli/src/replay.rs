@@ -153,7 +153,13 @@ fn keys(ctx: &Ctx, dir: &Dir, sizes: Sizes) -> Result<ChainKeys> {
 /// Prove the next steps of the chain: `steps` of them, or — following —
 /// every step the chain offers, looking again every `poll` when it
 /// offers none.
-pub fn prove(ctx: &Ctx, sizes: Sizes, steps: Option<u32>, poll: std::time::Duration) -> Result<()> {
+pub fn prove(
+    ctx: &Ctx,
+    sizes: Sizes,
+    steps: Option<u32>,
+    poll: std::time::Duration,
+    settle: std::time::Duration,
+) -> Result<()> {
     let dir = Dir::of(ctx)?;
     let keys = keys(ctx, &dir, sizes)?;
     let mut store: Box<dyn StateStore> = Box::new(JsonStore::new(dir.indexer()));
@@ -196,9 +202,15 @@ pub fn prove(ctx: &Ctx, sizes: Sizes, steps: Option<u32>, poll: std::time::Durat
         let height = idx.next_height();
         let s_prev = prover.s;
         let t = Instant::now();
-        let Some(step) =
-            prove_next_step(&mut prover, &mut idx, Some(store.as_mut()), chain.as_ref())
-                .map_err(|e| anyhow::anyhow!("block {height}: {e}"))?
+        let Some(step) = prove_next_step(
+            &mut prover,
+            &mut idx,
+            Some(store.as_mut()),
+            chain.as_ref(),
+            settle,
+            poll,
+        )
+        .map_err(|e| anyhow::anyhow!("block {height}: {e}"))?
         else {
             if steps.is_some() {
                 println!("block {height} is not on the chain yet");

@@ -1734,16 +1734,22 @@ impl ChainSource for Capped<'_> {
 /// `store`, if any) and prove them as the chain's next step: blocks
 /// without a shielded event are closed by the step of the first block
 /// with one after them, up to the keys' `n_empty` of them, or by the
-/// last block on the chain when the tip is reached (§3.9). `None` when
-/// the chain has no new block. The indexer must stand exactly where the
-/// prover does (`reconcile`); a reorganisation below the proven chain is
-/// an error — the proven chain cannot continue on another branch.
+/// last block on the chain when the tip is reached (§3.9) — unless
+/// `settle` is given: then at the tip the runner waits up to that long
+/// (looking every `poll`) for more blocks before it cuts a step of empty
+/// blocks, so a quiet chain costs a step per `settle`, not per block.
+/// `None` when the chain has no new block. The indexer must stand exactly
+/// where the prover does (`reconcile`); a reorganisation below the proven
+/// chain is an error — the proven chain cannot continue on another branch.
 pub fn prove_next_step(
     prover: &mut ChainProver,
     idx: &mut Indexer,
     mut store: Option<&mut dyn StateStore>,
     chain: &dyn ChainSource,
+    settle: std::time::Duration,
+    poll: std::time::Duration,
 ) -> Result<Option<ProvenStep>, String> {
+    let started = std::time::Instant::now();
     let first = idx.next_height();
     if chain.tip().map_err(err)?.height < first {
         return Ok(None);
@@ -1783,7 +1789,12 @@ pub fn prove_next_step(
             .ok_or("the replayed block left no batch witness")?;
         let prev = *prev.get_or_insert(witness.prev);
         let has_events = witness.slots.iter().any(|s| s.is_some());
-        let more = chain.tip().map_err(err)?.height > height;
+        let mut more = chain.tip().map_err(err)?.height > height;
+        // at the tip with an empty block: wait for the chain, up to `settle`
+        while !has_events && !more && empties.len() < n_empty && started.elapsed() < settle {
+            std::thread::sleep(poll);
+            more = chain.tip().map_err(err)?.height > height;
+        }
         if has_events || empties.len() == n_empty || !more {
             let merged = BatchWitness {
                 prev,
@@ -2147,7 +2158,8 @@ mod chain_tests {
         // through the runner: the indexer stands at 1002, the chain has it
         reconcile(&mut idx, None, 1002).unwrap();
         let t = std::time::Instant::now();
-        let step3 = prove_next_step(&mut prover, &mut idx, None, &chain)
+        let zero = std::time::Duration::ZERO;
+        let step3 = prove_next_step(&mut prover, &mut idx, None, &chain, zero, zero)
             .unwrap()
             .expect("the block is on the chain");
         assert_eq!(step3.height, 1002);
@@ -2158,7 +2170,7 @@ mod chain_tests {
         );
         let o2 = idx.state.opening(1003);
         assert!(
-            prove_next_step(&mut prover, &mut idx, None, &chain)
+            prove_next_step(&mut prover, &mut idx, None, &chain, zero, zero)
                 .unwrap()
                 .is_none(),
             "no block 1003 yet"

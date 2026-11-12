@@ -156,6 +156,10 @@ enum Cmd {
         /// Seconds between looks at the chain while following.
         #[arg(long, default_value_t = 60)]
         poll: u64,
+        /// At the tip, wait up to this many seconds for more blocks before
+        /// cutting a step of blocks without events (0: a step per block).
+        #[arg(long, default_value_t = 0)]
+        settle: u64,
         /// Transfer proofs per step (the fragment).
         #[arg(long, default_value_t = 2)]
         proofs: usize,
@@ -920,6 +924,7 @@ pub fn run(args: Vec<String>) -> Result<()> {
             blocks,
             follow,
             poll,
+            settle,
             proofs,
             slots,
             empty,
@@ -936,6 +941,7 @@ pub fn run(args: Vec<String>) -> Result<()> {
             },
             if follow { None } else { Some(blocks) },
             std::time::Duration::from_secs(poll),
+            std::time::Duration::from_secs(settle),
         )?,
         Cmd::ReplayDecide {
             latest,
