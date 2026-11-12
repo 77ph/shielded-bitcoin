@@ -202,7 +202,7 @@ pub fn prove(
         let height = idx.next_height();
         let s_prev = prover.s;
         let t = Instant::now();
-        let Some(step) = prove_next_step(
+        let Some((step, waited)) = prove_next_step(
             &mut prover,
             &mut idx,
             Some(store.as_mut()),
@@ -220,7 +220,7 @@ pub fn prove(
             continue;
         };
         done += 1;
-        let proved = t.elapsed().as_secs_f64();
+        let proved = t.elapsed().saturating_sub(waited).as_secs_f64();
         let index = prover.steps as u32;
         let height = step.height;
         let bytes = step.to_bytes();
@@ -235,11 +235,12 @@ pub fn prove(
             .decide(&step, index as usize, s_prev)
             .map_err(|e| anyhow::anyhow!("step {index} refused by the decider: {e}"))?;
         println!(
-            "step {index}: blocks {}..={height} ({} without events), {} slots, {} bytes, proved in {proved:.1} s, decided in {:.2} s, digest {}",
+            "step {index}: blocks {}..={height} ({} without events), {} slots, {} bytes, proved in {proved:.1} s after waiting {:.0} s, decided in {:.2} s, digest {}",
             step.first_height,
             height - step.first_height,
             step.slots.iter().filter(|s| s.is_some()).count(),
             bytes.len(),
+            waited.as_secs_f64(),
             t.elapsed().as_secs_f64(),
             hex::encode(fp_to_bytes(&s))
         );

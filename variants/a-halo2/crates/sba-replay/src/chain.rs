@@ -1758,9 +1758,11 @@ impl ChainSource for Capped<'_> {
 /// `settle` is given: then at the tip the runner waits up to that long
 /// (looking every `poll`) for more blocks before it cuts a step of empty
 /// blocks, so a quiet chain costs a step per `settle`, not per block.
-/// `None` when the chain has no new block. The indexer must stand exactly
-/// where the prover does (`reconcile`); a reorganisation below the proven
-/// chain is an error — the proven chain cannot continue on another branch.
+/// `None` when the chain has no new block; otherwise the step and how long
+/// was spent waiting for blocks (so a caller can tell proving from
+/// waiting). The indexer must stand exactly where the prover does
+/// (`reconcile`); a reorganisation below the proven chain is an error —
+/// the proven chain cannot continue on another branch.
 pub fn prove_next_step(
     prover: &mut ChainProver,
     idx: &mut Indexer,
@@ -1768,8 +1770,9 @@ pub fn prove_next_step(
     chain: &dyn ChainSource,
     settle: std::time::Duration,
     poll: std::time::Duration,
-) -> Result<Option<ProvenStep>, String> {
+) -> Result<Option<(ProvenStep, std::time::Duration)>, String> {
     let started = std::time::Instant::now();
+    let mut waited = std::time::Duration::ZERO;
     let first = idx.next_height();
     if chain.tip().map_err(err)?.height < first {
         return Ok(None);
@@ -1813,6 +1816,7 @@ pub fn prove_next_step(
         // at the tip with an empty block: wait for the chain, up to `settle`
         while !has_events && !more && empties.len() < n_empty && started.elapsed() < settle {
             std::thread::sleep(poll);
+            waited += poll;
             more = chain.tip().map_err(err)?.height > height;
         }
         if has_events || empties.len() == n_empty || !more {
@@ -1826,7 +1830,7 @@ pub fn prove_next_step(
             let opening_after = idx.state.opening(idx.next_height());
             let transfers = transfers_of(idx, height)?;
             let step = prover.prove(first, height, &merged, &opening_after, &transfers)?;
-            return Ok(Some(step));
+            return Ok(Some((step, waited)));
         }
         // a block without events: its root append joins the prefix
         empties.push(
@@ -2179,7 +2183,7 @@ mod chain_tests {
         reconcile(&mut idx, None, 1002).unwrap();
         let t = std::time::Instant::now();
         let zero = std::time::Duration::ZERO;
-        let step3 = prove_next_step(&mut prover, &mut idx, None, &chain, zero, zero)
+        let (step3, _) = prove_next_step(&mut prover, &mut idx, None, &chain, zero, zero)
             .unwrap()
             .expect("the block is on the chain");
         assert_eq!(step3.height, 1002);
