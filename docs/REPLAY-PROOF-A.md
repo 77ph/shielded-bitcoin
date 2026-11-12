@@ -1162,11 +1162,19 @@ and 3 and decides them (2.9 s, the latest alone 2.4 s). The CLI path the
 same day on the same loaded host (load average above 20): `replay-decide
 --latest` generated and wrote the drill's keys (1 557 s, 2 s to write,
 1.1 GB), and a second call read them (1 385 s, the same id) and decided
-the latest step; correctness again, speed not yet. The lever if the
-quiet-box reading stays in minutes: write the cosets too — ten gigabytes
-a key set, read at disk speed, no FFT at load — and parse in parallel
-without the canonicity check a key's own scalars do not need; the fork's
-reader prints its phases under `HALO2_KEYS_IO_TIMING=1`.
+the latest step; correctness again, speed not yet. **Where the time went**
+(the fork's reader prints its phases under `HALO2_KEYS_IO_TIMING=1`; the
+live follower's restart on 12 November, host load about 8–10): the four
+key files took 122 s in all — `T_q`'s proving key 48 s (columns parsed
+1.4 s, the coefficient forms 2.4 s, the fixed cosets 23 s, the
+permutation polynomials and cosets 21 s), `T_p`'s 74 s — and the rest of
+the 660 s was `Params::new` at k = 18 twice: hashing 2^18 points to the
+curve is minutes, not seconds. So the parameters are now written next to
+the keys (16 MB each, a second to read; made and written when missing),
+and reading a key set should come to about the key files' two minutes on
+this host — the figure of the next restart. The cosets' FFTs (one minute
+of the two) remain the lever after that: writing them would be ten
+gigabytes a key set.
 
 **Reviewed** (S7, 10 November 2026, the auditor's firsthand pass at
 664d013 and 50fdca6, the document to follow on an audit branch at the
