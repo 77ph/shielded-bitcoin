@@ -575,6 +575,32 @@ events and the one rejected envelope. The operator's 800 (anchor
 331284) at 14:42 UTC went through the retry on the real network: the
 commit `168cf9e8…` (153 vB), the first reveal refused for the same
 reason, the second accepted — the reveal `eb427c98…` (1 356 vB), 1 509
-vB for the pair. The follower stood at step 183 (blocks to 331255)
-while the transfers confirmed; the steps that carry them, and the
-latest step decided from the genesis, follow.
+vB for the pair; commit and reveal confirmed together in block 331287
+(the carrier tx 496), where the indexer accepted the transfer with its
+leaves at position 3. After the two transfers (`sb scan` at block
+331288): the note tree holds five leaves and four nullifiers, three
+accepted events and the one rejected envelope; alice has 1 000 sat in
+one note (position 3, the change of the second transfer; her 3 000
+mint and 1 800 change spent), bob 1 200 (position 1). The carriers'
+fees came from the funding wallet, not from the notes. The follower
+stood at step 183 (blocks to 331255) while the transfers confirmed and
+reached them an hour later: step 187 is block 331283 alone (a range
+closes at a block with events), one slot, 70 296 bytes, proved in
+374 s; step 188 is blocks 331284–331287, three without events and the
+operator's transfer in the fourth, one slot, the same 70 296 bytes,
+proved in 400 s after a 240 s wait for the third confirmation.
+
+**The light client, for real** (17 November, 15:45 UTC). A fresh
+directory holding the key set (1.1 GB on disk, linked from the
+follower's) and the one file `step-000188-331287.bin` of 70 296 bytes
+— no indexer state, no earlier step, no chain source consulted. `sb
+replay-decide --latest` under the family-A profile read the keys in
+185 s (the parameter and key files 128 s, the transfer key and padding
+48 s, the shapes 7 s, the dummy step 2.5 s; host load about 12) and
+accepted step 188 alone from the deployment's genesis digest in
+**2.46 s**: block 331287, and with it the deployment's whole history —
+855 blocks since activation, three shielded events — attested by
+one step. 3 min 22 s of wall clock and 11.5 GB resident in all, the key
+set's cosets being the memory. The follower was stopped for those four
+minutes and restarted from its state on disk (the 24 GB container
+holds one key set comfortably, not two while a step is proven).

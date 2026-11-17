@@ -1139,6 +1139,9 @@ bytes; the rogue base step 309.5 s to prove and refused; the sequential
 decider 2.10 s a step, **the decider of the latest step alone 2.06 s**
 — the light client of §3.5: one step of 69 780 bytes, two seconds, the
 keys, and the deployment's genesis digest, whatever the history's length.
+Run as such a client on 17 November (`RUNS.md`): a fresh directory with
+the key set and one 70 296-byte step, the keys read in 185 s and the
+step decided from the genesis in 2.46 s, 11.5 GB resident.
 
 **Keys on disk** (11 November) [built]. The vendored `halo2_proofs`
 gains `keys_io` — read and write for `VerifyingKey` and `ProvingKey`,
