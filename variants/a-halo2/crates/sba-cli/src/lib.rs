@@ -272,8 +272,12 @@ enum Cmd {
         #[arg(long, default_value = "1")]
         fee_rate: u64,
         /// Hand the envelope to a sponsored relayer (`http://host:port`) instead of paying the carrier.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "reveal")]
         relay: Option<String>,
+        /// Witness carrier: reveal an entry whose commit is on the network
+        /// already (its reveal refused, or the commit funded elsewhere).
+        #[arg(long)]
+        reveal: bool,
     },
     /// Serve the indexer API for verified-sync clients (`--chain light:<url>`).
     Serve {
@@ -626,6 +630,76 @@ impl Ctx {
             p.commit.vsize() + p.reveal.vsize()
         );
         Ok(r)
+    }
+
+    /// `publish --reveal`: the reveal of an entry whose commit output is on
+    /// the network already — its own reveal refused, or the commit funded
+    /// from another wallet (`docs/WITNESS-CARRIER.md` §3). The largest coin
+    /// at the commit address is spent; the change goes to this wallet.
+    fn reveal_funded(
+        &self,
+        wallet: &mut Wallet,
+        name: &str,
+        label: &str,
+        entry: &OutboxEntry,
+        fee_rate: u64,
+    ) -> Result<bitcoin::Txid> {
+        let envelope = hex::decode(&entry.envelope)?;
+        let publisher = self.publisher()?;
+        let fw = self.funding(wallet)?;
+        let key = fw.key(funding::Chain::Receive, 0)?;
+        let c = witness::Commitment::new(
+            &envelope,
+            &key.keypair().x_only_public_key().0,
+            self.btc_network(),
+        )?;
+        let coins = publisher.utxos(&c.address)?;
+        let coin = coins.iter().max_by_key(|u| u.value).ok_or_else(|| {
+            anyhow!(
+                "nothing at the commit address {} yet (label {label})",
+                c.address
+            )
+        })?;
+        let st = Self::funding_state(wallet);
+        let change = fw.key(funding::Chain::Change, st.change)?.address;
+        wallet.funding_change = st.change + 1;
+        wallet.save(&self.wallet_path(name))?;
+        let reveal = c.reveal(
+            &key,
+            coin.outpoint,
+            coin.value,
+            entry.extra_outputs()?,
+            None,
+            &change,
+            fee_rate,
+        )?;
+        let txid = publisher.broadcast(&reveal)?;
+        println!(
+            "reveal {txid} ({} vB) spends {}",
+            reveal.vsize(),
+            coin.outpoint
+        );
+        Ok(txid)
+    }
+
+    /// A transfer's anchor has to be inside the window (profile §11 step 3)
+    /// at the earliest block its carrier can enter, or the chain rejects the
+    /// transfer and the carrier was paid for nothing: an outbox entry that
+    /// waited too long is refused here, to be built afresh.
+    fn check_anchor_window(&self, envelope: &[u8]) -> Result<()> {
+        use sba_core::envelope::{Envelope, parse_envelope};
+        let Ok(Envelope::Transfer(t)) = parse_envelope(envelope) else {
+            return Ok(());
+        };
+        let h_anchor = t.body.h_anchor;
+        let tip = self.chain_source()?.tip()?.height;
+        let w = self.deployment.window_w;
+        if (h_anchor as u64 + w as u64) < tip as u64 + 1 {
+            bail!(
+                "anchor {h_anchor} is outside the window W={w} at tip {tip}: the chain would reject this transfer; release its inputs with `sb unlock --name <wallet>` and build it afresh"
+            );
+        }
+        Ok(())
     }
 
     /// Write a carrier to the outbox and, unless `outbox_only`, publish it
@@ -1206,6 +1280,7 @@ pub fn run(args: Vec<String>) -> Result<()> {
             name,
             fee_rate,
             relay,
+            reveal,
         } => {
             let path = if label.contains('/') || label.ends_with(".json") {
                 PathBuf::from(&label)
@@ -1224,9 +1299,18 @@ pub fn run(args: Vec<String>) -> Result<()> {
                 .and_then(|s| s.to_str())
                 .unwrap_or("carrier")
                 .to_string();
-            if let Some(url) = relay.as_deref() {
+            // an entry that waited past its anchor's window is refused
+            // before anything is paid for it
+            let envelope = hex::decode(&entry.envelope)?;
+            ctx.check_anchor_window(&envelope)?;
+            if reveal {
+                if ctx.deployment.carrier != CarrierMode::Witness {
+                    bail!("--reveal is for witness-carrier deployments");
+                }
+                let mut w = ctx.wallet(&name)?;
+                ctx.reveal_funded(&mut w, &name, &label, &entry, fee_rate)?;
+            } else if let Some(url) = relay.as_deref() {
                 // a relayer pays: no wallet of ours is involved
-                let envelope = hex::decode(&entry.envelope)?;
                 let memo = entry.relay_memo()?;
                 let txid = relay::submit(url, &envelope, memo.as_deref())?;
                 println!("relayed by {url}: {txid}");
@@ -1298,4 +1382,60 @@ pub fn run(args: Vec<String>) -> Result<()> {
     }
     let _ = memo_output;
     Ok(())
+}
+
+#[cfg(test)]
+mod cli_tests {
+    use super::*;
+
+    /// The deployment profile picks the family before clap runs, so the
+    /// A-family parser has to take every form the scripts use: global
+    /// options first, then the subcommand with its own flags.
+    #[test]
+    fn publish_takes_reveal_after_the_globals() {
+        let cli = Cli::try_parse_from([
+            "sb",
+            "--profile",
+            "deployments/x.json",
+            "--data-dir",
+            "d",
+            "publish",
+            "transfer-abc",
+            "--name",
+            "alice",
+            "--reveal",
+        ])
+        .unwrap();
+        match cli.cmd {
+            Cmd::Publish {
+                label,
+                name,
+                reveal,
+                relay,
+                ..
+            } => {
+                assert_eq!(label, "transfer-abc");
+                assert_eq!(name, "alice");
+                assert!(reveal);
+                assert!(relay.is_none());
+            }
+            _ => panic!("not publish"),
+        }
+    }
+
+    #[test]
+    fn reveal_and_relay_exclude_each_other() {
+        let e = match Cli::try_parse_from([
+            "sb",
+            "publish",
+            "transfer-abc",
+            "--reveal",
+            "--relay",
+            "http://relayer",
+        ]) {
+            Err(e) => e.to_string(),
+            Ok(_) => panic!("parsed"),
+        };
+        assert!(e.contains("cannot be used with"), "{e}");
+    }
 }

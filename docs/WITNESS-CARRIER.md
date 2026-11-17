@@ -112,6 +112,14 @@ carriers, and a witness implementation sees none of the OP_RETURN ones.
 commit from the wallet's coins to the commit address, the reveal from the
 commit output to the kind's extra outputs, the memo and a fresh change
 address; both are broadcast, the reveal spending the unconfirmed commit.
+A public broadcast endpoint can stand in front of several nodes, and the
+reveal may reach one that has not seen the commit yet (Core answers
+`bad-txns-inputs-missingorspent`): the reveal is retried five times three
+seconds apart, and if it is still refused the error names the commit,
+which is on the network by then, and `sb publish <label> --reveal` spends
+it once a node shows the commit output (both families; the case of 17
+November on public signet is in `RUNS.md`). An outbox entry that waited past its anchor's window
+`W` is refused before anything is paid for it (`PUBLICATION.md` §2.3).
 The fee-funding models of `docs/BOUNDARY.md` carry over:
 
 * **self-funding**: as above;

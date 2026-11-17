@@ -334,7 +334,9 @@ implementation of the paper? Rules this repository adopts:
   (`crates/sb-cli/tests/variant_a_e2e.rs`). The transfer and, since 3
   November, the development boundary's `withdraw` and `payouts` (the
   payout memo next to the envelope, as `BOUNDARY.md`), `publish` from the
-  outbox (third-party funding) and the sponsored relayer (`relay-serve`,
+  outbox (third-party funding; since 17 November also `--reveal` for a
+  commit whose reveal was refused, and the anchor-window check before a
+  carrier is paid for, `WITNESS-CARRIER.md` §5) and the sponsored relayer (`relay-serve`,
   `--relay`, the paper's wire format), the indexer API and the verified
   light sync from it (`serve`, `--chain light:<url>[|<full source>]`, the
   shared `BlockView` and `LightSource` of `sb-common`); swap, batch and

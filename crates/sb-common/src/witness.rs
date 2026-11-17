@@ -224,14 +224,56 @@ pub fn build_pair(
     })
 }
 
-/// Broadcast the pair in order.
+/// Attempts a reveal gets while the network answers that its input is not
+/// known: a load-balanced broadcast endpoint can hand the commit to one
+/// node and the reveal to another that has not seen the commit yet.
+pub const REVEAL_ATTEMPTS: u32 = 5;
+/// The pause between those attempts.
+pub const REVEAL_PAUSE: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// Broadcast the pair in order: the commit, then the reveal, which is
+/// retried `REVEAL_PAUSE` apart while the network has not seen the commit.
+/// The error after the last attempt names the commit, which is on the
+/// network by then: `publish <label> --reveal` spends it once it is seen.
 pub fn broadcast(
     publisher: &dyn Publisher,
     p: &Published,
 ) -> Result<(bitcoin::Txid, bitcoin::Txid)> {
+    broadcast_paced(publisher, p, REVEAL_PAUSE)
+}
+
+/// `broadcast` with the pause between reveal attempts given (the tests).
+pub fn broadcast_paced(
+    publisher: &dyn Publisher,
+    p: &Published,
+    pause: std::time::Duration,
+) -> Result<(bitcoin::Txid, bitcoin::Txid)> {
     let c = publisher.broadcast(&p.commit)?;
-    let r = publisher.broadcast(&p.reveal)?;
-    Ok((c, r))
+    let mut attempt = 1;
+    loop {
+        match publisher.broadcast(&p.reveal) {
+            Ok(r) => return Ok((c, r)),
+            Err(e) if attempt < REVEAL_ATTEMPTS && commit_not_seen(&e) => {
+                log::warn!(
+                    "reveal refused ({e:#}): the commit {c} may not have reached that node yet; attempt {attempt} of {REVEAL_ATTEMPTS}"
+                );
+                std::thread::sleep(pause);
+                attempt += 1;
+            }
+            Err(e) => {
+                return Err(e.context(format!(
+                    "commit {c} is published, the reveal is not: once the commit is seen, `sb publish <label> --reveal` spends it"
+                )));
+            }
+        }
+    }
+}
+
+/// Bitcoin Core's words for an input the node does not know
+/// (`bad-txns-inputs-missingorspent`, `missing-inputs`).
+fn commit_not_seen(e: &anyhow::Error) -> bool {
+    let s = format!("{e:#}").to_lowercase();
+    s.contains("missingorspent") || s.contains("missing-inputs") || s.contains("missing inputs")
 }
 
 #[cfg(test)]
@@ -351,5 +393,111 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(e.contains("commit output holds"), "{e}");
+    }
+
+    /// A pair over one 50 000-sat coin, no extra output, no memo.
+    fn pair() -> Published {
+        let fw = FundingWallet::new([3u8; 32], Network::Regtest);
+        let key = fw.key(Chain::Receive, 0).unwrap();
+        let mut env = vec![0u8; 700];
+        env[..4].copy_from_slice(&CANDIDATE_PREFIX);
+        let coins = vec![Coin {
+            utxo: Utxo {
+                outpoint: OutPoint {
+                    txid: Txid::all_zeros(),
+                    vout: 0,
+                },
+                value: 50_000,
+                confirmed: true,
+            },
+            chain: Chain::Receive,
+            index: 0,
+        }];
+        build_pair(
+            &fw,
+            &key,
+            &coins,
+            FundingState::default(),
+            &env,
+            vec![],
+            None,
+            2,
+            Network::Regtest,
+        )
+        .unwrap()
+    }
+
+    /// A network that refuses the reveal `refusals` times with `reason`
+    /// and records every transaction handed to it.
+    struct Flaky {
+        reveal: Txid,
+        refusals: std::cell::Cell<u32>,
+        reason: &'static str,
+        seen: std::cell::RefCell<Vec<Txid>>,
+    }
+
+    impl Publisher for Flaky {
+        fn utxos(&self, _address: &Address) -> Result<Vec<Utxo>> {
+            Ok(vec![])
+        }
+        fn broadcast(&self, tx: &Transaction) -> Result<Txid> {
+            let txid = tx.compute_txid();
+            self.seen.borrow_mut().push(txid);
+            if txid == self.reveal && self.refusals.get() > 0 {
+                self.refusals.set(self.refusals.get() - 1);
+                bail!("broadcast rejected (400): {}", self.reason);
+            }
+            Ok(txid)
+        }
+    }
+
+    fn flaky(p: &Published, refusals: u32, reason: &'static str) -> Flaky {
+        Flaky {
+            reveal: p.reveal.compute_txid(),
+            refusals: std::cell::Cell::new(refusals),
+            reason,
+            seen: std::cell::RefCell::new(vec![]),
+        }
+    }
+
+    #[test]
+    fn a_reveal_refused_before_the_commit_is_seen_is_retried() {
+        let p = pair();
+        let net = flaky(
+            &p,
+            2,
+            "sendrawtransaction RPC error -25: bad-txns-inputs-missingorspent",
+        );
+        let (c, r) = broadcast_paced(&net, &p, std::time::Duration::ZERO).unwrap();
+        assert_eq!(c, p.commit.compute_txid());
+        assert_eq!(r, p.reveal.compute_txid());
+        // the commit once, the reveal three times (two refusals, then accepted)
+        assert_eq!(net.seen.borrow().as_slice(), &[c, r, r, r]);
+    }
+
+    #[test]
+    fn a_reveal_refused_for_another_reason_fails_at_once_naming_the_commit() {
+        let p = pair();
+        let net = flaky(&p, 1, "bad-txns-in-belowout");
+        let e = format!(
+            "{:#}",
+            broadcast_paced(&net, &p, std::time::Duration::ZERO).unwrap_err()
+        );
+        assert!(e.contains(&p.commit.compute_txid().to_string()), "{e}");
+        assert!(e.contains("--reveal"), "{e}");
+        assert!(e.contains("bad-txns-in-belowout"), "{e}");
+        assert_eq!(net.seen.borrow().len(), 2);
+    }
+
+    #[test]
+    fn a_commit_never_seen_gives_up_after_the_attempts() {
+        let p = pair();
+        let net = flaky(&p, 100, "missing-inputs");
+        let e = format!(
+            "{:#}",
+            broadcast_paced(&net, &p, std::time::Duration::ZERO).unwrap_err()
+        );
+        assert!(e.contains("missing-inputs"), "{e}");
+        assert_eq!(net.seen.borrow().len() as u32, 1 + REVEAL_ATTEMPTS);
     }
 }

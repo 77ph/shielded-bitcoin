@@ -852,14 +852,23 @@ impl Ctx {
         };
         println!("holding the carrier for {secs} s before publishing (--delay {lo}-{hi})");
         std::thread::sleep(std::time::Duration::from_secs(secs));
-        if let Some(h_anchor) = envelope_anchor(envelope) {
-            let tip = self.chain_source()?.tip()?.height;
-            if (h_anchor + self.deployment.window_w) < tip + 1 {
-                bail!(
-                    "after the delay the anchor {h_anchor} is outside the window W={} at tip {tip}; rebuild the transfer",
-                    self.deployment.window_w
-                );
-            }
+        self.check_anchor_window(envelope)
+    }
+
+    /// A transfer's anchor has to be inside the window (`docs/PROFILE.md`
+    /// §11 step 3) at the earliest block its carrier can enter, or the chain
+    /// rejects the transfer and the carrier was paid for nothing: an outbox
+    /// entry that waited too long is refused here, to be built afresh.
+    fn check_anchor_window(&self, envelope: &[u8]) -> Result<()> {
+        let Some(h_anchor) = envelope_anchor(envelope) else {
+            return Ok(());
+        };
+        let tip = self.chain_source()?.tip()?.height;
+        let w = self.deployment.window_w;
+        if (h_anchor as u64 + w as u64) < tip as u64 + 1 {
+            bail!(
+                "anchor {h_anchor} is outside the window W={w} at tip {tip}: the chain would reject this transfer; release its inputs with `sb unlock --name <wallet>` and build it afresh"
+            );
         }
         Ok(())
     }
@@ -1679,6 +1688,9 @@ fn main() -> Result<()> {
                 .and_then(|s| s.to_str())
                 .unwrap_or("carrier")
                 .to_string();
+            // an entry that waited past its anchor's window is refused
+            // before anything is paid for it
+            ctx.check_anchor_window(&hex::decode(&entry.envelope)?)?;
             if reveal {
                 if ctx.deployment.carrier != sb_indexer::carrier::CarrierMode::Witness {
                     bail!("--reveal is for witness-carrier deployments");

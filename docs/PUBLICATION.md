@@ -95,7 +95,13 @@ correlation (it does not remove it: over enough samples a uniform delay
 is itself a pattern). The anchor policy bounds the delay (§3.3): the carrier must still
 be accepted within the window `W`, so when the delay ends the wallet
 re-checks the anchor against the chain tip and refuses to publish a
-carrier the window would reject (the transfer is rebuilt instead).
+carrier the window would reject (the transfer is rebuilt instead). The
+same check runs on every `sb publish` from the outbox, in both families:
+an entry built hours earlier and published after the window has moved on
+is refused before a carrier is paid for it, with `sb unlock` named as the
+way to release its inputs (on 17 November on public signet an entry
+published 295 blocks after its anchor, `W = 100`, cost its carrier and was
+rejected by the chain; `RUNS.md`).
 
 ### 2.4 Not done, and why
 
