@@ -160,6 +160,10 @@ enum Cmd {
         /// cutting a step of blocks without events (0: a step per block).
         #[arg(long, default_value_t = 0)]
         settle: u64,
+        /// Blocks a block must have above it before it is proven (a step is
+        /// never cut at the very tip; a reorganisation deeper than this rewinds).
+        #[arg(long, default_value_t = 3)]
+        confirm: u32,
         /// Transfer proofs per step (the fragment).
         #[arg(long, default_value_t = 2)]
         proofs: usize,
@@ -925,6 +929,7 @@ pub fn run(args: Vec<String>) -> Result<()> {
             follow,
             poll,
             settle,
+            confirm,
             proofs,
             slots,
             empty,
@@ -942,6 +947,7 @@ pub fn run(args: Vec<String>) -> Result<()> {
             if follow { None } else { Some(blocks) },
             std::time::Duration::from_secs(poll),
             std::time::Duration::from_secs(settle),
+            confirm,
         )?,
         Cmd::ReplayDecide {
             latest,

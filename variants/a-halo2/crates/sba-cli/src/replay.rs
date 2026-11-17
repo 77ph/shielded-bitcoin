@@ -12,7 +12,9 @@ use std::time::Instant;
 use anyhow::{Context, Result, bail};
 use sba_indexer::{Indexer, JsonStore, ReplayState, StateStore};
 use sba_primitives::encoding::fp_to_bytes;
-use sba_replay::chain::{ChainDecider, ChainKeys, ChainProver, prove_next_step, reconcile};
+use sba_replay::chain::{
+    ChainDecider, ChainKeys, ChainProver, StepError, prove_next_step, reconcile,
+};
 use sba_replay::persist::{ChainState, ClientState};
 use sba_replay::wire::ProvenStep;
 
@@ -75,6 +77,14 @@ impl Dir {
         v.sort();
         Ok(v)
     }
+}
+
+/// Seconds since the epoch, for a directory name.
+fn epoch_seconds() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 /// Write through a temporary file: a run killed mid-write leaves the old file.
@@ -159,6 +169,7 @@ pub fn prove(
     steps: Option<u32>,
     poll: std::time::Duration,
     settle: std::time::Duration,
+    confirm: u32,
 ) -> Result<()> {
     let dir = Dir::of(ctx)?;
     let keys = keys(ctx, &dir, sizes)?;
@@ -202,22 +213,59 @@ pub fn prove(
         let height = idx.next_height();
         let s_prev = prover.s;
         let t = Instant::now();
-        let Some((step, waited)) = prove_next_step(
+        let next = prove_next_step(
             &mut prover,
             &mut idx,
             Some(store.as_mut()),
             chain.as_ref(),
+            confirm,
             settle,
             poll,
-        )
-        .map_err(|e| anyhow::anyhow!("block {height}: {e}"))?
-        else {
-            if steps.is_some() {
-                println!("block {height} is not on the chain yet");
-                break;
+        );
+        let (step, waited) = match next {
+            Ok(Some(x)) => x,
+            Ok(None) => {
+                if steps.is_some() {
+                    println!("no block ready beyond {height} (confirmations: {confirm})");
+                    break;
+                }
+                std::thread::sleep(poll);
+                continue;
             }
-            std::thread::sleep(poll);
-            continue;
+            Err(StepError::Reorg { fork }) => {
+                // rewind to the last step still on the chain and go on from it
+                let on_chain = dir.steps()?.into_iter().rev().find(|(_, h, _)| *h <= fork);
+                let Some((index, h, path)) = on_chain else {
+                    bail!(
+                        "the chain reorganised below the genesis (fork at block {fork}): start the chain anew"
+                    );
+                };
+                let kept = ProvenStep::from_bytes(&std::fs::read(&path)?)
+                    .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
+                let st = keys
+                    .state_of_step(&kept, index)
+                    .map_err(|e| anyhow::anyhow!("rebuilding the state of step {index}: {e}"))?;
+                let orphaned = dir
+                    .0
+                    .join("steps")
+                    .join(format!("orphaned-{}", epoch_seconds()));
+                std::fs::create_dir_all(&orphaned)?;
+                for (i, _, p) in dir.steps()? {
+                    if i > index {
+                        std::fs::rename(&p, orphaned.join(p.file_name().unwrap()))?;
+                    }
+                }
+                write_atomic(&dir.chain_state(), &st.to_bytes())?;
+                prover = ChainProver::resume(&keys, &st).map_err(|e| anyhow::anyhow!("{e}"))?;
+                reconcile(&mut idx, Some(store.as_mut()), h + 1)
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+                println!(
+                    "reorganisation at block {fork}: rewound to step {index} (block {h}); later steps moved to {}",
+                    orphaned.display()
+                );
+                continue;
+            }
+            Err(e) => bail!("block {height}: {e}"),
         };
         done += 1;
         let proved = t.elapsed().saturating_sub(waited).as_secs_f64();

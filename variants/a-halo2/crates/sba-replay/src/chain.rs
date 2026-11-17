@@ -1750,38 +1750,85 @@ impl ChainSource for Capped<'_> {
     }
 }
 
+/// What stops a step: the chain reorganised below the proven chain
+/// (`fork` is the last height still on it — rewind to the last step at
+/// or below it), or anything else.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StepError {
+    Reorg { fork: u32 },
+    Other(String),
+}
+
+impl std::fmt::Display for StepError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StepError::Reorg { fork } => write!(
+                f,
+                "the chain reorganised: block {} is the last still on it",
+                fork
+            ),
+            StepError::Other(e) => f.write_str(e),
+        }
+    }
+}
+
+impl From<String> for StepError {
+    fn from(e: String) -> Self {
+        StepError::Other(e)
+    }
+}
+
 /// Replay the indexer's next blocks from `chain` (persisting through
 /// `store`, if any) and prove them as the chain's next step: blocks
 /// without a shielded event are closed by the step of the first block
 /// with one after them, up to the keys' `n_empty` of them, or by the
-/// last block on the chain when the tip is reached (§3.9) — unless
-/// `settle` is given: then at the tip the runner waits up to that long
-/// (looking every `poll`) for more blocks before it cuts a step of empty
-/// blocks, so a quiet chain costs a step per `settle`, not per block.
-/// `None` when the chain has no new block; otherwise the step and how long
-/// was spent waiting for blocks (so a caller can tell proving from
-/// waiting). The indexer must stand exactly where the prover does
-/// (`reconcile`); a reorganisation below the proven chain is an error —
-/// the proven chain cannot continue on another branch.
+/// last block ready when no more are (§3.9). A block is ready when it has
+/// `confirm` blocks above it (a step is never cut at the very tip, which
+/// a one-block reorganisation would undo); with `settle`, the runner
+/// waits up to that long (looking every `poll`) for more ready blocks
+/// before it cuts a step of empty ones, so a quiet chain costs a step per
+/// `settle`, not per block. `None` when no block is ready; otherwise the
+/// step and the time spent waiting. The indexer must stand exactly where
+/// the prover does (`reconcile`); a reorganisation below the proven chain
+/// is [`StepError::Reorg`] — the caller rewinds to the last step still on
+/// the chain (`ChainKeys::state_of_step`) and goes on.
+#[allow(clippy::too_many_arguments)]
 pub fn prove_next_step(
     prover: &mut ChainProver,
     idx: &mut Indexer,
     mut store: Option<&mut dyn StateStore>,
     chain: &dyn ChainSource,
+    confirm: u32,
     settle: std::time::Duration,
     poll: std::time::Duration,
-) -> Result<Option<(ProvenStep, std::time::Duration)>, String> {
+) -> Result<Option<(ProvenStep, std::time::Duration)>, StepError> {
     let started = std::time::Instant::now();
     let mut waited = std::time::Duration::ZERO;
     let first = idx.next_height();
-    if chain.tip().map_err(err)?.height < first {
-        return Ok(None);
-    }
     let n_empty = prover.keys.n_empty;
-    let mut empties = Vec::new();
-    let mut prev = None;
+    let mut empties: Vec<sba_core::tree::MerklePath> = Vec::new();
+    let mut prev: Option<StateOpening> = None;
+    let ready = |h: u32| -> Result<bool, StepError> {
+        Ok(chain.tip().map_err(err)?.height >= h.saturating_add(confirm))
+    };
     loop {
         let height = idx.next_height();
+        if !ready(height)? {
+            // nothing more is ready: a step of the empty blocks so far, if any
+            let Some(last) = empties.pop() else {
+                return Ok(None);
+            };
+            let merged = BatchWitness {
+                prev: prev.expect("a prefix has an opening"),
+                empty_appends: empties,
+                slots: vec![None; prover.keys.n_slots],
+                final_block: true,
+                root_append: Some(last),
+            };
+            let opening_after = idx.state.opening(idx.next_height());
+            let step = prover.prove(first, height - 1, &merged, &opening_after, &[])?;
+            return Ok(Some((step, waited)));
+        }
         let blocks_before = idx.state.blocks.len();
         // the store reborrowed for this block only
         let store_now: Option<&mut dyn StateStore> = match store.as_mut() {
@@ -1797,27 +1844,27 @@ pub fn prove_next_step(
                 store_now,
             )
             .map_err(err)?;
-        if report.rolled_back_to.is_some() {
-            return Err(format!(
-                "the chain reorganised below block {height}: the proven chain cannot continue"
-            ));
+        if let Some(fork) = report.rolled_back_to {
+            return Err(StepError::Reorg { fork });
         }
         if idx.state.blocks.len() != blocks_before + 1 || idx.state.last_height() != Some(height) {
-            return Err("the sync did not replay exactly the next block".into());
+            return Err("the sync did not replay exactly the next block"
+                .to_string()
+                .into());
         }
         let witness = idx
             .state
             .batches
             .pop()
-            .ok_or("the replayed block left no batch witness")?;
+            .ok_or_else(|| "the replayed block left no batch witness".to_string())?;
         let prev = *prev.get_or_insert(witness.prev);
         let has_events = witness.slots.iter().any(|s| s.is_some());
-        let mut more = chain.tip().map_err(err)?.height > height;
-        // at the tip with an empty block: wait for the chain, up to `settle`
+        let mut more = ready(height + 1)?;
+        // at the confirmed tip with an empty block: wait for more, up to `settle`
         while !has_events && !more && empties.len() < n_empty && started.elapsed() < settle {
             std::thread::sleep(poll);
             waited += poll;
-            more = chain.tip().map_err(err)?.height > height;
+            more = ready(height + 1)?;
         }
         if has_events || empties.len() == n_empty || !more {
             let merged = BatchWitness {
@@ -1836,7 +1883,7 @@ pub fn prove_next_step(
         empties.push(
             witness
                 .root_append
-                .ok_or("a replayed block without its root append")?,
+                .ok_or_else(|| "a replayed block without its root append".to_string())?,
         );
     }
 }
@@ -1865,6 +1912,86 @@ pub fn reconcile(
     }
     idx.state.batches.clear();
     Ok(())
+}
+
+/// The claims a step's proofs opened, read out of its public inputs: the
+/// one `T_q(i)` opened (`T_q(i−1)`'s, re-exposed from `T_p(i−1)`'s
+/// instance) and those `T_p(i)` opened (the transfers' and `T_p(i−1)`'s,
+/// from `T_q(i)`'s instance).
+pub fn claims_of_step(
+    k: &ChainKeys,
+    step: &ProvenStep,
+) -> Result<(Claim<pallas::Affine>, Vec<Claim<vesta::Affine>>), String> {
+    let sq = &k.step_q;
+    let offsets = sq.offsets();
+    let off_tp = offsets[k.n_proofs];
+    let iq = &step.instance_q;
+    if step.instance_p.len() < 4 {
+        return Err("short T_p instance".into());
+    }
+    // the last two re-exposed values are T_p(i−1)'s s_next and g
+    let re = &sq.group_tp.re_expose;
+    let claim_q_prev_pos: Vec<usize> = re[..re.len() - 2]
+        .iter()
+        .map(|j| off_tp + pos_q(&sq.group_tp, *j))
+        .collect();
+    // a Pallas claim carried in Fq cells: its coordinates are Fp values
+    // (the same integers), its challenges 128-bit
+    let as_fp: Vec<Fp> = iq
+        .iter()
+        .map(|v| Option::from(Fp::from_repr(v.to_repr())).ok_or("a value above p"))
+        .collect::<Result<_, _>>()?;
+    let claim_q_prev = claim_at::<pallas::Affine>(&as_fp, &claim_q_prev_pos)?;
+    let mut claims: Vec<Claim<vesta::Affine>> = Vec::new();
+    for (i, g) in sq.groups_pi.iter().enumerate() {
+        let pos: Vec<usize> = claim_positions(g, K as usize)
+            .iter()
+            .map(|p| offsets[i] + p)
+            .collect();
+        claims.push(claim_at::<vesta::Affine>(iq, &pos)?);
+    }
+    let k_p = k.step0.cap_p.u.len();
+    let pos: Vec<usize> = claim_positions(&sq.group_tp, k_p)
+        .iter()
+        .map(|p| off_tp + p)
+        .collect();
+    claims.push(claim_at::<vesta::Affine>(iq, &pos)?);
+    Ok((claim_q_prev, claims))
+}
+
+impl ChainKeys {
+    /// The prover's state right after `step` (the `index`-th), from the
+    /// step alone: its two proofs captured again with the claims they
+    /// opened — what the prover saved then, rebuilt — so a chain can be
+    /// rewound to any step on disk (a reorganisation below later steps).
+    pub fn state_of_step(&self, step: &ProvenStep, index: u32) -> Result<ChainState, String> {
+        let (claim_q_prev, claims) = claims_of_step(self, step)?;
+        let cap_q = capture(
+            &self.outer,
+            &self.ovk,
+            &step.instance_q,
+            &step.proof_q,
+            std::slice::from_ref(&claim_q_prev),
+        )
+        .map_err(err)?;
+        let cap_p = capture(
+            &self.pparams,
+            &self.pvk,
+            &step.instance_p,
+            &step.proof_p,
+            &claims,
+        )
+        .map_err(err)?;
+        let n = step.instance_p.len();
+        Ok(ChainState {
+            keys_id: self.id(),
+            index,
+            next_height: step.height + 1,
+            s: step.instance_p[n - 3],
+            cap_q,
+            cap_p,
+        })
+    }
 }
 
 /// The client's decider for the chain: from the keys alone.
@@ -1903,27 +2030,10 @@ impl ChainDecider<'_> {
         let k = self.keys;
         let sq = &k.step_q;
         let sp = &k.step_p;
-        let offsets = sq.offsets();
-        let off_tp = offsets[k.n_proofs];
+        let off_tp = sq.offsets()[k.n_proofs];
         let iq = &step.instance_q;
         let ip = &step.instance_p;
-        if ip.len() < 4 {
-            return Err("short T_p instance".into());
-        }
-        // the claims T_q opened: T_q(i−1)'s, re-exposed from T_p(i−1)'s instance
-        // (the last two re-exposed values are its s_next and g)
-        let re = &sq.group_tp.re_expose;
-        let claim_q_prev_pos: Vec<usize> = re[..re.len() - 2]
-            .iter()
-            .map(|j| off_tp + pos_q(&sq.group_tp, *j))
-            .collect();
-        // a Pallas claim carried in Fq cells: its coordinates are Fp values
-        // (the same integers), its challenges 128-bit
-        let as_fp: Vec<Fp> = iq
-            .iter()
-            .map(|v| Option::from(Fp::from_repr(v.to_repr())).ok_or("a value above p"))
-            .collect::<Result<_, _>>()?;
-        let claim_q_prev = claim_at::<pallas::Affine>(&as_fp, &claim_q_prev_pos)?;
+        let (claim_q_prev, claims) = claims_of_step(k, step)?;
         // T_p(i−1)'s key
         let keys_p = key_commitments_q(&sq.group_tp);
         for (i, pos) in key_slots_q(&sq.group_tp).chunks(2).enumerate() {
@@ -1943,21 +2053,6 @@ impl ChainDecider<'_> {
             std::slice::from_ref(&claim_q_prev),
         )
         .map_err(|e| format!("T_q: {e:?}"))?;
-        // the claims T_p opened: the transfers' and T_p(i−1)'s, from T_q's instance
-        let mut claims: Vec<Claim<vesta::Affine>> = Vec::new();
-        for (i, g) in sq.groups_pi.iter().enumerate() {
-            let pos: Vec<usize> = claim_positions(g, K as usize)
-                .iter()
-                .map(|p| offsets[i] + p)
-                .collect();
-            claims.push(claim_at::<vesta::Affine>(iq, &pos)?);
-        }
-        let k_p = k.step0.cap_p.u.len();
-        let pos: Vec<usize> = claim_positions(&sq.group_tp, k_p)
-            .iter()
-            .map(|p| off_tp + p)
-            .collect();
-        claims.push(claim_at::<vesta::Affine>(iq, &pos)?);
         // T_q(i)'s key as T_p exposed it
         let keys_q = key_commitments_p(&sp.group_tq);
         for (i, pos) in key_slots_p(&sp.group_tq).chunks(2).enumerate() {
@@ -2183,7 +2278,7 @@ mod chain_tests {
         reconcile(&mut idx, None, 1002).unwrap();
         let t = std::time::Instant::now();
         let zero = std::time::Duration::ZERO;
-        let (step3, _) = prove_next_step(&mut prover, &mut idx, None, &chain, zero, zero)
+        let (step3, _) = prove_next_step(&mut prover, &mut idx, None, &chain, 0, zero, zero)
             .unwrap()
             .expect("the block is on the chain");
         assert_eq!(step3.height, 1002);
@@ -2194,7 +2289,7 @@ mod chain_tests {
         );
         let o2 = idx.state.opening(1003);
         assert!(
-            prove_next_step(&mut prover, &mut idx, None, &chain, zero, zero)
+            prove_next_step(&mut prover, &mut idx, None, &chain, 0, zero, zero)
                 .unwrap()
                 .is_none(),
             "no block 1003 yet"
@@ -2219,6 +2314,35 @@ mod chain_tests {
         assert!(
             decider.decide_latest(&other).is_err(),
             "g is a public input of the proof"
+        );
+        // a reorganisation: block 1002 replaced by another (a mint only); the
+        // runner reports it, the chain is rewound to step 2 from its proof on
+        // disk, and the new block 1002 becomes the new step 3
+        chain.reorg_to(1001);
+        let (m4, _) = w.mint_tx(&alice0, 7);
+        chain.push_block(vec![m4]);
+        let res = prove_next_step(&mut prover, &mut idx, None, &chain, 0, zero, zero);
+        assert_eq!(res.unwrap_err(), StepError::Reorg { fork: 1001 });
+        let st2 = keys.state_of_step(&step2, 2).unwrap();
+        assert_eq!((st2.index, st2.next_height, st2.s), (2, 1002, o1.digest()));
+        let mut prover = ChainProver::resume(&keys, &st2).unwrap();
+        reconcile(&mut idx, None, 1002).unwrap();
+        let t = std::time::Instant::now();
+        let (step3b, _) = prove_next_step(&mut prover, &mut idx, None, &chain, 0, zero, zero)
+            .unwrap()
+            .expect("the new block 1002");
+        println!(
+            "step 3 again after a reorganisation (a mint): {:.1} s",
+            t.elapsed().as_secs_f64()
+        );
+        assert_eq!(step3b.slots.iter().filter(|s| s.is_some()).count(), 1);
+        assert_eq!(
+            decider.decide_latest(&step3b).unwrap(),
+            (1002, idx.state.opening(1003).digest())
+        );
+        assert!(
+            decider.decide_latest(&step3).is_ok(),
+            "the orphaned step still verifies on its own"
         );
     }
 }

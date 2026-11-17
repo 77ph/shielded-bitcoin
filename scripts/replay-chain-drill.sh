@@ -27,7 +27,7 @@
 set -euo pipefail
 PHASE=${1:?events|prove|decide}; WORK=${2:?workdir}; CHAIN=${3:?chain spec}
 SB=${SB:-target/release/sb}
-PROOFS=${PROOFS:-2}; SLOTS=${SLOTS:-4}; EMPTY=${EMPTY:-8}; KQ=${KQ:-18}; KP=${KP:-18}
+PROOFS=${PROOFS:-2}; SLOTS=${SLOTS:-4}; EMPTY=${EMPTY:-8}; KQ=${KQ:-18}; KP=${KP:-18}; CONFIRM=${CONFIRM:-0}
 mkdir -p "$WORK/a" "$WORK/b"
 LOG="$WORK/LOG.md"; PROFILE="$WORK/profile.json"
 log() { echo "$*" | tee -a "$LOG"; }
@@ -72,7 +72,7 @@ case "$PHASE" in
     BLOCKS=${4:-50}
     log "# Replay-chain drill, $(date -u +%Y-%m-%dT%H:%MZ): prove up to $BLOCKS blocks (${sizes[*]})"
     t0=$(date +%s)
-    b replay-prove --blocks "$BLOCKS" "${sizes[@]}"
+    b replay-prove --blocks "$BLOCKS" --confirm "$CONFIRM" "${sizes[@]}"
     log "prove phase: $(( $(date +%s) - t0 )) s wall"
     ;;
   decide)
