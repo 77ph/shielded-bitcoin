@@ -235,7 +235,11 @@ Licensed under the Apache License, Version 2.0 ([LICENSE](LICENSE) or
 http://www.apache.org/licenses/LICENSE-2.0); the documents under `docs/`
 are under the same license. Unless you explicitly state otherwise, any
 contribution intentionally submitted for inclusion in the work by you
-shall be licensed as above, without any additional terms or conditions.
+shall be licensed under both the Apache License, Version 2.0, and the MIT
+license (http://opensource.org/licenses/MIT), without any additional terms
+or conditions: the work is distributed under Apache-2.0 today, and
+contributions offered under both keep a later move to `MIT OR Apache-2.0`
+a decision of the copyright holder alone.
 
 Two directories are derived from Zcash's `halo2` (The Electric Coin
 Company and The Halo 2 developers; MIT OR Apache-2.0 upstream, taken here
