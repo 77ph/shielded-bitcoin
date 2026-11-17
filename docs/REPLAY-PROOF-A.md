@@ -1176,6 +1176,27 @@ this host — the figure of the next restart. The cosets' FFTs (one minute
 of the two) remain the lever after that: writing them would be ten
 gigabytes a key set.
 
+**Reorganisations** (`chain.rs`, `sb a replay-prove --confirm`, 17
+November) [built]. The live follower of `RUNS.md` stopped on 14 November
+after 132 steps: signet reorganised at the tip it had just proven, and
+the runner treated any rollback below the proven chain as fatal — right
+in that a step of a block no longer on the chain cannot be continued,
+wrong in that nothing was lost. Two things fix it. A **confirmation
+depth**: a block is proven only when `confirm` blocks stand above it
+(three by default), so a step is never cut at the very tip and a short
+reorganisation touches nothing proven; the settle wait then waits for
+confirmed blocks. And a **rewind**: a reorganisation deeper than that is
+reported as its own error with the last height still on the chain; the
+CLI takes the last step at or below it from disk, rebuilds the prover's
+state from that step alone — its two proofs captured again with the
+claims they opened, read out of their public inputs as the decider reads
+them (`ChainKeys::state_of_step`) — moves the later steps to an
+`orphaned/` directory, rolls the indexer back, and goes on from there.
+Nothing of a step depends on anything but the proofs on disk and the
+keys, which is what makes the rewind possible without a saved history of
+states. The chain test replaces block 1002 after proving it, sees the
+runner report the fork, rewinds to step 2 and proves the replacement.
+
 **Reviewed** (S7, 10 November 2026, the auditor's firsthand pass at
 664d013 and 50fdca6, the document to follow on an audit branch at the
 owner's go): `capture`, `step4`, `wire`, `prover`, `verifier_body`,
