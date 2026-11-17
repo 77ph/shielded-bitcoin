@@ -107,3 +107,19 @@ jobs:
           a_replayed_blocks_relation_inside_the_step
           a_block_with_two_transfers_in_one_step
           two_transfers_both_sides_split
+  # Secrets and network addresses: the stock gitleaks rules plus the
+  # project's own rule against a public IPv4 literal (.gitleaks.toml). A push
+  # or pull request is scanned over its commits; a manual run scans the
+  # whole history, which is clean since 17 November 2026.
+  secrets:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_COMMENTS: "false"
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"

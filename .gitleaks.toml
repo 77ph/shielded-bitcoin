@@ -1,0 +1,39 @@
+# gitleaks (https://github.com/gitleaks/gitleaks): the stock rules for secrets
+# and keys, plus one rule of our own. The project's rule is that no real
+# network address of a developer or a server is ever committed (not in docs,
+# runs, tests or commit messages); a plain IPv4 literal matches no stock
+# rule, so it has one here. Private, loopback, link-local and the RFC 5737
+# documentation ranges are allowed: write 192.0.2.10 and the like when a
+# document needs an example address.
+
+title = "shielded-bitcoin"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "public-ipv4-endpoint"
+description = "A public IPv4 address committed to a public repository"
+regex = '''\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b'''
+tags = ["pii", "network-endpoint"]
+
+  [rules.allowlist]
+  regexes = [
+    '''\b0\.0\.0\.0\b''',
+    '''\b127\.\d{1,3}\.\d{1,3}\.\d{1,3}\b''',
+    '''\b255\.255\.255\.255\b''',
+    '''\b10\.(?:\d{1,3}\.){2}\d{1,3}\b''',
+    '''\b192\.168\.\d{1,3}\.\d{1,3}\b''',
+    '''\b172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}\b''',
+    '''\b169\.254\.\d{1,3}\.\d{1,3}\b''',
+    '''\b192\.0\.2\.\d{1,3}\b''',
+    '''\b198\.51\.100\.\d{1,3}\b''',
+    '''\b203\.0\.113\.\d{1,3}\b''',
+  ]
+
+[allowlist]
+description = "Test fixtures that look like credentials"
+regexes = [
+  # the CI's ephemeral PostgreSQL service
+  '''postgresql://postgres:postgres@localhost''',
+]

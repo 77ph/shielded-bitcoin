@@ -227,6 +227,24 @@ reviews are the `docs/REVIEW-*.md` files.
 
 Rust 1.85+ (edition 2024).
 
+## Secrets and addresses
+
+Nothing that identifies a developer's or a server's network endpoint is
+ever committed: not in documents, run logs, tests or commit messages. An
+example address in a document is one from the RFC 5737 documentation
+ranges (`192.0.2.10`). CI's `secrets` job runs
+[gitleaks](https://github.com/gitleaks/gitleaks) over every push and pull
+request with the stock rules for secrets and keys plus the project's own
+rule against a public IPv4 literal (`.gitleaks.toml`); a manual run of the
+workflow scans the whole history, which is clean since 17 November 2026
+(an address committed on 29 October was removed from the history that
+day). The same check runs before a commit once the hook is enabled in a
+clone, with gitleaks if installed and a grep for addresses otherwise:
+
+```sh
+git config core.hooksPath .githooks
+```
+
 ## License
 
 Copyright 2026 PostCryptum Research (https://postcryptum.io/).

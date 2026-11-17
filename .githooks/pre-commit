@@ -1,0 +1,19 @@
+#!/usr/bin/env sh
+# Pre-commit: nothing that looks like a secret or a public network address
+# goes into a commit. Enable once per clone:
+#   git config core.hooksPath .githooks
+# With gitleaks installed the staged diff is scanned under .gitleaks.toml
+# (the same rules CI enforces); without it, a grep for public IPv4 literals
+# with the same allowances runs instead.
+set -eu
+if command -v gitleaks >/dev/null 2>&1; then
+    exec gitleaks protect --staged --redact --config .gitleaks.toml
+fi
+ipv4='\b([0-9]{1,3}\.){3}[0-9]{1,3}\b'
+allowed='\b(0\.0\.0\.0|127\.[0-9.]+|255\.255\.255\.255|10\.[0-9.]+|192\.168\.[0-9.]+|172\.(1[6-9]|2[0-9]|3[01])\.[0-9.]+|169\.254\.[0-9.]+|192\.0\.2\.[0-9]+|198\.51\.100\.[0-9]+|203\.0\.113\.[0-9]+)\b'
+hits=$(git diff --cached -U0 --no-color | grep -E '^\+' | grep -vE '^\+\+\+' | grep -oE "$ipv4" | grep -vE "$allowed" || true)
+if [ -n "$hits" ]; then
+    echo "pre-commit: a public IPv4 address is staged (addresses are never committed; use 192.0.2.x for examples):" >&2
+    echo "$hits" | sed 's/^/  /' >&2
+    exit 1
+fi
