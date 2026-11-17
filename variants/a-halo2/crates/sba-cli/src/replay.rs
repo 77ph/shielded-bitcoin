@@ -3,7 +3,8 @@
 //! keeps its own replay of the chain (`replay-<deployment>/indexer.json`),
 //! its state between runs (`chain.state`) and the proven steps
 //! (`steps/`); the decider keeps the client's state (`client.state`).
-//! Keys are made at start, minutes each run: a function of the circuits'
+//! Keys are read from `replay-<deployment>/keys` when present, and made
+//! and written there otherwise (minutes): a function of the circuits'
 //! structure, so every run agrees on them (`ChainKeys::id`).
 
 use std::path::{Path, PathBuf};

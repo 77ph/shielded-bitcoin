@@ -20,8 +20,9 @@ chain afterwards from the published files alone.
 
 The accumulator holds `[τ^i]₁` for `i < 2n − 1`, `[τ^i]₂`, `[ατ^i]₁` and
 `[βτ^i]₁` for `i < n`, and `[β]₂`, where `n` is the circuit's evaluation
-domain (`2^17` for the transfer circuit; `phase1-new` sizes it, or
-`--power` picks a larger one that serves any smaller circuit). It starts at
+domain (`2^17` for the transfer circuit, `2^18` for the swap extension's;
+`phase1-new --circuit base|swap` sizes it, or `--power` picks a larger one
+that serves any smaller circuit). It starts at
 `τ = α = β = 1`.
 
 ```sh
@@ -78,8 +79,9 @@ real transcripts (that is a download, not code).
 sb ceremony phase2-new --phase1 p1-N.bin --out p2-0.bin
 ```
 
-derives the transfer circuit's Groth16 key from the final accumulator with
-`γ = δ = 1`: the R1CS matrices and the Lagrange basis in the exponent (an
+derives the chosen circuit's Groth16 key (`--circuit base`, the default,
+or `swap`; `phase2-verify` takes the same flag) from the final accumulator
+with `γ = δ = 1`: the R1CS matrices and the Lagrange basis in the exponent (an
 inverse FFT over the curve points `[τ^j]`) give exactly what arkworks'
 generator computes in the field, which the tests check against it with
 the same secrets, element by element. The derived key is deterministic, so
@@ -88,7 +90,7 @@ every verifier recomputes it instead of trusting the file.
 ## Phase 2: delta
 
 ```sh
-sb ceremony phase2-contribute --in p2-0.bin --out p2-1.bin
+sb ceremony phase2-contribute --in p2-0.bin --out p2-1.bin --entropy "anything you like"
 sb ceremony phase2-verify --initial p2-0.bin --final p2-1.bin     # seconds, after each contribution
 sb ceremony phase2-beacon --in p2-K.bin --out p2-final.bin --beacon <hex>
 sb ceremony phase2-verify --phase1 p1-N.bin --final p2-final.bin  # minutes, recomputes the initial key
@@ -116,7 +118,10 @@ contributions.
 `sb profile-new … --ceremony-vk transfer.vk --ceremony-pk transfer.pk` pins
 the verifying key's hash in a deployment profile with `"setup": {"kind":
 "ceremony", …}`; indexers need only the verifying key, wallets the proving
-key too.
+key too. The swap extension's keys are pinned the same way with
+`--swap-vk` and `--swap-pk`. The batch circuit of `REPLAY-PROOF.md` §4.2
+has no ceremony path yet; `profile-new --batch-insecure <n>` pins an
+insecure setup for it.
 
 ## Drills
 

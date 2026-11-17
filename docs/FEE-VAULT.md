@@ -84,11 +84,16 @@ T_FEEAUTH = tag("sb/v1/feeauth")
   draw. The vault cannot forge a draw before that; afterwards it cannot
   forge one either, because a draw needs a signature under `P` (§3).
 * The client derives `P` from its seed, one key per deposit:
-  `sk_i = HKDF-SHA256(sk_master, "sb/v1/feeauth" ‖ LE64(i))` reduced into
-  the secp256k1 scalar range, `P_i = x(sk_i · G)`; `i` is the wallet's
-  next unused deposit index. A seed restore recovers deposits by scanning
-  its sent notes (`ct_out`) for `rseed = C(P_i)`, `i` up to a gap past the
-  last match; only the vault's URL is not derivable from the chain.
+  `sk_i = HKDF-SHA256(sk_master, "sb/v1/feeauth" ‖ LE64(i))`, taken as a
+  secp256k1 secret key as it is (an output outside the scalar range, which
+  does not happen in practice, is skipped for the next index),
+  `P_i = x(sk_i · G)`; `i` is the wallet's next unused deposit index. A
+  seed restore could recover deposits by scanning the wallet's sent notes
+  (`ct_out`) for `rseed = C(P_i)`, `i` up to a gap past the last match, the
+  vault's URL being the one thing not derivable from the chain; this
+  implementation does not do so yet: the accounts are kept in the wallet
+  file, and a wallet restored from its seed alone does not know its
+  deposits.
 * A deposit **counts** once its creating transfer is accepted at a height
   at least `K_min` below the vault's replayed tip (the deployment's
   minimum anchor depth, `PROFILE.md` §A.6): the same depth the protocol
@@ -202,7 +207,8 @@ operator that is offline (§9).
 
 ## 6. The ledger and its invariants
 
-`fee-vault-ledger.json` in the vault's data directory:
+`fee-vault-<wallet>.json` in the data directory, one ledger per vault
+wallet:
 
 ```json
 {
@@ -309,16 +315,19 @@ draw); request bodies are capped.
   locked until the transfer is seen accepted, as with every model. A
   deposit can be topped up under the same key (`--index`), which is how
   a remainder too small to reclaim (below the reclaim fee) is recovered.
-* `sb fee-vault reclaim --name <w> --vault <url> [--to <address>]`: signs
+* `sb fee-vault reclaim --name <w> --vault <url> [--to <address>]
+  [--index <i>]` (the default: the deposit that holds credit): signs
   a reclaim to one of the wallet's own addresses (the default: a fresh
   one) and posts it.
-* **Unavailable vault**: the draw fails with `vault unreachable`, the
+* **Unavailable vault**: the draw fails with `fee vault unreachable`, the
   carrier stays in the outbox, and any of the other three models publishes
   it (`sb publish <label>` with `--name`, `--relay`, or the unfunded
   template). Credit is not consumed by a request that got no answer; if
   the answer was lost after a successful publication, the next sync shows
-  the transfer accepted and `sb publish` of the same label is refused as
-  already published.
+  the transfer accepted and its notes spent; a second `sb publish` of the
+  label is refused by a relayer or a vault as a spent-nullifier transfer,
+  and a self-funded one would pay for a carrier the chain rejects, so the
+  user checks `sb scan` before republishing.
 
 ## 9. What is scaffolding, what replaces it, what must not regress
 

@@ -8,8 +8,8 @@ finding** (F-3-1) asks the document — not the code — to name the one
 place the proof client trusts the indexer for *value creation* (mints).
 Two low notes.
 
-**Ref:** slice 1 `a544dfa` (indexed Merkle tree), slice 2 `b7dda45`
-(circuit `T`), slice 3 `fe29f43` (protocol, mint, batched verification,
+**Ref:** slice 1 `6c6eefc` (indexed Merkle tree), slice 2 `25ba46e`
+(circuit `T`), slice 3 `abca3e1` (protocol, mint, batched verification,
 e2e, signet). Read firsthand: `sb-core/src/imt.rs`, `sb-core/src/batch.rs`,
 `sb-circuit/src/batch.rs`, `sb-circuit/src/groth16.rs::verify_batch`,
 `sb-indexer/src/proof.rs`, `sb-indexer/src/state.rs`, `sb-indexer/src/replay.rs`

@@ -97,9 +97,9 @@ tree, so proving completeness for a witness deployment needs the
 coinbase and a second tree on top of the above. The txid tree itself
 has the leaf-count malleability of CVE-2012-2459 (one root for trees
 whose last leaf is duplicated), which is why the verified sync of
-`light:` checks the transaction count against the header's claim
-before trusting a partial tree, and why a completeness statement has to
-fix the count too. Compact block filters (BIP 158) would be the right
+`light:` requires the partial tree to be built for exactly the
+transaction count the indexer states for the block before trusting it,
+and why a completeness statement has to fix the count too. Compact block filters (BIP 158) would be the right
 object, but they are not committed anywhere; a deployment could run its
 own filter commitment, which is an indexer again. So:
 
@@ -161,19 +161,25 @@ commitments with membership and non-membership proofs.
 ### 4.2 The batch circuit `T`
 
 Groth16 over BLS12-381 with the stack's Poseidon, like the transfer
-circuit; one trusted setup per batch size `n` (the ceremony tooling of
-`CEREMONY.md` applies). Public inputs: `digest(S_prev)`,
-`digest(S_next)`, and `D = PH(T_BATCH, st_1 … st_n)` over the `n`
-statements (a statement is 17 field elements: `h_anchor`, `r_anchor`,
-the two nullifiers, per output `pk_eph` and the ciphertext, `h_body`,
-the two `h_aux`; a slot left empty is the all-zero statement, which the
-circuit enforces and skips). Witness: the state opening, the statements
+circuit; one trusted setup per batch-circuit shape: the batch size `n`
+together with the deployment's `activation_height`, `W`, `K_min` and
+`const_salt`, which are constants of the circuit, so a key serves one
+deployment at one `n` (the ceremony tooling of `CEREMONY.md` would apply,
+but `sb ceremony` builds keys for the base and swap circuits only; a
+deployment's `batch` section accepts a ceremony's key files, and today
+`profile-new --batch-insecure <n>` pins an insecure setup). Public
+inputs: `digest(S_prev)`, `digest(S_next)`, and `D = PH(T_BATCH, st_1 …
+st_n)` over the `n` statements (a statement is 18 field elements:
+`h_anchor`, `r_anchor`, the two nullifiers, per output `pk_eph` and the
+ciphertext, `h_body`, the two `h_aux`, and a kind flag that is 1 for a
+mint and 0 otherwise; a slot left empty is the all-zero statement, which
+the circuit enforces and skips). Witness: the state opening, the statements
 and every path. Constraints per slot (`crates/sb-circuit/src/batch.rs`,
 **measured**):
 
 | Check | Hashes / work |
 |---|---|
-| anchor: `r_anchor` at `h_anchor − activation` in the root tree, window and `K_min` range | 32 hashes + two 32-bit ranges |
+| anchor: `r_anchor` at leaf `h_anchor − activation + 1` of the root tree (leaf 0 is the initial root), window and `K_min` range | 32 hashes + two 32-bit ranges |
 | two nullifiers: non-membership, strict order, insert | 2 × (3 × 32 hashes + 2 full-field comparisons) |
 | two leaves: `leaf_j` from the statement, append at the next position | 2 × (1 + 2 × 32 hashes) |
 | the statement into `D` | part of one sponge |
@@ -195,8 +201,9 @@ double spend inside one batch fails at the second insertion, exactly as
 replay rejects it. The digest `D` is a sponge over the statements in
 that order, so it commits to the order, which is semantically
 significant (positions, roots). An empty slot is the all-zero
-statement; a real statement is never all zero (its nullifiers and
-`h_body` are Poseidon outputs), so a skipped slot cannot hide a
+statement; a real statement is never all zero (a transfer's nullifiers
+are Poseidon outputs, every kind's `h_body` is a SHA-256 output, and a
+mint carries the kind flag 1), so a skipped slot cannot hide a
 transfer and a transfer cannot pass as a skipped slot.
 
 What `T` does **not** do: verify the `n` transfer proofs, or parse
@@ -241,8 +248,9 @@ proofs, in increasing strength:
    implement (inner pairing products with KZG commitments in both
    groups) that arkworks does not ship.
 
-Plan: 2 now, measured next to 1; 3 as a second slice if the measured
-batch sizes make it matter, else documented as the frontier.
+Built: option 2 (§4.5), one multi-pairing per verifying key. Option 3 is
+not built; at the measured batch sizes (tens of statements) the per-batch
+proof bytes stay `n × 192`, and aggregation is documented as the frontier.
 
 ### 4.4 Q3: recursion, and why it stops
 
@@ -374,9 +382,11 @@ replay, with no envelope bytes kept.
   wants a proof for an arbitrary height needs the indexer to close a
   batch there.
 * The trust base is every trusted setup in play (the transfer and swap
-  circuits', `T`'s per batch size, and an aggregation SRS if §4.3's
-  option 3 is used; `CEREMONY.md`'s tooling covers the Groth16 ones with
-  the same conditions as the transfer circuit's) and the
+  circuits', `T`'s per deployment and batch size, and an aggregation SRS
+  if §4.3's option 3 is used; `CEREMONY.md`'s tooling covers the transfer
+  and swap circuits' with the same conditions, while the batch circuit
+  has no ceremony path yet and runs on an insecure setup in every
+  deployment so far) and the
   collision-resistance of Poseidon, on which the digests and all three
   trees stand.
 * Proving cost sits on the indexer and sets the update frequency;
@@ -389,9 +399,11 @@ replay, with no envelope bytes kept.
    proofs, in `sb-core`; replay keeps both alongside its sets and
    checks that the roots agree.
 2. The batch circuit `T` in `sb-circuit`, with measurements: constraints
-   per transfer, proving time and key size for `n = 4, 16, 64`.
-3. Batched Groth16 verification; `sb serve` producing batches;
-   `--chain proof:<url>`; the end-to-end test; a signet run.
+   per slot for `n = 1, 2, 4, 16`, and proving time at the deployment's
+   `n` (§6).
+3. Batched Groth16 verification; `sb prove-batches` producing proven
+   blocks and `sb serve` publishing them; `--chain proof:<url>`; the
+   end-to-end test; a signet run.
 4. Appendix experiment (done, `experiments/twochain`): the constraint
    count of one in-circuit Groth16 verification of a BLS12-377 proof
    with 17 public inputs inside a BW6-761 circuit, with arkworks'

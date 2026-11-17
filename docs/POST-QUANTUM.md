@@ -29,7 +29,7 @@ by surface:
 | Soundness of the transfer, swap and batch proofs | Groth16 over BLS12-381 (pairings, q-type assumptions) | forge proofs: inflation, theft from the pool | no |
 | Zero knowledge of those proofs | Groth16, perfect zero knowledge | nothing: a published proof reveals no witness, to any adversary | **yes** |
 | Note encryption `ct_note`, `ct_out` (§5.2, §7.3) | ECDH on Jubjub, Poseidon/ChaCha20-Poly1305 symmetric part | recover every shared secret from the published `pk_eph` and decrypt the whole history, retroactively | no |
-| Spend authority and addresses (`ak`, `pk_d`, diversified addresses, §3) | discrete logarithm on Jubjub | derive spending keys from published or shared public keys | no |
+| Spend authority and addresses (`sk_spend`, `sk_view`, `pk_d`, diversified addresses, §3) | discrete logarithm on Jubjub | derive spending keys from published or shared public keys | no |
 | Note commitments, nullifiers, `h_body`, the trees | Poseidon over `Fr`, SHA-256 | Grover: 255-bit → ≈ 128-bit preimage work, no structural break | yes (with the usual halving) |
 | The Bitcoin boundary: funding keys, HTLC, fee-vault draw key, a future PIPE | secp256k1 ECDSA / BIP 340 | what it can do to any Bitcoin output | no, and not ours to fix |
 

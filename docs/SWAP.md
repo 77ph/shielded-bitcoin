@@ -107,7 +107,8 @@ base profile (canonical field elements, exact length, re-serialisation
 must reproduce the bytes). `h_body = SHA-256(const_salt ‖ body_bytes)`
 with the §7.2 truncation, over the whole swap body including the aux
 section, so the published `h_aux` values are bound by the proof. The
-carrier rule (§10 of the base profile) is unchanged: one OP_RETURN, same
+deployment's carrier rule is unchanged (the single OP_RETURN of the base
+profile's §10, or the reveal's tapscript of `WITNESS-CARRIER.md`): same
 magic and version, the kind byte distinguishes the formats.
 
 ## 5. Statement
@@ -282,10 +283,11 @@ height), and `t_refund` is compared with it in E6; `T_htlc` is the height
 in the HTLC's `OP_CHECKLOCKTIMEVERIFY`. Everything below rests on that.
 
 Constants: `K_min` is the deployment's minimum anchor depth (base profile
-§9, `1` in the development deployments); `K_wallet` is the wallet's own
-anchor depth (base profile §A.6, `3` in this implementation: a wallet
-anchors `K_wallet` blocks below the tip so a shallow reorganisation does
-not invalidate its proof); `R` is the reaction margin defined here.
+§9, `1` in the development deployments); `K_wallet` is the deployment's
+anchor depth (`anchor_depth` in the profile, `PUBLICATION.md` §3.3, `3` in
+the development deployments: every wallet anchors at
+`tip + 1 − anchor_depth`, so that a shallow reorganisation does not
+invalidate its proof); `R` is the reaction margin defined here.
 
 Y's claim
 of the note needs: `s` published (by X's HTLC spend at some height `h_s`),
@@ -301,7 +303,8 @@ T_htlc + Δ ≤ t_refund,    Δ = K_min + K_wallet + R
 gives Y at least `Δ` blocks after the latest possible `h_s ≈ T_htlc` (Y
 refunds the HTLC at `T_htlc` if `s` has not appeared, after which X cannot
 reveal it) before X's refund can be accepted, where `R` is a reaction
-margin (profile default `R = 6`, so `Δ = 1 + 3 + 6 = 10` blocks). Y must
+margin (`R = 6` in this implementation, a constant of the swap commands
+rather than a profile field, so `Δ = 1 + 3 + 6 = 10` blocks). Y must
 refuse any agreement that violates the rule; X loses nothing by a larger
 `Δ` except a longer worst-case lock of `v_sh`.
 
@@ -311,8 +314,10 @@ must watch the Bitcoin chain for the HTLC spend that reveals `s` and react
 within `R` blocks (sync, prove, publish). A Y that is offline longer than
 the margin after `s` appears can lose `v_sh` while X keeps `v_btc`. This
 is inherent to HTLC swaps, not to this construction; the implementation's
-provider role is a process that polls the chain, and the drill keeps it
-running. The margins also assume no reorganisation deeper than `K_min`
+provider side is `sb swap claim --wait <seconds>`, which polls the chain
+for the HTLC spend for as long as it is told and then proves the claim;
+keeping it running within `R` blocks is the provider's operational duty,
+which the drill exercises once. The margins also assume no reorganisation deeper than `K_min`
 once a transfer is accepted, as the base profile does.
 
 The symmetric danger, the "free option" where X waits to see prices move

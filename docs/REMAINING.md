@@ -447,6 +447,15 @@ and the withdraw flow are the specification to enforce.
 | §22.4 certified-recipient lineage | demonstration with numbers | this file, §2 |
 | §22.5 extensions via `h_aux` (atomic swap) | implementation, signet | `SWAP.md` |
 
+Since this document closed (29 October), the repository has taken the one
+route §2.6 names — the curve of the whole profile changed — as variant A,
+a separate family on the Pasta cycle (`VARIANT-A.md`), and built route (d)
+there: the accumulated replay proof of `REPLAY-PROOF-A.md`, one step of
+70 KB for a history of any length, run on public signet (`RUNS.md`).
+§22.2 therefore ends for A in a client of constant size, and the lineage
+question of §2 is open again for A, as a study first (`VARIANT-A.md` §7);
+the numbers above stand for the paper's curve.
+
 One note stays recorded for whoever un-parks the project:
 `REPLAY-PROOF.md` §4.4 should be read with §2.3(b) of this file
 (BW6-767 exists; it has no prover). The client-side reorganisation of
@@ -498,6 +507,9 @@ Measurements: `experiments/twochain` (both 2-chains, `--prove`) and
 
 ## 6. Changelog
 
+* **v0.4** (17 November 2026) — the note after the §4 table: variant A
+  and its accumulated replay proof, and what they change for §2 and the
+  §22.2 row.
 * **v0.3** (29 October 2026) — the reorganisation obligation of §4
   closed (`REPLAY-PROOF.md` v0.7).
 * **v0.2** (29 October 2026) — after the paper review (PASS, no

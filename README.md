@@ -11,10 +11,11 @@ nullifier set, per-block roots) by deterministic replay of accepted envelopes
 in block order. **No change to Bitcoin consensus is required** — this is not a
 soft fork or a hard fork.
 
-> **Status: pre-alpha.** Nothing here has been audited, the deployments
-> shipped here use a trusted setup from a published seed (anyone can forge
-> proofs), and the only peg is a custodial development vault. Do not hold
-> value with it.
+> **Status: pre-alpha.** Nothing here has been audited, the paper-family
+> deployments shipped here use a trusted setup from a published seed
+> (anyone can forge proofs), the variant-A deployment has no setup but is
+> development-grade code, and the only peg is a custodial development
+> vault. Do not hold value with it.
 
 ## What works
 
@@ -29,7 +30,7 @@ soft fork or a hard fork.
 | Witness carrier | the paper's §22.1 alternative: envelopes in a tapscript revealed by a script-path spend, commit-and-reveal pairs of 324–447 vB against 825–892 vB for OP_RETURN, standard under default node policy; `profile-new --carrier witness`, a separate non-interoperable deployment (`docs/WITNESS-CARRIER.md`) |
 | Publication privacy, wallet policy | the paper's §22.3 surfaces: one SOCKS5 proxy for every outbound connection (`--proxy`, Tor or `ssh -D`), a separate publication route (`--publish-via`), delayed broadcast within the anchor window (`--delay`), a shared anchor depth per deployment, random change placement, and what stays visible (`docs/PUBLICATION.md`) |
 | Replay proofs | the paper's §22.2 succinct replay proof, as far as it goes on this stack: a batch circuit proving the state transition over an indexed nullifier tree and a root tree, batched verification of the transfer proofs, `sb prove-batches` on the indexer and a `--chain proof:<url>` light client that keeps no nullifier set (`docs/REPLAY-PROOF.md`); the completeness of the carrier list stays trusted, and succinctness is per batch (the recursion frontier is measured) |
-| Variant A (no trusted setup) | the paper's transfer protocol over the Pasta curves with Halo 2: a 4 416-byte proof, no ceremony, `k = 14`; a separate family of deployments (`profile-new --family a-halo2`), transfers, the development mint, withdraw and payouts, the outbox with third-party `publish`, a sponsored relayer (`relay-serve`, `--relay`), the indexer API and verified sync from it (`serve`, `--chain light:`), end to end on the fake node, the transfers run on public signet on the witness carrier (1 509 vB per transfer with a single-input commit, `docs/RUNS.md`), test vectors locked (`docs/TEST_VECTORS-A.md`); towards the accumulated replay proof: an algebraic transcript (a-0.3) and a transfer proof verified entirely inside circuits over the Pasta cycle, the group part at k = 15 and the field part at k = 13 (`docs/REPLAY-PROOF-A.md`); swap, batch and fee vault not yet (`docs/VARIANT-A.md`, `docs/PROFILE-A.md`) |
+| Variant A (no trusted setup) | the paper's transfer protocol over the Pasta curves with Halo 2: a 4 416-byte proof, no ceremony, `k = 14`; a separate family of deployments (`profile-new --family a-halo2`), transfers, the development mint, withdraw and payouts, the outbox with third-party `publish`, a sponsored relayer (`relay-serve`, `--relay`), the indexer API and verified sync from it (`serve`, `--chain light:`), end to end on the fake node, the transfers run on public signet on the witness carrier (1 509 vB per transfer with a single-input commit, `docs/RUNS.md`), test vectors locked (`docs/TEST_VECTORS-A.md`); the accumulated replay proof of `docs/REPLAY-PROOF-A.md`: a transfer proof verified entirely inside circuits over the Pasta cycle, every block a step under one key set (`sba-replay`, `replay-prove` / `replay-decide`), the client of constant size (one step of 70 KB, decided from the genesis in about two seconds for a history of any length), run over ten blocks on the private signet and following public signet live since 11 November (`docs/RUNS.md`); swap and fee vault not yet (`docs/VARIANT-A.md`, `docs/PROFILE-A.md`) |
 | What remains of §22 | the three items that could not be implemented, closed with numbers: smaller proof systems, certified-recipient lineage, the PIPE-based boundary; every §22 item mapped to where it ends; two 2-chains and the MNT cycle measured (`docs/REMAINING.md`) |
 | Fee vault | the paper's §20.5 fee-unlock vault as a development scaffold: credit deposited as a shielded note whose `rseed` commits to a BIP 340 key, signed draws publish carriers from the vault's pool, a deterministic release rule and ledger (no over-release, backing, reclaim), the operator's code where a PIPE covenant would be; `sb fee-vault`, `--fee-vault` on `send`/`withdraw`/`publish` (`docs/FEE-VAULT.md`) |
 | Indexer | Bitcoin Core RPC / Esplora / Electrum / mock sources, carrier rule, normative acceptance order, per-block checkpoints with reorg rollback, JSON or PostgreSQL state |
@@ -45,16 +46,18 @@ verify 4 ms, envelope 700 bytes, carrier ≈ 830 vB.
 | Crate | Paper sections | Content |
 |---|---|---|
 | `crates/sb-primitives` | §2, §A.1 | Poseidon over BLS12-381 `Fr`, domain tags, Jubjub encodings, `DiversifyHash` |
-| `crates/sb-core` | §5, §6, §9, §12, §13, §A.3, §A.5 | keys, addresses, notes, encryption, leaves, nullifiers, envelope codec, `h_body`, note tree |
-| `crates/sb-circuit` | §14, §B | R1CS gadgets, the transfer circuit, Groth16 setup/prove/verify |
+| `crates/sb-core` | §5, §6, §9, §12, §13, §A.3, §A.5 | keys, addresses, notes, encryption, leaves, nullifiers, envelope codec (base and swap kinds), `h_body`, note tree, the indexed nullifier tree and batch statements of the replay proof, fee-authorization messages |
+| `crates/sb-circuit` | §14, §B | R1CS gadgets, the transfer circuit, the swap extension circuit (SHA-256 in circuit), the batch circuit of the replay proof, Groth16 setup/prove/verify and batched verification |
 | `crates/sb-common` | — | family-agnostic code shared with the variants (`docs/VARIANT-A.md` §6): chain sources, carrier extraction by candidate prefix, the publication layer, the fee-funding wallet and publishers, the witness commit-and-reveal pair, HTLC scripts, fee-authorization messages, the encrypted-file format |
-| `variants/a-halo2/crates/sba-*` | `docs/PROFILE-A.md` | variant A (`docs/VARIANT-A.md`): the same protocol over Pasta with Halo 2 and no trusted setup; its own primitives, core, circuit, indexer, wallet and commands, reached through `sb` when a profile names family `a-halo2` |
-| `crates/sb-indexer` | §8, §11, §15, §A.4, §A.6, §A.7 | chain sources, carrier extraction, replay, state, reorg handling, dev mint |
+| `variants/a-halo2/crates/sba-*` | `docs/PROFILE-A.md` | variant A (`docs/VARIANT-A.md`): the same protocol over Pasta with Halo 2 and no trusted setup; its own primitives, core, circuit, indexer, wallet, commands and the accumulated replay proof (`sba-replay`), reached through `sb` when a profile names family `a-halo2` |
+| `crates/sb-indexer` | §8, §11, §15, §A.4, §A.6, §A.7 | replay over the shared chain sources and carrier rule, acceptance, state and checkpoints, reorg handling, dev mint, the batch witnesses and proven blocks of the replay proof |
 | `crates/sb-wallet` | §10, §16, §C | scanning, recovery, note selection, anchor policy, transfer construction |
 | `crates/sb-ceremony` | §8.4 | BGM17 multi-party setup: powers of tau, key derivation, delta contributions, beacon |
 | `crates/sb-cli` | — | `sb` command-line tool |
-| `docs/` | — | `PROFILE.md` (normative profile), `SWAP.md` (swap extension profile), `WITNESS-CARRIER.md` (witness carrier profile), `FEE-VAULT.md` (fee vault), `PUBLICATION.md` (publication privacy and wallet policy), `REPLAY-PROOF.md` (replay proofs), `REMAINING.md` (what remains of §22 and why), `POST-QUANTUM.md` (the post-quantum study), `VARIANT-A.md` (variant A: no trusted setup, study and plan), `PROFILE-A.md` (variant A profile, delta to `PROFILE.md`), `TEST_VECTORS-A.md` (variant A vectors), `REPLAY-PROOF-A.md` (replay proofs and recursion for variant A, study), `ROADMAP.md`, `BOUNDARY.md` (dev peg, fee funding), `CEREMONY.md` (parameter ceremony), `TEST_VECTORS.md`, `RUNS.md` |
-| `deployments/`, `variants/a-halo2/deployments/` | profile §9, `PROFILE-A.md` §9 | deployment profiles of the paper family and of variant A |
+| `docs/` | — | `PROFILE.md` (normative profile), `SWAP.md` (swap extension profile), `WITNESS-CARRIER.md` (witness carrier profile), `FEE-VAULT.md` (fee vault), `PUBLICATION.md` (publication privacy and wallet policy), `REPLAY-PROOF.md` (replay proofs), `REMAINING.md` (what remains of §22 and why), `POST-QUANTUM.md` (the post-quantum study), `VARIANT-A.md` (variant A: no trusted setup, study and plan), `PROFILE-A.md` (variant A profile, delta to `PROFILE.md`), `TEST_VECTORS-A.md` (variant A vectors), `REPLAY-PROOF-A.md` (the accumulated replay proof of variant A: study and the crate as built), `ROADMAP.md`, `BOUNDARY.md` (dev peg, fee funding), `CEREMONY.md` (parameter ceremony), `TEST_VECTORS.md`, `RUNS.md` |
+| `deployments/` | profile §9, `PROFILE-A.md` §9 | deployment profiles of both families; a variant-A profile names its family (`signet-a-2.json`, `"family": "a-halo2"`) |
+| `experiments/` | — | the measurements behind the documents' numbers (`experiments/README.md`): the 2-chain and MNT-cycle runs of `REMAINING.md`, the Halo 2 measurements of `VARIANT-A.md` and `REPLAY-PROOF-A.md`; two of them are workspace members `sba-replay` builds on, `halo2_proofs-patched` (the vendored prover with the accumulation step's openings and keys on disk) and `vesta-ecc` (the ECC chip over Vesta) |
+| `scripts/` | — | the private signet, the drills (ceremony, swap, fee vault, replay chain) and the independent Poseidon-constant checks CI runs |
 
 ## Quick start (signet)
 
@@ -81,7 +84,8 @@ certificate fingerprint: `sb electrum-fingerprint host:port`, then
 `electrum:ssl-pin://host:port/<sha256>`), `rpc:<url>:<user>:<pass>` or
 `rpc-cookie:<url>:<path>`
 (UTXOs via `scantxoutset`, broadcast via `sendrawtransaction`, no node
-wallet needed). Everything under `sb-data*/` is local and git-ignored.
+wallet needed), and the two light modes below, `light:<url>` and
+`proof:<url>`. Everything under `sb-data*/` is local and git-ignored.
 
 **Trust boundary of chain sources.** Replay verifies every envelope itself,
 so no source can forge a shielded transfer. What a source is trusted for is
@@ -107,7 +111,8 @@ happens when a service is down are stated per model in "Fee funding" in
 `docs/BOUNDARY.md`.
 
 **Verified sync from an indexer.** `sb serve` exposes an indexer's replay
-as an API (`/tip`, `/block/<height|hash>`): per block, the header, every
+as an API (`/tip`, `/block/<height|hash>`, and `/batches/<height>` for its
+proven blocks): per block, the header, every
 transaction the carrier rule looks at, a BIP 37 partial merkle tree for
 them and the indexer's own `R[h]`. A client with `--chain
 light:<url>` checks each tree against the header, replays the carriers
@@ -117,10 +122,14 @@ the block hashes are also cross-checked against that source, so it cannot
 choose the chain either. What it can do is **omit** carriers, which the
 client sees only as a root mismatch (against the indexer's own claim, or
 against a second indexer or a full replay). This is the "verification of an
-indexer response against Bitcoin data" option of the paper's §22.2; the
-succinct proof of replay the paper asks for is open research and not
-implemented. A client in this mode publishes through the full source or
-a relayer.
+indexer response against Bitcoin data" option of the paper's §22.2. The
+succinct proof of replay the paper asks for is the next step up: `sb
+prove-batches` on the indexer proves each block's state transition, and a
+client with `--chain proof:<url>` downloads the proven blocks instead of
+the carriers and keeps no nullifier set (`docs/REPLAY-PROOF.md` §4.5);
+what it still trusts is the completeness of the carrier list and the
+backing of mints. A client in either mode publishes through the full
+source or a relayer.
 
 Indexer state lives in a JSON file by default; `--db "<libpq string>"`
 (e.g. `host=/var/run/postgresql dbname=shielded_bitcoin`) keeps it in
@@ -152,7 +161,8 @@ binary builds fully static and runs on any x86-64 Linux:
 rustup target add x86_64-unknown-linux-musl
 CC_x86_64_unknown_linux_musl=musl-gcc \
   cargo build --release -p sb-cli --target x86_64-unknown-linux-musl
-# target/x86_64-unknown-linux-musl/release/sb, about 12 MB, static-pie
+# target/x86_64-unknown-linux-musl/release/sb, about 25 MB, static-pie
+# (12 MB before variant A and its recursion were added)
 ```
 
 ## Tests
@@ -172,13 +182,21 @@ persistence, and a two-wallet mint → pay → change → reorg → repay flow.
 kinds of tests in its own crates (`variants/a-halo2/crates/*/tests`), its
 vectors locked in `docs/TEST_VECTORS-A.md` together with the verifying-key
 identifier, and `sb` end to end on the fake node on both carriers
-(`crates/sb-cli/tests/variant_a_e2e.rs`).
+(`crates/sb-cli/tests/variant_a_e2e.rs`). The variant's end-to-end cycle
+on both carriers is minutes of proving, so CI runs it in its own job and
+skips it in the workspace pass (`-- --skip variant_a_cycle`). The
+recursion's tests in `sba-replay` that fit a hosted runner are `#[ignore]`d
+and run weekly in the `recursion` job (`cargo test -p sba-replay --release
+-- --ignored <name>`); those at k = 18 need about 15 GB and run on the
+server, with their figures in `docs/REPLAY-PROOF-A.md`.
 
 ## Coverage
 
 ```sh
-cargo llvm-cov --workspace --release --ignore-run-fail \
-  --ignore-filename-regex 'chain/fake\.rs' -- --include-ignored
+cargo llvm-cov --workspace --exclude sba-replay --exclude vesta-ecc --exclude halo2_proofs \
+  --release --ignore-run-fail \
+  --ignore-filename-regex 'chain/fake\.rs|variants/a-halo2/crates/sba-cli/|variants/a-halo2/crates/sba-replay/|experiments/' \
+  --fail-under-lines 90 -- --include-ignored --skip variant_a_cycle
 ```
 
 Measured in CI on 3 November 2026 (PostgreSQL included, live network
@@ -187,10 +205,12 @@ tests best effort, variant A's crates included): **91.7 % of lines,
 variant's crates were at 88.9 % (the fixed-base tables the ECC chip
 requires but the circuit never calls stay uncovered). Since 3 November
 the variant's command-line crate and its end-to-end test (`sb` on both
-carriers, minutes of proving) run in their own CI job and are
-excluded from the measured set. CI fails below 90 % of lines. The ceremony commands on the full-size circuit run only with
+carriers, minutes of proving) run in their own CI job, and since 10
+November the recursion crate `sba-replay` and the vendored `experiments/`
+crates it builds on are excluded as well; both are outside the measured
+set. CI fails below 90 % of lines. The ceremony commands on the full-size circuit run only with
 `SB_CEREMONY_FULL=1` (minutes) and are not counted. The in-process fake Esplora / RPC / Electrum servers
-(`sb-indexer/src/chain/fake.rs`) are test support and are excluded. `sb serve` runs in the tests as a subprocess that is stopped by a
+(`crates/sb-common/src/chain/fake.rs`) are test support and are excluded. `sb serve` runs in the tests as a subprocess that is stopped by a
 signal, so its lines are not recorded. What stays uncovered otherwise is
 of four kinds: error arms of `?` on multi-line calls,
 interactive passphrase prompts, defensive branches that cannot be reached
@@ -218,11 +238,15 @@ to grow into a real indexer and wallet, and test-vector-first interoperability.
 Everything the paper specifies for the transfer layer, plus the
 deployment layer it leaves open (fee funding, verified sync, a parameter
 ceremony), is built and run on signet. `docs/ROADMAP.md` records what is
-done and what comes next, taken from the paper's own "Future Work": first
-the atomic swap between a shielded note and transparent Bitcoin through
-the reserved `h_aux` slot and a Bitcoin HTLC (§22.5), then witness-carried
-envelopes (§22.1), both built, run and reviewed; then the fee-unlock vault
-(§20.5) as a development scaffold. The security reviewer's firsthand
+done and what comes next, taken from the paper's own "Future Work": the
+atomic swap between a shielded note and transparent Bitcoin through the
+reserved `h_aux` slot and a Bitcoin HTLC (§22.5), witness-carried
+envelopes (§22.1), the fee-unlock vault (§20.5) as a development scaffold,
+publication privacy (§22.3) and the succinct replay proof (§22.2), all
+built, run on signet and reviewed; the three items that could not be
+implemented are closed with numbers in `docs/REMAINING.md`; and, beyond
+the paper, variant A without a trusted setup, whose accumulated replay
+proof now follows public signet live. The security reviewer's firsthand
 reviews are the `docs/REVIEW-*.md` files.
 
 Rust 1.85+ (edition 2024).

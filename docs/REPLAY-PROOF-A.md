@@ -1,4 +1,4 @@
-# Succinct replay proofs for variant A (study, draft v0.8)
+# Succinct replay proofs for variant A (study, draft v0.9)
 
 Status: a study; its code is the crate `sba-replay` (§3.8) over the
 vendored `experiments/halo2_proofs-patched` and `experiments/vesta-ecc`,
@@ -88,7 +88,9 @@ What the table says:
   `sba-indexer` (verify a block's candidates together, reject the
   block's set and fall back to one-by-one verification to find the
   culprit when the batch fails), with no profile change and no new
-  assumption [computed from the table].
+  assumption [computed from the table]. Done: `Indexer::replay_block`
+  verifies a block's candidates together (`verify_batch`) and, when the
+  batch fails, one by one to find the culprit [built].
 * **The succinct part is ≈ 7 ms of native work per proof** (454.8 ms /
   64), against ≈ 25 ms of deferred MSM. That ratio is the point of
   accumulation: a recursive verifier carries the 5 ms part in-circuit
@@ -131,7 +133,9 @@ go, with Q2's trust in the carrier list unchanged (§1).
 
 ### 3.2 What has to exist, and what exists
 
-Three pieces, none shipped for this stack:
+Three pieces, none shipped for this stack when this was written (3
+November); all three exist since — §3.3, §3.7 and §3.8 — and the
+estimates below stand as what was expected of them:
 
 1. **A succinct-verifier gadget**: in-circuit transcript, challenge
    derivation, the small MSM, the accumulator fold, over the opposite
@@ -143,8 +147,8 @@ Three pieces, none shipped for this stack:
    cells for a batch of 20 openings of length 256, with the note that
    a native curve "should dramatically improve performance") [cited:
    notnotraju, HackMD]. For the Pasta cycle the gadget would be
-   native, which is the whole difference; it still has to be written.
-   Its size [estimate]: the transcript of a k = 14 proof of this
+   native, which is the whole difference; written and measured since
+   (§3.3). Its size [estimate, before §3.3]: the transcript of a k = 14 proof of this
    circuit absorbs ≈ 50 commitments and ≈ 70 evaluations and squeezes
    ≈ 30 challenges, the small MSM has ≈ 50 terms, the accumulator
    fold adds `k + 1` scalar multiplications; at the ECC chip's cost of
@@ -153,8 +157,9 @@ Three pieces, none shipped for this stack:
    that is of the order of 2^15–2^16 rows per verified proof, i.e. a
    `V_q` of k = 16–17 for one proof and k ≈ 20 for a batch of 16. To
    be measured by building the gadget, not by this arithmetic.
-2. **An algebraic transcript.** The family's proofs use a Blake2b
-   transcript (`PROFILE-A.md` §1); a verifier gadget would have to
+2. **An algebraic transcript.** The family's proofs used a Blake2b
+   transcript until a-0.2 (`PROFILE-A.md` changelog; a-0.3 made it the
+   duplex Poseidon transcript below); a verifier gadget would have had to
    compute Blake2b in-circuit, which is the one thing nobody does. The
    recursive profile needs a Poseidon transcript over the commitment
    curve's base field with challenges truncated to 128 bits, as Halo
@@ -167,7 +172,8 @@ Three pieces, none shipped for this stack:
    be accumulated later, because proofs made under the Blake2b
    transcript can never be verified in-circuit; the paper implementation
    has the same kind of frozen choice in its Groth16 proofs.
-3. **`T` in Halo 2.** A port of `crates/sb-circuit/src/batch.rs` to
+3. **`T` in Halo 2** (ported since, §3.7: ≈ 37 000 rows a slot, k = 17
+   for a fragment of three slots). A port of `crates/sb-circuit/src/batch.rs` to
    the family: the indexed nullifier tree and the root tree with
    `PH_A`, the statement digest, the slot rules. Rows [estimate from
    `REPLAY-PROOF.md` §6: ≈ 217 000 R1CS constraints per slot, almost
@@ -176,7 +182,7 @@ Three pieces, none shipped for this stack:
    time on the laptop of the order of a minute per fragment, memory of
    the order of 10 GB [estimate: the k = 14 transfer takes 2 s and
    0.5 GB; the IPA prover is near-linear in rows]. The server's
-   container is the place to measure it.
+   container is where it was measured (§3.7, §3.8).
 
 Alternatives, and why they do not shortcut the three pieces:
 
@@ -381,8 +387,9 @@ the `Fp` side, a minute of proving on the laptop by the scaling of the
 transfer circuit (2 s at k = 14). Vendored for it, in `experiments/halo2_proofs-patched`:
 `halo2_proofs` 0.3.5 with five read-only accessors made public (the
 MSM's terms, the parameters' `W`, `U` and Lagrange generators, the
-key's commitments), used through `[patch.crates-io]` by that experiment
-alone.
+key's commitments), used through `[patch.crates-io]`; the fork has since
+grown the extra openings of §3.4, the claims and `keys_io` (§3.8), is a
+workspace member and serves `sba-replay`.
 
 ### 3.4 The step `T`, designed
 
@@ -657,7 +664,10 @@ of the instance cost;
 then the field side of a `T_q` and the group side of a `T_p` (the
 second step); then the batch relation ported from
 `crates/sb-circuit/src/batch.rs`; then the fragment size chosen on the
-server's memory and the light client's wire format.
+server's memory and the light client's wire format. All of it done
+since: the reductions in §3.6, the second step and every later one in
+§3.8, the batch relation in §3.7, the fragment (three slots at k = 18,
+22 GB while proving) and the wire in §3.8.
 
 ### 3.5 Sizes on the light client's side [computed]
 
@@ -679,7 +689,7 @@ through it (10 November): the newest step alone — two proofs, two
 instances, the slot statements and the opening, 69 716 bytes measured —
 is decided from the keys and the deployment's genesis digest.
 
-### 3.6 Fewer values across the cycle: the split transcript [design]
+### 3.6 Fewer values across the cycle: the split transcript [built, measured; adoption as a-0.4 undecided]
 
 Of the 221 values `T_q` exposes for one transfer proof, 83 are the
 proof's evaluations and 93 the scalars of the final multiplication;
@@ -790,7 +800,7 @@ transfer proofs (and the recursion's own proofs by the mirrored rule)
 or not — is the owner's decision; the numbers are these.
 
 **Reviewed** (S7, 10 November 2026, the auditor's firsthand pass at
-50fdca6; the review document follows on an audit branch at the owner's
+09f5fa9; the review document follows on an audit branch at the owner's
 go): the two-sponge rule is **Fiat–Shamir sound** — a challenge squeezed
 from the sponge that absorbed last and absorbed by the other threads the
 whole history of both through the 128-bit digest the scheme assumes
@@ -802,7 +812,7 @@ the prover's cost against the client's gain — is the owner's engineering
 decision, not a security one. Standing condition, as for the ceremony:
 one independent cryptographer before any value deployment.
 
-### 3.7 The batch relation in `T_p` [design]
+### 3.7 The batch relation in `T_p` [built, measured]
 
 What `T_p(i)` adds to the verifier circuits is `REPLAY-PROOF.md` §4.2's
 relation over the family's own state, with one change of role: there
@@ -937,8 +947,9 @@ vendored `halo2_proofs` — now the whole workspace's through the root
   `T_p` with them and checks the three public values; the client never
   sees a transfer proof.
 
-The keys are in memory (`halo2_proofs` 0.3 serialises verifying keys,
-not proving keys): a prover process makes them at start — **267 s** for
+The keys were in memory in this first version (`halo2_proofs` 0.3
+serialises verifying keys, not proving keys; `keys_io` below added both,
+11 November): a prover process made them at start — **267 s** for
 a fragment of two transfers over three slots at k = 16/17 on the
 server's 8 cores (the sample transfer proof, `T_q`'s keys and a sample
 `T_q`, `T_p`'s keys); then `prove_block` **119 s** for the indexer's
@@ -946,10 +957,10 @@ two-transfer block (57 076 bytes on the wire) and `decide` **0.95 s**,
 10 GB for the run [measured, `prover::tests`]. A fragment holds up to
 `n_proofs` transfers: the rest are the keys' canned sample proof, bound
 to no slot through a `used` bit, so a block with fewer transfers than
-the fragment size uses the same keys. What the crate does not do yet: steps after the first (the
-chain of §3.4 is in its tests, not behind `Prover`), persistence of the
-batch witnesses (the indexer keeps them in memory per run), and the
-split transcript as the default (§3.6, the owner's decision).
+the fragment size uses the same keys. What the crate did not do yet at this point, and does since
+(below): steps after the first, persistence between runs, keys on disk.
+What it still does not do: the split transcript as the default (§3.6,
+the owner's decision).
 
 **The chain behind the prover** [design, 10 November]. Two key sets,
 not three: a *genesis* step (`T_q(1)` the `n` group sides; `T_p(1)` the
@@ -1068,8 +1079,8 @@ the decider needs the keys alone. What it costs: a step is a six-minute
 prove on four cores at k = 18 twice; the key bootstrap is twenty minutes
 once per deployment.
 
-**Between runs, and in the CLI** (`persist.rs`, `chain.rs`, `sb a
-replay-prove` / `replay-decide`, 10 November) [built]. What the chain
+**Between runs, and in the CLI** (`persist.rs`, `chain.rs`, `sb
+replay-prove` / `replay-decide` under a family-A profile, 10 November) [built]. What the chain
 prover needs from the past is small: the previous step's two captures
 (a step's *shape* is the keys', values apart, so the keys' shapes stand
 in for the previous step's), the step count and the digest after it, the
@@ -1087,7 +1098,8 @@ the next block), proves the block the sync just replayed, writes the
 step and its state (through a temporary file), and checks the step as
 the client will; a run that synced and did not prove is rolled back to
 where the prover stands (`reconcile`); a reorganisation below the
-proven chain stops it — the proven chain is of one branch, and a step
+proven chain stopped it in this version (since 17 November it rewinds,
+below) — the proven chain is of one branch, and a step
 binds no block hash, only the statements and the state. The decider
 command takes the steps on disk in order from the client's state. The
 chain test saves the prover after step 1, resumes it from the bytes,
@@ -1099,7 +1111,7 @@ in one call, the witness consumed, a block not yet on the chain reported
 as none) 271.8 s; the decider **1.94 s** a step; the whole test 1 897 s.
 
 **The client of constant size** (`chain.rs`, `ChainDecider::decide_latest`,
-`sb a replay-decide --latest`, 10 November, after the review) [built].
+`sb replay-decide --latest`, 10 November, after the review) [built].
 The decider so far took a step against the client's running digest, so
 a client had to take every step in order — the download of §3.5 was not
 yet constant. What was missing is one value carried through the chain:
@@ -1144,7 +1156,7 @@ directory; `ChainKeys::read` takes them back and rebuilds all the rest —
 the transfer key, fresh sample proofs for the padding, the two circuits'
 shapes by the bootstrap's rounds over fake captures under the final keys
 from the start (no key generation: seconds), a fresh dummy step 0 — and
-checks the key set's id against the metadata. `sb a replay-prove` and
+checks the key set's id against the metadata. `sb replay-prove` and
 `replay-decide` read the keys under `replay-<deployment>/keys` when they
 are there and write them after generating them once. The chain test
 writes its keys, reads them back and proves and decides steps 2 and 3
@@ -1189,7 +1201,7 @@ key set with its cosets) and peaks at 22.3 GB while proving a step, in a
 cosets' FFTs (a minute of the two) and the transfer key's generation
 remain the levers: writing the cosets would be ten gigabytes a key set.
 
-**Reorganisations** (`chain.rs`, `sb a replay-prove --confirm`, 17
+**Reorganisations** (`chain.rs`, `sb replay-prove --confirm`, 17
 November) [built]. The live follower of `RUNS.md` stopped on 14 November
 after 132 steps: signet reorganised at the tip it had just proven, and
 the runner treated any rollback below the proven chain as fatal — right
@@ -1203,8 +1215,8 @@ reported as its own error with the last height still on the chain; the
 CLI takes the last step at or below it from disk, rebuilds the prover's
 state from that step alone — its two proofs captured again with the
 claims they opened, read out of their public inputs as the decider reads
-them (`ChainKeys::state_of_step`) — moves the later steps to an
-`orphaned/` directory, rolls the indexer back, and goes on from there.
+them (`ChainKeys::state_of_step`) — moves the later steps to a
+`steps/orphaned-<time>/` directory, rolls the indexer back, and goes on from there.
 Nothing of a step depends on anything but the proofs on disk and the
 keys, which is what makes the rewind possible without a saved history of
 states. The chain test replaces block 1002 after proving it, sees the
@@ -1213,8 +1225,9 @@ What the 14 November stop had been [measured, 17 November]: a flicker
 of the tip, not a lost block. For a moment Esplora answered height
 330796 with another hash; the indexer rolled back in memory and the
 runner stopped; the chain kept the block the step had proven — its hash
-stands at that height three days later — and the JSON store writes only
-at the end of a sync, so the rollback never reached the disk. The
+stands at that height three days later — and the JSON store of that build wrote only
+at the end of a sync (it saves every 32 blocks since), so the rollback
+never reached the disk. The
 restart found the indexer at the proven block and went on with step 133
 without a rewind, which is the right outcome for that event, reached by
 accident; with the confirmation depth the block would not have been
@@ -1222,7 +1235,7 @@ proven until three stood above it, and the flicker would have passed
 unseen. The rewind itself has run on the mock chain only.
 
 **Reviewed** (S7, 10 November 2026, the auditor's firsthand pass at
-664d013 and 50fdca6, the document to follow on an audit branch at the
+f78ef66 and 09f5fa9, the document to follow on an audit branch at the
 owner's go): `capture`, `step4`, `wire`, `prover`, `verifier_body`,
 `chain`, `batch` and `persist` — **no soundness finding**. Confirmed in
 particular: fake captures shape circuits only; a padded or mint slot
@@ -1232,16 +1245,16 @@ commitments as inputs are bound into the MSM where the native verifier
 absorbs them, and the `base` gate relaxes the final identity alone; the
 decider ties `base = 1` to step 1 only, so no dummy predecessor passes
 later; the continuity `s_prev = s_next` holds in circuit and in the
-decider. Two notes fixed (50fdca6): the split transcript asserts it
+decider. Two notes fixed (09f5fa9): the split transcript asserts it
 opens with the key's representative; the split step's test refuses a
 tampered field-side evaluation. Trust points stated, not findings: the
 vendored `halo2_proofs` patch is a separate, larger audit surface the
 recursion rests on; a step binds no block hash (the replay layer does);
 a mint carries no proof (F-3-1). Recommendation taken: the recursion's
 mock tests that fit a hosted runner run weekly in CI (`recursion` job,
-ba08e74); the k = 18 tests stay server runs with their figures here.
+9ff5dcb); the k = 18 tests stay server runs with their figures here.
 
-### 3.9 Empty blocks: a step over a block range [design]
+### 3.9 Empty blocks: a step over a block range [built, in the live follower]
 
 The drill of 11 November (`RUNS.md`) proved ten blocks, seven of them
 without a shielded event, each as a full step of five minutes: the
@@ -1299,8 +1312,8 @@ as it was; this section and its implementation go to the next batch.
 
 ## 4. What this study decides
 
-* **Now, no profile change:** batch verification in the indexer (§2),
-  a code change in `sba-indexer` with a test that a bad proof in a
+* **Now, no profile change (done):** batch verification in the indexer
+  (§2), a code change in `sba-indexer` with a test that a bad proof in a
   block is found. It cuts A's verification cost per transfer by 5 × at
   block size 64 and is independent of everything else here.
 * **Before any accumulable deployment:** the algebraic transcript
@@ -1314,17 +1327,24 @@ as it was; this section and its implementation go to the next batch.
   recursive `T` is a slice of ordinary size, on the paper's scale per
   slot, and the design stays the full one: every transfer proof
   verified in-circuit, no trust in the indexer for them.
-* **Next:** the recursion is a crate of the family since 10 November
+* **Built, 10–17 November:** the recursion is a crate of the family since 10 November
   (`sba-replay`: the circuits, the steps, the relation, the wire format
   and the decider, on the vendored `halo2_proofs` and the Vesta chip
   port, both workspace members now); the loop is closed, the relation
   is inside the step bound to real statements, steps take several
   transfer proofs, and the split transcript is built on both sides
-  with its trade-off measured (§3.6). What remains is a prover API over
-  the indexer's blocks with keys made once, the adoption decision on
-  a-0.4, and the second step under whichever transcript is adopted.
-* **Not now:** porting `T` (piece 3) before the gadget is measured;
-  Nova or any folding library, for the reason in §3.2.
+  with its trade-off measured (§3.6). Then: the prover over the indexer's
+  blocks with its state between runs and its keys on disk, the second
+  step and every step after it under the a-0.3 transcript, the client of
+  constant size, the confirmation depth and the rewind after a
+  reorganisation, steps over block ranges (§3.8, §3.9), and the chain
+  following public signet live since 11 November (`RUNS.md`).
+* **What remains:** the adoption decision on a-0.4 (§3.6); the
+  deployment's transfers carried in a step and the newest step decided
+  from the genesis by a client holding the keys alone (`RUNS.md`).
+* **Not now:** Nova or any folding library, for the reason in §3.2
+  (porting `T` before the gadget was measured was the other item here;
+  both happened, in that order, §3.3 then §3.7).
 
 ## 5. Sources
 
@@ -1349,6 +1369,13 @@ as it was; this section and its implementation go to the next batch.
 
 ## 6. Changelog
 
+* **v0.9** (17 November 2026) — §3.8 carried to the code as it stands:
+  keys and parameters on disk (`keys_io`, 11 November; the restart with
+  everything on disk measured), the confirmation depth and the rewind
+  after a reorganisation (17 November), steps over block ranges (§3.9,
+  built); the commands named as `sb` runs them under a family-A profile
+  (no `sb a`); §3.2's inventory, §3.4's order of work and §4 marked
+  against what exists; the §3.6 and §3.7 headings say built.
 * **v0.6** (4 November 2026) — §3.4, the step `T` designed: the two
   circuits of a step, Halo-style accumulation by re-opening (and the
   prover change it needs, done the same day in the vendored crate:

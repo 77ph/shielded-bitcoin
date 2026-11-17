@@ -15,7 +15,11 @@ A mint is a carrier transaction that
 
 1. pays exactly `v` satoshis to the deployment's vault `scriptPubKey`, in
    exactly one output, and
-2. carries a mint envelope in its single OP_RETURN:
+2. carries a mint envelope in its single OP_RETURN (that is the base
+   profile's OP_RETURN carrier; a witness deployment, `WITNESS-CARRIER.md`,
+   carries the same bytes in the reveal's tapscript, puts the memo below in
+   an OP_RETURN output of the reveal, and its unfunded template is the
+   commit output):
 
 ```
 "btc" 0x01 0x02 0x00 ‖ v (u64 LE) ‖ d (11) ‖ rseed (32) ‖ pk_d (32)      = 89 bytes
@@ -39,7 +43,8 @@ every later transfer of that value is private.
 
 A withdraw is an ordinary private transfer of `amount` to the operator's
 shielded address (`boundary.operator_address`), whose carrier transaction
-additionally carries a **payout memo** in a second OP_RETURN output:
+additionally carries a **payout memo** in an OP_RETURN output of its own
+(the second one under the OP_RETURN carrier):
 
 ```
 "sbx" 0x01 ‖ amount (u64 LE) ‖ destination scriptPubKey
@@ -90,7 +95,8 @@ indices past the last known one on each chain.
 `--no-broadcast` writes the carrier to the outbox as three files:
 `<label>.json` (envelope, memo, required extra outputs), `<label>.hex`
 (the envelope alone) and `<label>.tx`, the **unfunded transaction**: the
-carrier's outputs with no inputs, framed as Bitcoin Core's
+carrier's outputs with no inputs (under the witness carrier, the commit
+output alone, `WITNESS-CARRIER.md` §5), framed as Bitcoin Core's
 `createrawtransaction` frames it. Any wallet can add inputs and a change
 output and broadcast it; with Bitcoin Core:
 

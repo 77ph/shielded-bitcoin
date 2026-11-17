@@ -56,8 +56,9 @@ struct Cli {
     #[arg(long, global = true)]
     passphrase_file: Option<PathBuf>,
     /// Block source: `esplora:<url>`, `electrum:ssl://host:port` (or `ssl-pin://host:port/<sha256>`, `tcp://`),
-    /// `rpc:<url>:<user>:<pass>`, `rpc-cookie:<url>:<cookie-path>`, or verified sync from an
-    /// `sb serve` indexer: `light:<url>` (`light:<url>|<full source>` also checks block hashes there).
+    /// `rpc:<url>:<user>:<pass>`, `rpc-cookie:<url>:<cookie-path>`, or the two light modes over an
+    /// `sb serve` indexer: `light:<url>` (verified sync; `light:<url>|<full source>` also checks
+    /// block hashes there) and `proof:<url>` (its proven blocks, docs/REPLAY-PROOF.md §4.5).
     #[arg(
         long,
         global = true,

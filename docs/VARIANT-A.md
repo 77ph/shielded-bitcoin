@@ -1,4 +1,4 @@
-# Variant A: the paper's protocol without a trusted setup (study, draft v0.9)
+# Variant A: the paper's protocol without a trusted setup (study, draft v0.10)
 
 Status: a study with a first measurement, 30 October 2026; no change to
 the paper implementation. It records a decision of the owner and the
@@ -174,7 +174,8 @@ than Groth16 (24.5 ms against 4 ms) and grows with the circuit's rows
 replaying a full block of transfers verifies at ≈ 40 proofs per second
 per core, which is the cost A moves from the prover to every verifier;
 Halo 2's accumulation amortises it when proofs are verified in batches
-(measured: 5.8 ms per proof at 64 proofs, `REPLAY-PROOF-A.md` §2),
+(measured: 5.8 ms per proof at 64 proofs under the Blake2b transcript,
+7.5 ms under a-0.3's Poseidon transcript, `REPLAY-PROOF-A.md` §2),
 and a smaller circuit (Sinsemilla for the Merkle path, as Orchard, or
 fewer in-circuit hashes) would lower k. Rows are dominated by the
 ≈ 127 Poseidon permutations of the relation (≈ 66 rows each in the
@@ -258,8 +259,9 @@ implementation of the paper? Rules this repository adopts:
    from the paper crates and to diverge.
 5. **One CLI, one deployment model.** `sb` resolves the family from the
    deployment profile and dispatches; commands keep their names;
-   family-specific commands are namespaced. A user of the paper
-   deployment sees no change.
+   a variant's own commands (`replay-prove`, `replay-decide` for A) are
+   plain subcommands that exist under its profile, with no namespace of
+   their own. A user of the paper deployment sees no change.
 6. **Documents.** Each variant has its normative profile
    (`PROFILE-<letter>.md`), its own `RUNS` entries, reviews
    (`REVIEW-<letter>-*.md`), and a section in `ROADMAP.md`; the variant's
@@ -319,10 +321,10 @@ implementation of the paper? Rules this repository adopts:
   (the verifier circuits over the Pasta cycle, the batch relation, the
   step prover and the decider, the chain of steps under one key set and
   its state between runs; development-grade, built on the vendored
-  `halo2_proofs` and the Vesta chip port under `experiments/`). In `sb a`
-  since 10 November: `replay-prove` (the next blocks as steps of the
-  chain, from the prover's own replay under `replay-<deployment>/`, keys
-  made at start) and `replay-decide` (the steps on disk accepted as a
+  `halo2_proofs` and the Vesta chip port under `experiments/`). In `sb`,
+  under a family-A profile, since 10 November: `replay-prove` (the next blocks as steps of the
+  chain, from the prover's own replay under `replay-<deployment>/`, the
+  keys on disk beside it once made) and `replay-decide` (the steps on disk accepted as a
   light client does, from the keys and the previous digest, or the
   newest step alone from the genesis with `--latest`); the keys are
   written under the replay directory after the first run and read back
@@ -353,11 +355,12 @@ implementation of the paper? Rules this repository adopts:
   the odd root (`PROFILE-A.md` §4.2 v0.2; `sba-circuit` test
   `the_odd_root_of_g_d_is_refused_by_the_mock_prover`); `k = 14` and the
   proof size are unchanged, `vk_id` moved, profile a-0.2.
-* **Later, the items A reopens**: the accumulated replay proof (§22.2),
-  studied in `REPLAY-PROOF-A.md` (v0.1, 3 November 2026: the recursion
-  shape on the cycle, the native batch verification measured, the
-  verifier gadget as the deciding measurement), and lineage
-  feasibility (§22.4), each as its own study first.
+* **The items A reopens**: the accumulated replay proof (§22.2),
+  studied in `REPLAY-PROOF-A.md` (3 November 2026: the recursion shape
+  on the cycle, the native batch verification measured, the verifier
+  gadget as the deciding measurement) and built as `sba-replay` (above;
+  following public signet since 11 November, `RUNS.md`), and lineage
+  feasibility (§22.4), still a study to come.
 
 ## 8. Sources
 
@@ -377,6 +380,10 @@ implementation of the paper? Rules this repository adopts:
 
 ## 9. Changelog
 
+* **v0.10** (17 November 2026) — §7 brought up to the code: the
+  accumulated replay proof built and live, the variant's commands as
+  plain subcommands of `sb` (§6 item 5), the a-0.3 batch-verification
+  figure (§4.3), lineage as the study still to come.
 * **v0.9** (4 November 2026) — the recursion study's deciding
   measurement made (`REPLAY-PROOF-A.md` §3.3–§4: the group part of a
   transfer proof verifies in an `Fq` circuit at k = 15, the field part

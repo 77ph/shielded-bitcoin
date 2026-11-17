@@ -49,7 +49,8 @@ document's subject.
 
 ### 2.1 One proxy for everything outbound
 
-`sb --proxy socks5://host:port` (or `SB_PROXY`) routes **every**
+`sb --proxy socks5://host:port` (or `SB_PROXY`; `socks5h://` is taken as
+the same thing, names being resolved by the proxy either way) routes **every**
 outbound connection through a SOCKS5 proxy: chain sync (Esplora,
 Electrum, Bitcoin Core RPC, a verified-sync indexer), broadcast,
 relayer and fee-vault requests. Target host names are passed to the
@@ -95,7 +96,8 @@ correlation (it does not remove it: over enough samples a uniform delay
 is itself a pattern). The anchor policy bounds the delay (§3.3): the carrier must still
 be accepted within the window `W`, so when the delay ends the wallet
 re-checks the anchor against the chain tip and refuses to publish a
-carrier the window would reject (the transfer is rebuilt instead). The
+carrier the window would reject (the user releases its inputs with
+`sb unlock` and builds the transfer afresh). The
 same check runs on every `sb publish` from the outbox, in both families:
 an entry built hours earlier and published after the window has moved on
 is refused before a carrier is paid for it, with `sb unlock` named as the
@@ -112,9 +114,13 @@ rejected by the chain; `RUNS.md`).
   model, as the paper says; out of scope. The proxy option accepts any
   SOCKS5 endpoint, so a mixnet client that speaks SOCKS5 can be plugged
   in without a code change.
-* **Rebroadcast.** `sb` submits a carrier once; a carrier the network
-  drops is republished by the user (`sb publish <label>`), which is the
-  same bytes and so visibly a retry. Bitcoin Core rebroadcasts its own
+* **Rebroadcast.** `sb` submits an OP_RETURN carrier once (a witness
+  reveal is tried a few times while the network has not yet seen its
+  commit, `WITNESS-CARRIER.md` §5, and a fee vault re-broadcasts its own
+  unsettled carriers on restart, `FEE-VAULT.md` §6 I3); a carrier the
+  network drops is republished by the user (`sb publish <label>`), which
+  carries the same envelope in a freshly built transaction and so is
+  visibly a retry by its nullifiers. Bitcoin Core rebroadcasts its own
   wallet's transactions; it does not know about carriers it only relayed.
 * **Batching.** One envelope per carrier; a batching service would be a
   relayer that pays for several carriers in one transaction, which this
@@ -193,8 +199,9 @@ observer who saw the first attempt in the mempool links the two. That
 is inherent to nullifier-based designs (a rebuild could spend other
 notes, but the first attempt's nullifiers are public already, so the
 gain would be marginal); the wallet documents it and keeps the first
-attempt in the outbox so that a retry is the same carrier whenever
-possible (a stuck carrier is republished, not rebuilt).
+attempt's envelope in the outbox so that a retry publishes the same
+envelope whenever possible (a stuck carrier gets a new transaction around
+the same bytes; the transfer is not rebuilt).
 
 ### 3.6 Fees and funding
 
@@ -251,7 +258,8 @@ above for more than they are.
   draw; a carrier held past the window is refused when the hold ends;
   the deployment's `anchor_depth` 2 is what the wallet proves at. The
   SOCKS5 handshake itself (CONNECT by name, refusals, a missing proxy)
-  is unit-tested in `sb-indexer`'s `net` module; random change
+  is unit-tested in `sb-common`'s `net` module, which `sb-indexer`
+  re-exports; random change
   placement and the retry property of §3.5 in `sb-wallet`'s builder.
 * **Signet** (`RUNS.md`, 29 October 2026): a transfer published through
   an SSH dynamic forward with `--delay 60-180`. The network saw the

@@ -26,7 +26,7 @@ Terminology follows the paper: `v` value, `d` diversifier, `rseed` note seed,
 | SNARK scalar field | `Fr` = BLS12-381 scalar field, `q = 0x73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001` (255 bits) |
 | Embedded curve | Jubjub: twisted Edwards `-x^2 + y^2 = 1 + d x^2 y^2` over `Fr`, `d = -(10240/10241)` |
 | Jubjub subgroup order | `r_J = 0x0e7db4ea6533afa906673b0101343b00a6682093ccc81082d0970e5ed6f72cb7` (cofactor 8) |
-| Jubjub generator `G` | The Zcash Sapling spending-key base `G` is **not** used. `G` is defined as `DiversifyHash(0^11)` restricted to the subgroup, see §4.2. (Only `G_d` bases are used by the protocol; a fixed generator is needed only for test vectors.) |
+| Jubjub generator `G` | The Zcash Sapling spending-key base `G` is **not** used, and the protocol needs no fixed generator: only the `G_d` bases of §4.2 appear. Where tests need a fixed point they use arkworks' Jubjub generator; `DiversifyHash(0^11)`, if it exists at all (§4.2: half of all diversifiers have no image), is one more `G_d` and nothing else. |
 | Proof encoding | 192 bytes: `A` (G1, 48 bytes compressed) `‖ B` (G2, 96 bytes) `‖ C` (G1, 48 bytes), arkworks canonical compressed encoding |
 
 All field elements on the wire are **32-byte little-endian canonical** encodings
@@ -82,6 +82,13 @@ unambiguous. Tags are `Fr` elements: `tag = LE_bytes_mod_q(ASCII string)`.
 | `T_STREAM` | `"sb/v1/stream"` | Keystream `PH(T_STREAM, k, i)` |
 | `T_MAC` | `"sb/v1/mac"` | Note tag `PH(T_MAC, k, c_0, c_1)` |
 
+Six further tags share the namespace and belong to the deployment layer:
+`T_AUX` (`"sb/v1/aux"`) and `T_NFLOCK` (`"sb/v1/nflock"`) to the swap
+extension (`SWAP.md`), `T_FEEAUTH` (`"sb/v1/feeauth"`) to the fee vault
+(`FEE-VAULT.md`), and `T_IMT` (`"sb/v1/imt"`), `T_STATE` (`"sb/v1/state"`),
+`T_BATCH` (`"sb/v1/batch"`) to the replay proofs (`REPLAY-PROOF.md`
+§4.1–4.2); `TEST_VECTORS.md` lists every tag with its field element.
+
 `Scalar250(f)` = the integer formed by the low 250 bits of the canonical
 LE encoding of `f`, used as a Jubjub scalar. `2^250 < r_J`, so no reduction
 occurs and the same bits drive the in-circuit scalar multiplication.
@@ -124,8 +131,9 @@ for `i = 0, 1, 2, …`, skipping indices whose `G_d` is invalid (≈ 50 %).
 Address text encoding: bech32m, payload `d (11) ‖ pk_d (32)` = 43 bytes.
 HRP: `sb` mainnet, `tsb` signet/testnet, `rsb` regtest.
 
-Viewing-key export formats (for §7 disclosure): `vk_in` as `sbvk1…` (bech32m
-over 32 bytes), `vk_out` as `sbovk1…`.
+Viewing-key export formats (for §7 disclosure) are reserved as `vk_in` →
+`sbvk1…` (bech32m over 32 bytes) and `vk_out` → `sbovk1…`; no tool encodes
+them yet, the wallet holds both keys only inside its file.
 
 ## 4. Group operations
 
@@ -203,8 +211,11 @@ pseudorandom under an unknown `k` (key private).
 leaf = PH(T_LEAF, const_salt, h_body, j, pk_eph.x, pk_eph.y, c_0, c_1, tag, h_aux)
 ```
 
-`j` = output index in the creating envelope. `h_aux = 0` (`aux_null`, §22.5),
-not serialised. `const_salt` is the deployment constant of §9.
+`j` = output index in the creating envelope. In a transfer `h_aux = 0`
+(`aux_null`, §22.5) and is not serialised; the swap extension (`SWAP.md`
+§3–4) publishes a non-zero `h_aux` per output in its own body, which replay
+hashes into the leaf without interpreting it. `const_salt` is the
+deployment constant of §9.
 
 ### 5.4 Nullifier (§9)
 
@@ -233,7 +244,7 @@ transfers are padded with dummy notes (§8.2 below). Any other arity is invalid.
 |---|---|---|---|
 | 0 | `magic` | 3 | ASCII `"btc"` |
 | 1 | `version` | 1 | `0x01` |
-| 2 | `kind` | 1 | `0x01` transfer |
+| 2 | `kind` | 1 | `0x01` transfer (this profile); `0x02` and `0x03` are the deployment-layer mint of `BOUNDARY.md` and the swap extension of `SWAP.md`, each with its own body layout |
 | 3 | `reserved` | 1 | `0x00`, must be zero |
 | 4 | `h_anchor` | 4 | u32 LE block height |
 | 5 | `input_count` | 1 | CompactSize, value `2` |
@@ -246,7 +257,7 @@ transfers are padded with dummy notes (§8.2 below). Any other arity is invalid.
 | 11 | `proof` | 192 | Groth16 compressed |
 | — | **envelope total** | **700** | |
 
-A parser rejects: wrong magic/version/kind, non-zero reserved byte, counts
+A parser rejects: wrong magic or version, a kind it does not know, non-zero reserved byte, counts
 ≠ 2, non-canonical CompactSize, any non-canonical field element or point,
 trailing bytes, and any envelope whose re-serialisation differs from the
 published bytes.
@@ -326,17 +337,24 @@ real zero-value note to one of the sender's own addresses.
    public `pk_eph_j`, `ct_note_j`.
 6. Every `v` is 64-bit range checked (bit decomposition).
 7. `v_in_0 + v_in_1 == v_out_0 + v_out_1` (no overflow possible: 65 bits ≪ 255).
-8. `h_body`, `N`, `M` are public inputs; each is multiplied into one trivial
-   constraint so that no public input is left unconstrained in the R1CS.
-   Replay recomputes `h_body` and `r_anchor` from the published envelope.
+8. `N` and `M` are constrained equal to the constants 2 and 2; `h_body`
+   and `r_anchor` are each squared into one trivial constraint, so that no
+   public input is left unconstrained in the R1CS (`r_anchor` would
+   otherwise be free when both inputs are dummies). Replay recomputes
+   `h_body` and `r_anchor` from the published envelope.
 
 Measured size: 84 362 R1CS constraints, 18 instance variables, evaluation
 domain `2^17`.
 
 ### 8.4 Proving/verifying key
 
-`params/transfer-v1.pk` and `params/transfer-v1.vk`. The deployment profile
-(§9) pins `SHA-256(vk)`. Development deployments use a deterministic
+The keys are not files of the repository. A deployment's `setup` (§9)
+says where they come from: an insecure seed, from which every tool
+regenerates them (wallets cache the proving key under their data
+directory, keyed by the verifying-key hash), or a ceremony's `vk_path` and
+`pk_path` relative to the profile. The deployment profile
+(§9) pins `SHA-256(vk)` as `transfer_vk_sha256` and every tool checks it.
+Development deployments use a deterministic
 **insecure** setup from a published seed (anyone can forge proofs); this is
 printed loudly by every tool. A production deployment requires an MPC
 ceremony; the protocol and tooling are described in `docs/CEREMONY.md`
@@ -348,24 +366,40 @@ A deployment is a JSON file (`deployments/<name>.json`):
 
 ```json
 {
-  "name": "signet-dev-1",
+  "profile": "0.2",
+  "name": "signet-dev-2",
   "network": "signet",
-  "activation_height": 0,
-  "const_salt_hex": "…32 bytes…",
+  "activation_height": 328300,
+  "const_salt": "…32 bytes hex…",
   "transfer_vk_sha256": "…",
-  "setup": "insecure-seed:<hex>" | "ceremony:<url>",
+  "setup": { "kind": "insecure-seed", "seed": "…32 bytes hex…" },
   "window_w": 100,
   "k_min": 1,
-  "initial_notes": []
+  "anchor_depth": 3,
+  "carrier": "op-return"
 }
 ```
+
+`setup` is either the insecure seed above or a ceremony's key files,
+`{ "kind": "ceremony", "vk_path": "transfer.vk", "pk_path": "transfer.pk" }`,
+relative to the profile. `profile` names the version of this document the
+deployment follows (§13) and an implementation refuses any other.
+`anchor_depth` is the wallets' anchor policy (below). `carrier` selects the
+OP_RETURN carrier of §10 (the default) or the witness carrier of
+`WITNESS-CARRIER.md`. The optional `boundary`, `swap` and `batch` sections
+belong to the deployment layer (`BOUNDARY.md`, `SWAP.md` §12,
+`REPLAY-PROOF.md` §4.2); `deployments/signet-dev-2.json` is a real example.
 
 `const_salt = SHA-256("sb/v1/const_salt/" ‖ name)` by convention, so
 different deployments produce different `h_body` and leaves for the same
 body and cannot be cross-replayed.
 
 Anchor window (§A.6): `W = 100`, `K_min = 1`; replay in block `H` accepts
-`H − 100 ≤ h_anchor ≤ H − 1`. Wallet default `K_wallet = 3`.
+`H − 100 ≤ h_anchor ≤ H − 1`. The anchor depth every wallet of the
+deployment uses, `K_wallet`, is the deployment field `anchor_depth`
+(default 3): a transfer built at replayed tip `t` anchors at
+`t + 1 − anchor_depth`. It is shared rather than a local choice so that an
+anchor's age does not fingerprint a wallet (`PUBLICATION.md` §3.3).
 
 ## 10. Publication carrier (§A.4)
 
@@ -373,7 +407,12 @@ One OP_RETURN output whose script is exactly `OP_RETURN <single minimal push of 
 (`OP_PUSHDATA2` for 700 bytes). A transaction is a **candidate** if exactly one
 of its outputs is an OP_RETURN whose single push starts with `"btc" 0x01`.
 A candidate with two such outputs, extra pushes, or a non-minimal push is
-**rejected and logged** (it never mutates state). Witness data is ignored.
+**rejected and logged** (it never mutates state). This is a deployment's
+default carrier (`"carrier": "op-return"`); a deployment may instead select
+the witness carrier of `WITNESS-CARRIER.md` (`"carrier": "witness"`), under
+which the envelope is revealed in a tapscript witness and OP_RETURN outputs
+play no part — a different carrier is a different, non-interoperable
+deployment. Under the OP_RETURN carrier witness data is ignored.
 OP_RETURN outputs whose payload does not start with the magic are not part
 of the envelope and never affect acceptance (deployment extensions may use
 them, see `docs/BOUNDARY.md`).
@@ -382,18 +421,24 @@ Transactions in a block are processed in block order; blocks from
 
 ## 11. Replay acceptance order (§A.7, §15)
 
-For each candidate envelope in block `H`:
+For each candidate envelope of kind `0x01` in block `H` (kinds `0x02` and
+`0x03` follow `BOUNDARY.md` and `SWAP.md` §8 under the same order):
 
 1. parse canonically (§7.1), else reject;
 2. recompute `h_body`;
 3. check `H − W ≤ h_anchor ≤ H − K_min`, else reject;
-4. `r_anchor = R[h_anchor]`;
-5. nullifiers pairwise distinct and none in `N`, else reject;
+4. `r_anchor = R[h_anchor]`, which replay holds for every height of the
+   window (the initial empty root for any height below activation), else
+   reject;
+5. the two nullifiers must be distinct, non-zero (zero is the sentinel of
+   the nullifier commitment, `REPLAY-PROOF.md` §4.1), absent from `N`, and
+   `N` must have room for them below `2^32`, else reject;
 6. verify the Groth16 proof for `x` (§8.1), else reject;
-7. derive `leaf_0, leaf_1`, append to `T`, assign positions, insert nullifiers
-   into `N`, append the event to `H`.
+7. derive `leaf_0, leaf_1`, append to `T`, assign positions, insert the
+   nullifiers into `N` and its commitment, append the event to `H`.
 
-After the last transaction of block `H`: `R[H] = root(T)`. Reorganisation:
+After the last transaction of block `H`: `R[H] = root(T)`, appended to the
+root history commitment as well. Reorganisation:
 the indexer keeps a per-block checkpoint (leaf count, nullifiers added,
 events) and rolls back to the fork point, then replays forward.
 
@@ -405,7 +450,7 @@ events) and rolls back to the fork point, then replays forward.
 | `ct_note` 67 bytes (§A.4 estimate) | 96 bytes (3 × `Fr`) | Ciphertext/plaintext consistency must be proved in circuit (§12.1). A byte AEAD in R1CS is 30–160 k constraints per note; the Poseidon construction is ≈ 2 k. Envelope grows 610 → 700 bytes (with the 32-byte `ct_out` commitment pad). |
 | Magic `"btc"` | same | — |
 | DiversifyHash unspecified | §4.2 | — |
-| Public statement listed as a tuple | identical, 16 `Fr` public inputs, no projection | — |
+| Public statement listed as a tuple | identical, 17 `Fr` public inputs, no projection | — |
 
 ## 13. Versioning
 
@@ -422,8 +467,9 @@ events) and rolls back to the fork point, then replays forward.
   wire version byte, old-version envelopes keep being accepted by the rules
   of their version, and a deployment states the heights at which each
   version is active.
-* Local choices (`K_wallet`, storage layout, chain source) never affect the
-  profile version.
+* Deployment fields outside the acceptance rules (`anchor_depth`, the
+  carrier, the boundary sections) and local choices (storage layout, chain
+  source) never affect the profile version.
 
 ### Changelog
 
@@ -437,7 +483,10 @@ events) and rolls back to the fork point, then replays forward.
 
 * Peg-in / peg-out (PIPEs v2, §20.4, §22.3). Development deployments use a
   non-normative **mint** envelope kind (`0x02`) and a vault key; see
-  `docs/BOUNDARY.md` when it exists.
-* Fee funding and relayers (§20.5).
-* Light-client verified sync (§22.2).
+  `docs/BOUNDARY.md`.
+* Fee funding and relayers (§20.5): `BOUNDARY.md` "Fee funding",
+  `PUBLICATION.md`, `FEE-VAULT.md`.
+* Light-client sync (§22.2): verified sync from an indexer (`--chain
+  light:`, README "Verified sync") and the replay proofs of
+  `REPLAY-PROOF.md` (`--chain proof:`).
 * Opt-in lineage attestations (§D).

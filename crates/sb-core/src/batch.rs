@@ -177,7 +177,7 @@ impl From<&Insertion> for NullifierInsert {
 pub struct SlotWitness {
     pub statement: SlotStatement,
     /// Siblings of `r_anchor` in the root tree at position
-    /// `h_anchor − activation`.
+    /// `h_anchor − activation + 1` (leaf 0 is the initial root).
     pub anchor_siblings: [Fr; DEPTH],
     pub nullifiers: [NullifierInsert; N_IN],
     /// The append paths of the two output leaves, in order.
@@ -186,7 +186,7 @@ pub struct SlotWitness {
 
 /// A batch: the state before, up to `n` slots, and whether the block in
 /// progress is complete after them (then its root is appended to the root
-/// tree at `height − activation` over `root_append`).
+/// tree at `height − activation + 1` over `root_append`).
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct BatchWitness {
     pub prev: StateOpening,

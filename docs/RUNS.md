@@ -397,7 +397,7 @@ The first run of a family-A deployment (`VARIANT-A.md`, `PROFILE-A.md`):
 Halo 2 transfer proofs of 4 416 bytes with no trusted setup, 4 924-byte
 envelopes in the witness of a reveal transaction. Profile
 `signet-a-1` (profile a-0.1, `transfer_vk_id` as `TEST_VECTORS-A.md`
-pinned it then; the file is in git history at fa583ff, since the profile
+pinned it then; the file is in git history at f3aa38f, since the profile
 moved to a-0.2 after the review's parity finding of 3 November), mempool.space Esplora as the chain
 source, 1 sat/vB, anchor depth 3. The development vault is alice's own
 funding script, as in the swap drill, so the mint's vault payment
@@ -536,7 +536,7 @@ runner refused to go on below the proven chain. The chain kept the
 proven block (its hash stands at that height on the 17th), and the
 rollback never reached the disk, so nothing was lost; the account is
 in `REPLAY-PROOF-A.md` §3.8. **The restart** (17 November, 09:18 UTC,
-the binary of 52af9f6 with `--confirm 3 --settle 1800`): the keys read
+the binary of 71204ae with `--confirm 3 --settle 1800`): the keys read
 in 632 s (the parameters made and written this time, 16 MB each; the
 process at 22.0 GB during the read, 12.6 GB proving), the chain taken
 up at step 133 — blocks 330797–330805, nine blocks a step now that
@@ -550,5 +550,31 @@ because the JSON store wrote only at the end of a sync. The HTTP
 client now paces its requests to a remote host (250 ms apart,
 `SB_HTTP_PACE_MS`; loopback never paced) and waits a `429` out as the
 server's `Retry-After` asks, and a replay saves its progress every 32
-blocks. The transfers (alice to bob 1 200, alice to the operator 800)
-and the latest step decided from the genesis follow.
+blocks.
+
+**The transfers, 17 November.** The first attempt paid for a lesson.
+An envelope built at 10:44 UTC against anchor 330974 was published at
+12:01 UTC, 295 blocks later, and the chain rejected it in block 331269
+(tx 183): `anchor 330974 outside the window for block 331269`, `W =
+100`. The carrier had been paid — 1 509 vB for an envelope no indexer
+accepts — and the note's lock was released with `sb unlock`. Since the same hour
+`publish` in both families refuses an outbox entry whose anchor is
+outside the window at the tip before any carrier is paid for
+(`PUBLICATION.md` §2.3). The fresh send at 13:22 UTC (alice to bob
+1 200, anchor 331274) had its commit `d175f842…` reach the mempool and
+its reveal refused as `bad-txns-inputs-missingorspent`, most likely
+because the Esplora instance asked to broadcast the reveal had not yet
+seen the commit (`WITNESS-CARRIER.md` §7). The reveal is now retried five times three
+seconds apart, and `publish --reveal`, added to the A family's
+`publish` for it, spends a commit the network has seen: at 13:41 UTC it
+broadcast the reveal `4fedea5d…` (1 356 vB) over the commit's output;
+the commit confirmed in block 331277, the carrier in 331283 (tx 134),
+where the deployment's indexer accepted the transfer with its leaves at
+position 1 — note tree of three leaves, two nullifiers, two accepted
+events and the one rejected envelope. The operator's 800 (anchor
+331284) at 14:42 UTC went through the retry on the real network: the
+commit `168cf9e8…` (153 vB), the first reveal refused for the same
+reason, the second accepted — the reveal `eb427c98…` (1 356 vB), 1 509
+vB for the pair. The follower stood at step 183 (blocks to 331255)
+while the transfers confirmed; the steps that carry them, and the
+latest step decided from the genesis, follow.

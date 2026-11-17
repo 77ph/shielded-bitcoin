@@ -26,7 +26,7 @@ built, tested, and run on signet.
 | Wallet: scanning, recovery, selection, anchor policy, locks | §10, §16, §C | encrypted wallet files, CLI |
 | Development boundary: custodial mint and withdraw via payout memos | outside §22.3 | dev-only, documented in `BOUNDARY.md` |
 | Fee funding: fresh addresses, external funding of unfunded carriers, sponsored relayer | §20.5, §22.3 | three models, each with who pays, what it sees, what happens when it is down |
-| Verified sync from an indexer: carriers with BIP 37 proofs, root claims checked | §22.2 (the "verify an indexer's response" option) | `sb serve`, `--chain light:`; the succinct replay proof remains open |
+| Verified sync from an indexer: carriers with BIP 37 proofs, root claims checked | §22.2 (the "verify an indexer's response" option) | `sb serve`, `--chain light:`; the succinct replay proof followed on 29 October (below) |
 | Parameter ceremony: BGM17 phase 1, key derivation checked against arkworks, phase 2, beacon, import of public powers-of-tau transcripts | §A.1 | `sb ceremony`, drills with real beacons, `CEREMONY.md`, `REVIEW-CEREMONY.md` |
 | Static build, CI with coverage gate | — | runs on the server's older glibc |
 
@@ -42,6 +42,7 @@ in `RUNS.md`.
 | Fee-unlock vault as a development scaffold | §20.5, §22.3 | `FEE-VAULT.md`, `sb fee-vault`, deterministic release rule and ledger, backing guard, reclaim, run on the private signet with both endings and every refusal, reviewed (`REVIEW-FEE-VAULT-IMPL.md`) |
 | Publication privacy and wallet policy | §22.3, §20.6 | `PUBLICATION.md`: a SOCKS5 proxy for every outbound connection, a separate publication route, delayed broadcast within the window, a shared anchor depth per deployment, random change placement, the residual surfaces named; tested against an in-process proxy, run on signet through an SSH forward, reviewed (`REVIEW-PUBLICATION-IMPL.md`) |
 | Succinct replay proofs | §22.2 | `REPLAY-PROOF.md`: the completeness result (enumeration cannot be proven short of every raw transaction), the batch circuit over an indexed nullifier tree and a root tree (≈ 217 000 constraints per slot, measured), batched verification, the recursion frontier measured on a two-chain (155 000 constraints per native level); `sb prove-batches` and the `proof:` light client, run on signet (245 blocks, 110 KB against 35 MB); reorganisations on the client's side end to end on the fake chain; reviewed (`REVIEW-REPLAY-PROOF-IMPL.md`) |
+| Variant A, the paper's protocol without a trusted setup (Halo 2 over Pasta), a separate family beside the paper implementation | beyond §22 | `VARIANT-A.md`, `PROFILE-A.md` (a-0.3), `TEST_VECTORS-A.md`, the `sba-*` crates reached through `sb`, run on public signet on the witness carrier (1 November); the accumulated replay proof `REPLAY-PROOF-A.md` as the crate `sba-replay` with `replay-prove` / `replay-decide`, reviewed (S7, 10 November, recorded in the study), run over ten blocks on the private signet and following public signet live since 11 November (`RUNS.md`) |
 
 ## Next
 
@@ -65,19 +66,25 @@ entirely in two circuits over the Pasta cycle, the step `T` designed;
 on 5 November the recursion loop closed and the batch relation built;
 on 10 November the recursion became the crate `sba-replay` with a
 prover and a decider, and one key set carried a chain of three blocks
-on the server — `REPLAY-PROOF-A.md` v0.8 §3.8; the S7 review of all of
-it is with the auditor), code second; the rules for post-paper variants
-in one repository are `VARIANT-A.md` §6. The slice after S7: the chain
-prover and decider in the indexer and the CLI, the chain's state
-persisted between runs, and the chain run block by block on a test
-network (the owner's ruling of 10 November: the post-quantum thread
-waits until every earlier item here is finished). Before that: §22 is exhausted as of
-29 October 2026. The three items that
-could not be implemented end in `REMAINING.md` as demonstrations with
-numbers (smaller proof systems, certified-recipient lineage, the
-PIPE-based boundary), with the conditions under which each reopens;
-`REMAINING.md` §4 maps every item of §22 to where it ends. The project
-is parked here.
+on the server — `REPLAY-PROOF-A.md` §3.8; the S7 review of all of it
+was made on 10 November and is recorded in the study, §3.6 and §3.8),
+code second; the rules for post-paper variants in one repository are
+`VARIANT-A.md` §6. Since then: the chain prover and decider in the CLI
+(`replay-prove`, `replay-decide`), the chain's state and its keys on
+disk between runs, the chain run over ten blocks on the private signet
+and following public signet live since 11 November, a reorganisation
+survived, steps over block ranges (`RUNS.md`, `REPLAY-PROOF-A.md` §3.8–
+3.9). What comes next there: the deployment's transfers on `signet-a-2`
+and the newest step decided from the genesis by a client holding only
+the keys, the adoption decision on the split transcript as profile a-0.4
+(`REPLAY-PROOF-A.md` §3.6, §4), and the S7 review document on its audit
+branch; then the owner's post-quantum thread (ruling of 10 November: it
+waits until every earlier item here is finished). §22 itself is
+exhausted as of 29 October 2026: the three items that could not be
+implemented end in `REMAINING.md` as demonstrations with numbers
+(smaller proof systems, certified-recipient lineage, the PIPE-based
+boundary), with the conditions under which each reopens; `REMAINING.md`
+§4 maps every item of §22 to where it ends.
 
 ## Completed directions, as planned
 
@@ -156,8 +163,10 @@ What gets built:
   and never published, that `h_aux` and the HTLC's hash-lock open to the
   same secret; the alternative, SHA-256 inside the transfer circuit, is
   measured and rejected or adopted on numbers (constraint count, proving
-  time, key size), not by assumption.
-* **The protocol run**: a liquidity-provider role (`sb lp`) and the two
+  time, key size), not by assumption (adopted: the extension circuit
+  computes SHA-256 in circuit, `SWAP.md` §13).
+* **The protocol run**: a liquidity-provider role (`sb lp`; built as the
+  two sides of `sb swap` and `sb htlc`) and the two
   client flows, swap out (shielded → transparent) and swap in
   (transparent → shielded), with an HTLC on signet, timeouts on both
   sides, and the four endings exercised: both claim, both refund, and the
@@ -204,7 +213,8 @@ behaviour side by side, recorded in `RUNS.md`.
   2-chain partner BW6-767 has no FFT-friendly prover, measured), costs
   0.7–7.8 M constraints per step on the alternatives, multiplies every
   envelope's weight by 1.5–22, and presupposes the boundary above
-  (`REMAINING.md` §2).
+  (`REMAINING.md` §2) — on the paper's curve; variant A, on the Pasta
+  cycle, reopens the question (`VARIANT-A.md` §7), as a study first.
 
 ### A thread of the owner's own
 

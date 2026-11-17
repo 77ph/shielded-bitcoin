@@ -759,10 +759,12 @@ pub struct ChainKeys {
 const KEYS_META_VERSION: u8 = 1;
 
 impl ChainKeys {
-    /// Write the four keys and a line of metadata under `dir` (`t_q.vk`,
-    /// `t_q.pk`, `t_p.vk`, `t_p.pk`, `meta`): the keys through the vendored
-    /// `halo2_proofs`' `keys_io` (hundreds of megabytes a proving key at
-    /// k = 18, no cosets), the metadata the sizes and the key set's id.
+    /// Write the four keys, the two parameter sets and a line of metadata
+    /// under `dir` (`t_q.vk`, `t_q.pk`, `t_p.vk`, `t_p.pk`, `t_q.params`,
+    /// `t_p.params`, `meta`): the keys through the vendored `halo2_proofs`'
+    /// `keys_io` (hundreds of megabytes a proving key at k = 18, no
+    /// cosets), the parameters 16 MB each (minutes to make at k = 18, a
+    /// second to read), the metadata the sizes and the key set's id.
     /// The shapes are not written: [`Self::read`] rebuilds them from the
     /// keys, as they are a function of the keys' structure.
     pub fn write(&self, dir: &std::path::Path) -> std::io::Result<()> {

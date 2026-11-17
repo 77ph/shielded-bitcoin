@@ -145,7 +145,7 @@ enum Cmd {
     },
     /// Replay the chain into the local state.
     Sync,
-    /// Prove the next blocks as steps of the accumulated replay proof (docs/REPLAY-PROOF-A.md §3.8): keys made at start (minutes), the chain's own replay and state under the data dir.
+    /// Prove the next blocks as steps of the accumulated replay proof (docs/REPLAY-PROOF-A.md §3.8): the keys read from `replay-<deployment>/keys` under the data dir when present, made and written there once otherwise (minutes); the chain's own replay and state beside them.
     ReplayProve {
         /// How many steps to prove this run (ignored with --follow).
         #[arg(long, default_value_t = 1)]

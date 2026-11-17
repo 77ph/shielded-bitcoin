@@ -11,10 +11,11 @@ interoperability is claimed.
 
 What is in scope of v0.1: the transfer relation and its envelope, keys,
 addresses, notes, the tree, replay acceptance, the deployment profile.
-Out of scope until their own slices: the swap extension (`SWAP.md`), the
-batch circuit and replay proofs (`REPLAY-PROOF.md`), the fee vault's
-signature scheme (`FEE-VAULT.md`, unchanged in principle: it signs
-`h_body` with BIP 340 and never touches the proof system).
+Out of scope until their own slices: the swap extension (`SWAP.md`) and
+the fee vault's signature scheme (`FEE-VAULT.md`, unchanged in principle:
+it signs `h_body` with BIP 340 and never touches the proof system). The
+replay proofs have their variant-A form in `REPLAY-PROOF-A.md` and the
+crate `sba-replay`, built and running but not yet specified here (§15).
 
 ---
 
@@ -280,7 +281,7 @@ and must not share a deployment. The identifier for `k = 14` is pinned in
 
 ```json
 {
-  "profile": "a-0.2",
+  "profile": "a-0.3",
   "family": "a-halo2",
   "name": "signet-a-1",
   "network": "signet",
@@ -351,6 +352,9 @@ families take the next values (`VARIANT-A.md` §6.2).
 
 ### Changelog
 
+* **v0.3, amended** (17 November 2026; editorial, no vector or rule
+  changed) — the example deployment names a-0.3; the scope notes point
+  at the replay proof as built.
 * **v0.3** (4 November 2026) — the proof transcript is a duplex Poseidon
   sponge over `Fq` with 128-bit challenges (§1.1), the prerequisite of an
   in-circuit verifier; proof bytes keep their length, `vk_id` is
@@ -397,7 +401,12 @@ the proof system or the curve; the parts that do:
 
 ## 15. Out of scope of this profile
 
-As `PROFILE.md` §14, plus: the swap extension, the batch circuit and
-replay proofs, and the fee vault's accounting are specified for the
-paper profile only until their variant-A slices exist (`VARIANT-A.md`
-§7, "later").
+As `PROFILE.md` §14, plus: the swap extension and the fee vault's
+accounting are specified for the paper profile only until their
+variant-A slices exist (`VARIANT-A.md` §7, "later"). The accumulated
+replay proof of `REPLAY-PROOF-A.md` is built (`sba-replay`) and runs over
+the deployment's blocks without touching this profile: it consumes
+accepted statements and the state digests, changes no acceptance rule.
+Its step relation, wire format and genesis digest are specified in that
+study (§3.4, §3.5, §3.8) and enter this profile when adopted, with or
+without the split transcript of its §3.6 (a-0.4).
