@@ -226,3 +226,21 @@ envelopes (§22.1), both built, run and reviewed; then the fee-unlock vault
 reviews are the `docs/REVIEW-*.md` files.
 
 Rust 1.85+ (edition 2024).
+
+## License
+
+Copyright 2026 PostCryptum Research (https://postcryptum.io/).
+
+Licensed under the Apache License, Version 2.0 ([LICENSE](LICENSE) or
+http://www.apache.org/licenses/LICENSE-2.0); the documents under `docs/`
+are under the same license. Unless you explicitly state otherwise, any
+contribution intentionally submitted for inclusion in the work by you
+shall be licensed as above, without any additional terms or conditions.
+
+Two directories are derived from Zcash's `halo2` (The Electric Coin
+Company and The Halo 2 developers; MIT OR Apache-2.0 upstream, taken here
+under Apache-2.0): `experiments/halo2_proofs-patched`, a modified copy of
+`halo2_proofs` 0.3.5, and `experiments/vesta-ecc`, a port of the ECC chip
+of `halo2_gadgets` 0.5.0. Each keeps the upstream license texts next to a
+`NOTICE` naming its origin and a `CHANGES.md` stating what was changed;
+the repository's [NOTICE](NOTICE) lists both.

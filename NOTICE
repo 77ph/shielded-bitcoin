@@ -1,0 +1,20 @@
+shielded-bitcoin
+Copyright 2026 PostCryptum Research (https://postcryptum.io/)
+
+Licensed under the Apache License, Version 2.0 (LICENSE). The documents
+under docs/ are under the same license.
+
+This repository includes software derived from Halo 2
+(https://github.com/zcash/halo2), Copyright (c) 2020-2022 The Electric
+Coin Company, Copyright (c) 2022 The Halo 2 developers, licensed by its
+authors under either the MIT license or the Apache License, Version 2.0,
+and redistributed here under the Apache License, Version 2.0:
+
+  experiments/halo2_proofs-patched   a modified copy of the crate
+                                     halo2_proofs 0.3.5 (crates.io)
+  experiments/vesta-ecc              a port of the elliptic-curve chip of
+                                     the crate halo2_gadgets 0.5.0 (crates.io)
+
+Each directory keeps the upstream license texts (LICENSE-MIT,
+LICENSE-APACHE), a NOTICE naming its origin and a CHANGES.md stating what
+was changed, as the Apache License, Section 4, asks.

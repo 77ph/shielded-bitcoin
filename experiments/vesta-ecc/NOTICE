@@ -1,0 +1,13 @@
+This crate is a port of the elliptic-curve chip of the crate
+halo2_gadgets, version 0.5.0 as published on crates.io
+(https://crates.io/crates/halo2_gadgets/0.5.0; source
+https://github.com/zcash/halo2), Copyright (c) 2020-2022 The Electric Coin
+Company, Copyright (c) 2022 The Halo 2 developers.
+
+Upstream offers the crate under either the MIT license (LICENSE-MIT) or
+the Apache License, Version 2.0 (LICENSE-APACHE), at the recipient's
+option; both texts are kept here as received. The port is redistributed
+under the Apache License, Version 2.0. The changes are Copyright (c) 2026
+PostCryptum Research (https://postcryptum.io/), under the Apache License,
+Version 2.0. CHANGES.md states what was changed (Apache License,
+Section 4(b)).

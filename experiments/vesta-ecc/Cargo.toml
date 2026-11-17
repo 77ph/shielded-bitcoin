@@ -2,7 +2,7 @@
 name = "vesta-ecc"
 version = "0.1.0"
 edition = "2021"
-license = "MIT OR Apache-2.0"
+license = "Apache-2.0"
 description = "halo2_gadgets' ECC chip ported from Pallas points in an Fp circuit to Vesta points in an Fq circuit (docs/REPLAY-PROOF-A.md 3.3)"
 
 [dependencies]
