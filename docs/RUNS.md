@@ -499,7 +499,7 @@ for eight of the ten blocks before. `replay-decide --latest`: keys
 not 144; with the measured headroom the relation can take twelve empty
 blocks a step at four slots.
 
-## Public signet, 11–12 November 2026: the replay chain following the network live (deployment `signet-a-2`, activation 330433)
+## Public signet, 11–17 November 2026: the replay chain following the network live (deployment `signet-a-2`, activation 330433)
 
 The chain of `REPLAY-PROOF-A.md` §3.8–3.9 run as a follower of public
 signet, in the server container, by `sb a replay-prove --follow`
@@ -521,5 +521,34 @@ the keys read from disk instead of generated — 660 s, of which the four
 key files 122 s and the rest `Params::new` twice, hence the parameters'
 files now written next to the keys — and the chain taken up at step 60,
 block 330502; from there one step per half hour covering the blocks that
-arrived meanwhile. The events (a mint and two transfers) and the latest
-step decided from the genesis follow when the wallet is funded.
+arrived meanwhile.
+
+**The weekend** (12–14 November): 72 steps (61–132) for blocks
+330502–330796, a step every half hour or every eight quiet blocks,
+whichever came first (that binary's "proved in" still counted the
+settle wait, hence its 2 100–2 300 s against the 350–400 s of proving;
+step 62, cut at once by an event, 346 s). The event was the
+deployment's first: **alice's mint of 3 000 at block 330511**, in step
+62, the wallets' funding having arrived from the owner. **The stop**
+(14 November, 10:23 UTC): for a moment Esplora answered height 330796
+with another hash; the indexer rolled back to 330795 in memory and the
+runner refused to go on below the proven chain. The chain kept the
+proven block (its hash stands at that height on the 17th), and the
+rollback never reached the disk, so nothing was lost; the account is
+in `REPLAY-PROOF-A.md` §3.8. **The restart** (17 November, 09:18 UTC,
+the binary of 52af9f6 with `--confirm 3 --settle 1800`): the keys read
+in 632 s (the parameters made and written this time, 16 MB each; the
+process at 22.0 GB during the read, 12.6 GB proving), the chain taken
+up at step 133 — blocks 330797–330805, nine blocks a step now that
+nothing waits at the tip, proved in 456 s — and the follower catching
+up some 460 blocks at about nine blocks every eight minutes.
+
+**The wallet side.** Replaying the deployment's 800 blocks on the
+laptop in one go met the public Esploras' rate limit (`429`) at
+mempool.space and at blockstream.info alike, every retry starting over
+because the JSON store wrote only at the end of a sync. The HTTP
+client now paces its requests to a remote host (250 ms apart,
+`SB_HTTP_PACE_MS`; loopback never paced) and waits a `429` out as the
+server's `Retry-After` asks, and a replay saves its progress every 32
+blocks. The transfers (alice to bob 1 200, alice to the operator 800)
+and the latest step decided from the genesis follow.

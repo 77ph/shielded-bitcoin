@@ -23,11 +23,17 @@ pub trait StateStore {
 
 pub struct JsonStore {
     pub path: PathBuf,
+    /// Blocks committed since the file was last written.
+    unsaved: usize,
 }
+
+/// A long replay saves its progress every so many blocks, so that a
+/// sync cut short (a rate limit, a lost connection) resumes from there.
+const SAVE_EVERY: usize = 32;
 
 impl JsonStore {
     pub fn new(path: PathBuf) -> Self {
-        JsonStore { path }
+        JsonStore { path, unsaved: 0 }
     }
 }
 
@@ -40,7 +46,11 @@ impl StateStore for JsonStore {
         }
     }
 
-    fn commit_block(&mut self, _state: &ReplayState, _index: usize) -> Result<(), StoreError> {
+    fn commit_block(&mut self, state: &ReplayState, _index: usize) -> Result<(), StoreError> {
+        self.unsaved += 1;
+        if self.unsaved >= SAVE_EVERY {
+            self.flush(state)?;
+        }
         Ok(())
     }
 
@@ -49,6 +59,8 @@ impl StateStore for JsonStore {
     }
 
     fn flush(&mut self, state: &ReplayState) -> Result<(), StoreError> {
-        Ok(state.save(&self.path)?)
+        state.save(&self.path)?;
+        self.unsaved = 0;
+        Ok(())
     }
 }

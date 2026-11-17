@@ -9,8 +9,8 @@
 
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
-use std::sync::OnceLock;
-use std::time::Duration;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use crate::chain::ChainError;
 
@@ -252,5 +252,145 @@ mod tests {
             e.to_string().contains("refused") || e.to_string().contains("os error"),
             "{e}"
         );
+    }
+}
+
+static LAST_REQUEST: Mutex<Option<(String, Instant)>> = Mutex::new(None);
+
+/// The host of `url` (`https://host:port/path` → `host`), lower-cased.
+fn host_of(url: &str) -> String {
+    let rest = url.split_once("://").map(|(_, r)| r).unwrap_or(url);
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let authority = authority
+        .rsplit_once('@')
+        .map(|(_, h)| h)
+        .unwrap_or(authority);
+    let host = if let Some(end) = authority.strip_prefix('[').and_then(|a| a.find(']')) {
+        &authority[1..=end]
+    } else {
+        authority.split(':').next().unwrap_or("")
+    };
+    host.to_ascii_lowercase()
+}
+
+fn is_local(host: &str) -> bool {
+    host == "localhost"
+        || host.starts_with("127.")
+        || host == "[::1]"
+        || host == "::1"
+        || host.ends_with(".localhost")
+}
+
+/// The minimum gap between two requests to the same remote host:
+/// `SB_HTTP_PACE_MS` (default 250 ms; 0 switches the pacing off). Local
+/// hosts (loopback) are never paced.
+fn pace() -> Duration {
+    static PACE: OnceLock<Duration> = OnceLock::new();
+    *PACE.get_or_init(|| {
+        let ms = std::env::var("SB_HTTP_PACE_MS")
+            .ok()
+            .and_then(|s| s.trim().parse::<u64>().ok())
+            .unwrap_or(250);
+        Duration::from_millis(ms)
+    })
+}
+
+fn paced(host: &str) {
+    let gap = pace();
+    if gap.is_zero() || is_local(host) {
+        return;
+    }
+    let wait = {
+        let mut last = LAST_REQUEST.lock().unwrap_or_else(|p| p.into_inner());
+        let now = Instant::now();
+        let wait = match &*last {
+            Some((h, at)) if h == host => gap.saturating_sub(now.duration_since(*at)),
+            _ => Duration::ZERO,
+        };
+        *last = Some((host.to_string(), now + wait));
+        wait
+    };
+    if !wait.is_zero() {
+        std::thread::sleep(wait);
+    }
+}
+
+/// How long a `429`/`503` asks us to wait: its `Retry-After` in seconds
+/// (capped at two minutes), else a doubling back-off from ten seconds.
+fn retry_after(r: &ureq::Response, attempt: u32) -> Duration {
+    let asked = r
+        .header("retry-after")
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .map(|s| Duration::from_secs(s.clamp(1, 120)));
+    asked.unwrap_or_else(|| Duration::from_secs((10u64 << attempt).min(120)))
+}
+
+/// `GET url` through the agent, paced per remote host and patient with a
+/// rate limit: a `429 Too Many Requests` (or a `503`) is retried after
+/// the server's `Retry-After`, or a doubling back-off, up to six times.
+/// Any other status is returned to the caller as `ureq::Error::Status`.
+// the agent's own error type, so that callers keep their conversions
+#[allow(clippy::result_large_err)]
+pub fn get(url: &str) -> Result<ureq::Response, ureq::Error> {
+    let host = host_of(url);
+    let mut attempt = 0u32;
+    loop {
+        paced(&host);
+        match agent().get(url).call() {
+            Err(ureq::Error::Status(code @ (429 | 503), r)) if attempt < 6 => {
+                let wait = retry_after(&r, attempt);
+                log::warn!(
+                    "{host}: {code} {}; retrying in {} s (attempt {})",
+                    r.status_text(),
+                    wait.as_secs(),
+                    attempt + 1
+                );
+                std::thread::sleep(wait);
+                attempt += 1;
+            }
+            other => return other,
+        }
+    }
+}
+
+#[cfg(test)]
+mod pace_tests {
+    use super::*;
+
+    #[test]
+    fn hosts_are_parsed_and_local_ones_recognised() {
+        assert_eq!(
+            host_of("https://mempool.space/signet/api/tx"),
+            "mempool.space"
+        );
+        assert_eq!(
+            host_of("http://127.0.0.1:38945/block-height/1"),
+            "127.0.0.1"
+        );
+        assert_eq!(host_of("http://[::1]:8080/x"), "::1");
+        assert_eq!(
+            host_of("https://user:pw@Blockstream.info/api"),
+            "blockstream.info"
+        );
+        assert!(is_local("localhost"));
+        assert!(is_local("127.0.0.1"));
+        assert!(is_local("[::1]"));
+        assert!(!is_local("mempool.space"));
+    }
+
+    #[test]
+    fn remote_hosts_are_paced_local_ones_not() {
+        let t = Instant::now();
+        for _ in 0..5 {
+            paced("127.0.0.1");
+        }
+        assert!(t.elapsed() < Duration::from_millis(100));
+        // a change of host is not paced; the same remote host twice is
+        let t = Instant::now();
+        paced("a.example");
+        paced("b.example");
+        paced("b.example");
+        let gap = pace();
+        assert!(gap.is_zero() || t.elapsed() >= gap, "{:?}", t.elapsed());
     }
 }

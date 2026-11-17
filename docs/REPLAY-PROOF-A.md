@@ -1172,9 +1172,17 @@ the 660 s was `Params::new` at k = 18 twice: hashing 2^18 points to the
 curve is minutes, not seconds. So the parameters are now written next to
 the keys (16 MB each, a second to read; made and written when missing),
 and reading a key set should come to about the key files' two minutes on
-this host — the figure of the next restart. The cosets' FFTs (one minute
-of the two) remain the lever after that: writing them would be ten
-gigabytes a key set.
+this host. The restart of 17 November (host load about 12) still had the
+parameters to make — 632 s in all: the parameters and the four key files
+571 s (the files 131 s of it: `T_q` 56 s, `T_p` 75 s, the cosets' FFTs
+two thirds of each), the transfer key and padding 48 s, the shapes 10 s,
+the dummy step 2.7 s — and wrote them (16 MB each), so the figure of a
+restart with everything on disk is still to be taken. The reader's
+memory is the other figure: the process peaked at 22.0 GB during the
+read (the parameters' construction on top of a key set's cosets) in a
+24 GB container, and stands at 12.6 GB while proving. The cosets' FFTs
+(a minute of the two) remain the lever after that: writing them would
+be ten gigabytes a key set.
 
 **Reorganisations** (`chain.rs`, `sb a replay-prove --confirm`, 17
 November) [built]. The live follower of `RUNS.md` stopped on 14 November
@@ -1196,6 +1204,17 @@ Nothing of a step depends on anything but the proofs on disk and the
 keys, which is what makes the rewind possible without a saved history of
 states. The chain test replaces block 1002 after proving it, sees the
 runner report the fork, rewinds to step 2 and proves the replacement.
+What the 14 November stop had been [measured, 17 November]: a flicker
+of the tip, not a lost block. For a moment Esplora answered height
+330796 with another hash; the indexer rolled back in memory and the
+runner stopped; the chain kept the block the step had proven — its hash
+stands at that height three days later — and the JSON store writes only
+at the end of a sync, so the rollback never reached the disk. The
+restart found the indexer at the proven block and went on with step 133
+without a rewind, which is the right outcome for that event, reached by
+accident; with the confirmation depth the block would not have been
+proven until three stood above it, and the flicker would have passed
+unseen. The rewind itself has run on the mock chain only.
 
 **Reviewed** (S7, 10 November 2026, the auditor's firsthand pass at
 664d013 and 50fdca6, the document to follow on an audit branch at the

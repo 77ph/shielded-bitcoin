@@ -1,5 +1,8 @@
 //! Esplora HTTP chain source (mempool.space, blockstream.info or a local
-//! instance). Raw blocks come from `/block/<hash>/raw`.
+//! instance). Raw blocks come from `/block/<hash>/raw`. Requests go
+//! through [`crate::net::get`]: paced per remote host and retried on a
+//! rate limit (`429`), which the public instances answer to a wallet
+//! replaying hundreds of blocks in one go.
 
 use std::io::Read;
 
@@ -21,10 +24,7 @@ impl Esplora {
     }
 
     fn get_text(&self, path: &str) -> Result<Option<String>, ChainError> {
-        match crate::net::agent()
-            .get(&format!("{}{}", self.base, path))
-            .call()
-        {
+        match crate::net::get(&format!("{}{}", self.base, path)) {
             Ok(r) => Ok(Some(r.into_string()?)),
             Err(ureq::Error::Status(404, _)) => Ok(None),
             Err(e) => Err(e.into()),
@@ -61,9 +61,7 @@ impl ChainSource for Esplora {
     }
 
     fn block(&self, hash: &BlockHash) -> Result<Block, ChainError> {
-        let resp = crate::net::agent()
-            .get(&format!("{}/block/{hash}/raw", self.base))
-            .call()?;
+        let resp = crate::net::get(&format!("{}/block/{hash}/raw", self.base))?;
         let mut bytes = Vec::new();
         resp.into_reader().take(64 << 20).read_to_end(&mut bytes)?;
         deserialize(&bytes).map_err(|e| ChainError::Decode(e.to_string()))
