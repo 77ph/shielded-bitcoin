@@ -1176,13 +1176,18 @@ this host. The restart of 17 November (host load about 12) still had the
 parameters to make — 632 s in all: the parameters and the four key files
 571 s (the files 131 s of it: `T_q` 56 s, `T_p` 75 s, the cosets' FFTs
 two thirds of each), the transfer key and padding 48 s, the shapes 10 s,
-the dummy step 2.7 s — and wrote them (16 MB each), so the figure of a
-restart with everything on disk is still to be taken. The reader's
-memory is the other figure: the process peaked at 22.0 GB during the
-read (the parameters' construction on top of a key set's cosets) in a
-24 GB container, and stands at 12.6 GB while proving. The cosets' FFTs
-(a minute of the two) remain the lever after that: writing them would
-be ten gigabytes a key set.
+the dummy step 2.7 s — and wrote them (16 MB each). **The restart with
+everything on disk** (the same day, 12:02 UTC, host load about 12):
+**205 s** — the parameters and the four key files 141 s (the parameters'
+two files seconds of it; `T_q`'s key 54 s, `T_p`'s 71 s, the cosets'
+FFTs two thirds of each), the transfer key and padding 53 s, the shapes
+7.4 s, the dummy step 2.8 s — against 1 286 s to generate the set on this
+host: six times faster, and the first step followed 324 s later. Memory
+is the other figure: the process stands at 10.7 GB between steps (the
+key set with its cosets) and peaks at 22.3 GB while proving a step, in a
+24 GB container — the proving's scratch, not the read, sets the box. The
+cosets' FFTs (a minute of the two) and the transfer key's generation
+remain the levers: writing the cosets would be ten gigabytes a key set.
 
 **Reorganisations** (`chain.rs`, `sb a replay-prove --confirm`, 17
 November) [built]. The live follower of `RUNS.md` stopped on 14 November
