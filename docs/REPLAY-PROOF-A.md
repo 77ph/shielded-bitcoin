@@ -1,4 +1,4 @@
-# Succinct replay proofs for variant A (study, draft v0.9)
+# Succinct replay proofs for variant A (study, draft v0.10)
 
 Status: a study; its code is the crate `sba-replay` (§3.8) over the
 vendored `experiments/halo2_proofs-patched` and `experiments/vesta-ecc`,
@@ -689,7 +689,7 @@ through it (10 November): the newest step alone — two proofs, two
 instances, the slot statements and the opening, 69 716 bytes measured —
 is decided from the keys and the deployment's genesis digest.
 
-### 3.6 Fewer values across the cycle: the split transcript [built, measured; adoption as a-0.4 undecided]
+### 3.6 Fewer values across the cycle: the split transcript [built, measured; not adopted as a-0.4, the owner's decision of 11 November 2026]
 
 Of the 221 values `T_q` exposes for one transfer proof, 83 are the
 proof's evaluations and 93 the scalars of the final multiplication;
@@ -797,7 +797,11 @@ evaluation — while the rows are still the relation's. The gain is on
 the client's side (the wire, the decider's instance) and in `T_q`;
 the prover pays for it. Which way to adopt it — as a-0.4 for the
 transfer proofs (and the recursion's own proofs by the mirrored rule)
-or not — is the owner's decision; the numbers are these.
+or not — is the owner's decision; the numbers are these. **Not
+adopted** (the owner, 11 November 2026): a-0.3 stays the family's
+transcript and the chain of §3.8 runs under it; the split stays here
+as a measured option, with the code that built it, for the day the
+client's side outweighs the prover's.
 
 **Reviewed** (S7, 10 November 2026, the auditor's firsthand pass at
 09f5fa9; the review document follows on an audit branch at the owner's
@@ -1342,9 +1346,13 @@ as it was; this section and its implementation go to the next batch.
   constant size, the confirmation depth and the rewind after a
   reorganisation, steps over block ranges (§3.8, §3.9), and the chain
   following public signet live since 11 November (`RUNS.md`).
-* **What remains:** the adoption decision on a-0.4 (§3.6); the
-  deployment's transfers carried in a step and the newest step decided
-  from the genesis by a client holding the keys alone (`RUNS.md`).
+* **Decided, 11 November, and done, 17 November:** the split
+  transcript is not adopted — a-0.3 stays the family's transcript and
+  §3.6 stays a measured option (the owner's decision: the prover's cost
+  against the client's gain); the deployment's transfers were carried in
+  steps and the newest step decided from the genesis by a client holding
+  the keys alone (`RUNS.md`, 17 November). What remains of the study is
+  the S7 review document on its audit branch.
 * **Not now:** Nova or any folding library, for the reason in §3.2
   (porting `T` before the gadget was measured was the other item here;
   both happened, in that order, §3.3 then §3.7).
@@ -1372,6 +1380,10 @@ as it was; this section and its implementation go to the next batch.
 
 ## 6. Changelog
 
+* **v0.10** (18 November 2026) — the split transcript's adoption
+  recorded as decided: not adopted as a-0.4 (the owner, 11 November),
+  §3.6 and §4; §4's remaining items closed by the 17 November runs
+  (`RUNS.md`); editorial, no figure changed.
 * **v0.9** (17 November 2026) — §3.8 carried to the code as it stands:
   keys and parameters on disk (`keys_io`, 11 November; the restart with
   everything on disk measured), the confirmation depth and the rewind

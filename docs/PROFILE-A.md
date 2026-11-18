@@ -352,6 +352,8 @@ families take the next values (`VARIANT-A.md` §6.2).
 
 ### Changelog
 
+* **v0.3, amended** (18 November 2026; editorial) — the scope notes
+  record that the split transcript (a-0.4) is not adopted.
 * **v0.3, amended** (17 November 2026; editorial, no vector or rule
   changed) — the example deployment names a-0.3; the scope notes point
   at the replay proof as built.
@@ -408,5 +410,6 @@ replay proof of `REPLAY-PROOF-A.md` is built (`sba-replay`) and runs over
 the deployment's blocks without touching this profile: it consumes
 accepted statements and the state digests, changes no acceptance rule.
 Its step relation, wire format and genesis digest are specified in that
-study (§3.4, §3.5, §3.8) and enter this profile when adopted, with or
-without the split transcript of its §3.6 (a-0.4).
+study (§3.4, §3.5, §3.8) and enter this profile when adopted. The
+split transcript of its §3.6 (a-0.4) is not adopted (the owner,
+11 November 2026): a-0.3 stays this family's transcript.

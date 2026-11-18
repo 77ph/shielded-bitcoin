@@ -42,7 +42,7 @@ in `RUNS.md`.
 | Fee-unlock vault as a development scaffold | §20.5, §22.3 | `FEE-VAULT.md`, `sb fee-vault`, deterministic release rule and ledger, backing guard, reclaim, run on the private signet with both endings and every refusal, reviewed (`REVIEW-FEE-VAULT-IMPL.md`) |
 | Publication privacy and wallet policy | §22.3, §20.6 | `PUBLICATION.md`: a SOCKS5 proxy for every outbound connection, a separate publication route, delayed broadcast within the window, a shared anchor depth per deployment, random change placement, the residual surfaces named; tested against an in-process proxy, run on signet through an SSH forward, reviewed (`REVIEW-PUBLICATION-IMPL.md`) |
 | Succinct replay proofs | §22.2 | `REPLAY-PROOF.md`: the completeness result (enumeration cannot be proven short of every raw transaction), the batch circuit over an indexed nullifier tree and a root tree (≈ 217 000 constraints per slot, measured), batched verification, the recursion frontier measured on a two-chain (155 000 constraints per native level); `sb prove-batches` and the `proof:` light client, run on signet (245 blocks, 110 KB against 35 MB); reorganisations on the client's side end to end on the fake chain; reviewed (`REVIEW-REPLAY-PROOF-IMPL.md`) |
-| Variant A, the paper's protocol without a trusted setup (Halo 2 over Pasta), a separate family beside the paper implementation | beyond §22 | `VARIANT-A.md`, `PROFILE-A.md` (a-0.3), `TEST_VECTORS-A.md`, the `sba-*` crates reached through `sb`, run on public signet on the witness carrier (1 November); the accumulated replay proof `REPLAY-PROOF-A.md` as the crate `sba-replay` with `replay-prove` / `replay-decide`, reviewed (S7, 10 November, recorded in the study), run over ten blocks on the private signet and following public signet live since 11 November (`RUNS.md`) |
+| Variant A, the paper's protocol without a trusted setup (Halo 2 over Pasta), a separate family beside the paper implementation | beyond §22 | `VARIANT-A.md`, `PROFILE-A.md` (a-0.3), `TEST_VECTORS-A.md`, the `sba-*` crates reached through `sb`, run on public signet on the witness carrier (1 November); the accumulated replay proof `REPLAY-PROOF-A.md` as the crate `sba-replay` with `replay-prove` / `replay-decide`, reviewed (S7, 10 November, recorded in the study), run over ten blocks on the private signet and following public signet live since 11 November; the deployment's transfers carried in steps and the newest step decided from the genesis by a client holding the keys alone, 17 November (`RUNS.md`) |
 
 ## Next
 
@@ -74,10 +74,11 @@ code second; the rules for post-paper variants in one repository are
 disk between runs, the chain run over ten blocks on the private signet
 and following public signet live since 11 November, a reorganisation
 survived, steps over block ranges (`RUNS.md`, `REPLAY-PROOF-A.md` §3.8–
-3.9). What comes next there: the deployment's transfers on `signet-a-2`
-and the newest step decided from the genesis by a client holding only
-the keys, the adoption decision on the split transcript as profile a-0.4
-(`REPLAY-PROOF-A.md` §3.6, §4), and the S7 review document on its audit
+3.9); on 17 November the deployment's transfers on `signet-a-2`
+carried in steps and the newest step decided from the genesis by a
+client holding only the keys (`RUNS.md`); the split transcript not
+adopted as profile a-0.4 (the owner, 11 November; `REPLAY-PROOF-A.md`
+§3.6, §4). What remains there is the S7 review document on its audit
 branch; then the owner's post-quantum thread (ruling of 10 November: it
 waits until every earlier item here is finished). §22 itself is
 exhausted as of 29 October 2026: the three items that could not be
