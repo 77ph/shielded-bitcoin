@@ -1,4 +1,4 @@
-# Succinct replay proofs for variant A (study, draft v0.10)
+# Succinct replay proofs for variant A (study, draft v0.11)
 
 Status: a study; its code is the crate `sba-replay` (§3.8) over the
 vendored `experiments/halo2_proofs-patched` and `experiments/vesta-ecc`,
@@ -644,7 +644,15 @@ the decider reads them by the `q` group side's layout
 (`claims_of`), then verifies `T_q` natively in full, `T_p` with those
 claims, and checks `T_p`'s last three public values — `s_prev` is the
 client's own state digest, `D` is the client's own digest of the
-slots, `s_next` is the opening's digest. Measured for the two-transfer
+slots, `s_next` is the opening's digest. The step's heights on the
+wire are labels, not public inputs; the decider checks them against
+the opening's height, which `s_next` binds (the opening stands at the
+block after the step's last), before any proof, and returns the
+opening's (the review of 19 November 2026, F-A2-1: `decide_latest` and
+the prover's rewind state read the wire's height until then — a wrong
+label at most, since the client's state keeps the step index and the
+digest, and the prover's rewind reconciles against the indexer).
+Measured for the two-transfer
 block (the server): **57 076 bytes** on the wire — `T_q`'s 442 public
 inputs (14 KB) and proof (5 KB), `T_p`'s 877 (28 KB) and proof (8 KB),
 the three slots (1.5 KB) — read back and decided in **1.2 s**. What does
@@ -1380,6 +1388,11 @@ as it was; this section and its implementation go to the next batch.
 
 ## 6. Changelog
 
+* **v0.11** (19 November 2026) — the decider checks the wire's heights
+  against the opening's (F-A2-1 of the auditor's 19 November pass, a
+  binding-hygiene finding, no soundness impact), §3.4; the §3.9 prefix
+  refused in the circuit for a swapped and a misplaced prefix as well as
+  a dropped one (the review's coverage residual).
 * **v0.10** (18 November 2026) — the split transcript's adoption
   recorded as decided: not adopted as a-0.4 (the owner, 11 November),
   §3.6 and §4; §4's remaining items closed by the 17 November runs

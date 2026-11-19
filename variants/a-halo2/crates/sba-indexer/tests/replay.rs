@@ -110,6 +110,10 @@ fn mint_spend_reject_reorg_and_persist() {
     assert_eq!(idx.state.tree.size(), 1);
     assert!(idx.state.nullifiers.is_empty());
     assert_eq!(idx.state.events.len(), 1);
+    // the rolled-back state is a fresh replay of the reorganised chain
+    let mut again = w.indexer();
+    again.sync(&chain).unwrap();
+    assert_eq!(again.state, idx.state);
     // the orphaned transfer is valid again on the new branch
     assert!(idx.check_transfer(&bytes, 1003).unwrap().is_some());
 }

@@ -1361,11 +1361,37 @@ mod tests {
             ..circuit.clone()
         };
         assert!(
-            MockProver::run(k, &bad, vec![instance])
+            MockProver::run(k, &bad, vec![instance.clone()])
                 .unwrap()
                 .verify()
                 .is_err(),
             "a dropped empty block is refused in the circuit too"
+        );
+        let bad = BatchCircuit {
+            witness: Some(swapped),
+            ..circuit.clone()
+        };
+        assert!(
+            MockProver::run(k, &bad, vec![instance.clone()])
+                .unwrap()
+                .verify()
+                .is_err(),
+            "a swapped prefix is refused in the circuit too"
+        );
+        // a prefix after statements were applied: the instance's s_prev is
+        // that opening's digest, so only the prefix rule can refuse it
+        let mut mid_instance = instance;
+        mid_instance[0] = mid.prev.digest();
+        let bad = BatchCircuit {
+            witness: Some(mid),
+            ..circuit
+        };
+        assert!(
+            MockProver::run(k, &bad, vec![mid_instance])
+                .unwrap()
+                .verify()
+                .is_err(),
+            "a prefix after statements were applied is refused in the circuit too"
         );
     }
 

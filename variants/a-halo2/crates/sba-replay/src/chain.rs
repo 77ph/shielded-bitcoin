@@ -1961,12 +1961,35 @@ pub fn claims_of_step(
     Ok((claim_q_prev, claims))
 }
 
+/// The step's heights on the wire against the opening after it. The
+/// opening's height is inside its digest, which is `s_next`, a public
+/// input of the proof; the wire's `height` and `first_height` are not,
+/// so a decider that read them would read a label anyone can rewrite.
+/// The opening stands at the block after the step's last, and the first
+/// block of the step is not above the last. Checked before any proof.
+pub fn check_heights(step: &ProvenStep) -> Result<(), String> {
+    if step.height.checked_add(1) != Some(step.opening_after.height) {
+        return Err(format!(
+            "the step's height {} is not the opening's ({}, the block after the step)",
+            step.height, step.opening_after.height
+        ));
+    }
+    if step.first_height > step.height {
+        return Err(format!(
+            "the step's first block {} is above its last {}",
+            step.first_height, step.height
+        ));
+    }
+    Ok(())
+}
+
 impl ChainKeys {
     /// The prover's state right after `step` (the `index`-th), from the
     /// step alone: its two proofs captured again with the claims they
     /// opened — what the prover saved then, rebuilt — so a chain can be
     /// rewound to any step on disk (a reorganisation below later steps).
     pub fn state_of_step(&self, step: &ProvenStep, index: u32) -> Result<ChainState, String> {
+        check_heights(step)?;
         let (claim_q_prev, claims) = claims_of_step(self, step)?;
         let cap_q = capture(
             &self.outer,
@@ -1988,7 +2011,7 @@ impl ChainKeys {
         Ok(ChainState {
             keys_id: self.id(),
             index,
-            next_height: step.height + 1,
+            next_height: step.opening_after.height,
             s: step.instance_p[n - 3],
             cap_q,
             cap_p,
@@ -2027,8 +2050,10 @@ impl ChainDecider<'_> {
     /// of the public inputs: `T_q(i)` with `T_q(i−1)`'s claim (re-exposed
     /// from `T_p(i−1)`'s instance), `T_p(i)` with the transfers' claims and
     /// `T_p(i−1)`'s (from `T_q(i)`'s instance); both keys' commitments
-    /// against the deployment's.
+    /// against the deployment's. First the wire's heights against the
+    /// opening's ([`check_heights`]).
     fn verify(&self, step: &ProvenStep) -> Result<(), String> {
+        check_heights(step)?;
         let k = self.keys;
         let sq = &k.step_q;
         let sp = &k.step_p;
@@ -2081,11 +2106,12 @@ impl ChainDecider<'_> {
     /// genesis digest: the step's `g` must be the genesis — the base step
     /// set it to its `s_prev` and every step since carried it — so one
     /// step attests the whole history from the genesis. Returns the
-    /// block height and the state digest after it.
+    /// block height and the state digest after it — the height from the
+    /// opening, which `s_next` binds, not from the wire.
     pub fn decide_latest(&self, step: &ProvenStep) -> Result<(u32, Fp), String> {
         self.verify(step)?;
         let (_, s_next) = self.public_values(step)?;
-        Ok((step.height, s_next))
+        Ok((step.opening_after.height - 1, s_next))
     }
 
     /// Both proofs verified with the claims and keys read out of the
@@ -2111,6 +2137,57 @@ impl ChainDecider<'_> {
 #[cfg(test)]
 mod chain_tests {
     use super::*;
+
+    /// The wire's heights against the opening's, before any proof: the
+    /// opening stands at the block after the step, the first block is not
+    /// above the last; each off by one is refused.
+    #[test]
+    fn the_wire_heights_are_checked_against_the_opening() {
+        let step = ProvenStep {
+            first_height: 1001,
+            height: 1003,
+            slots: vec![None, None],
+            opening_after: sba_core::batch::StateOpening {
+                root: Fp::from(1u64),
+                size: 2,
+                nf_root: Fp::from(3u64),
+                nf_size: 4,
+                h_root: Fp::from(5u64),
+                height: 1004,
+                applied: 0,
+            },
+            instance_q: vec![],
+            proof_q: vec![],
+            instance_p: vec![],
+            proof_p: vec![],
+        };
+        assert_eq!(check_heights(&step), Ok(()));
+        let mut bad = step.clone();
+        bad.height = 1004;
+        assert!(
+            check_heights(&bad).is_err(),
+            "the wire's height above the opening's"
+        );
+        bad.height = 1002;
+        assert!(check_heights(&bad).is_err(), "below it");
+        let mut bad = step.clone();
+        bad.opening_after.height = 1003;
+        assert!(
+            check_heights(&bad).is_err(),
+            "the opening at the step's own block"
+        );
+        let mut bad = step.clone();
+        bad.first_height = 1004;
+        assert!(
+            check_heights(&bad).is_err(),
+            "the first block above the last"
+        );
+        bad.first_height = 1003;
+        assert_eq!(check_heights(&bad), Ok(()), "one block");
+        let mut bad = step;
+        bad.height = u32::MAX;
+        assert!(check_heights(&bad).is_err(), "no wrap");
+    }
 
     /// The verifier mirror takes one instance column: the relation shares
     /// the step's.
@@ -2317,6 +2394,24 @@ mod chain_tests {
             decider.decide_latest(&other).is_err(),
             "g is a public input of the proof"
         );
+        // the heights on the wire are labels: the decider checks them
+        // against the opening's, which s_next binds, both ways
+        let mut mislabelled = step3.clone();
+        mislabelled.height = 1003;
+        assert!(
+            decider.decide_latest(&mislabelled).is_err(),
+            "a wire height off the opening's"
+        );
+        assert!(decider.decide(&mislabelled, 3, o1.digest()).is_err());
+        assert!(keys.state_of_step(&mislabelled, 3).is_err());
+        let mut mislabelled = step3.clone();
+        mislabelled.opening_after.height = 1004;
+        assert!(
+            decider.decide_latest(&mislabelled).is_err(),
+            "an opening height off the wire's (and off s_next)"
+        );
+        assert!(keys.state_of_step(&mislabelled, 3).is_err());
+        assert!(keys.state_of_step(&step3, 3).is_ok());
         // a reorganisation: block 1002 replaced by another (a mint only); the
         // runner reports it, the chain is rewound to step 2 from its proof on
         // disk, and the new block 1002 becomes the new step 3
