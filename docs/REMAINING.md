@@ -468,8 +468,10 @@ Read in full for this document; ePrint PDFs were obtained from the
 archive's own URLs through a web archive mirror because eprint.iacr.org
 refuses non-browser clients.
 
-* [SB26] alloc-init, *Shielded Bitcoin: Private Transfers on the
-  Bitcoin L1*, 24 September 2026. §14.3, §20.4, §22, Appendix D.
+* [SB26] Shikhelman, Komarov, Moskvin (alloc-init), *Shielded Bitcoin:
+  Private Transfers on the Bitcoin L1*, 24 September 2026; IACR ePrint
+  2026/2749 since November 2026. §14.3, §20.4, §22, Appendix D of the
+  24 September version.
 * [2026/186] Abdalla, Carmer, El Gebali, Kilinc-Alper, Komarov, Rebenko,
   Soukhanov, Tairi, Tatuzova, Towa, *Bitcoin PIPEs v2*. §1, §2, §5,
   §5.3.1, §5.4, §7.

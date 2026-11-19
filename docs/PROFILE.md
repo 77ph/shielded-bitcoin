@@ -6,8 +6,9 @@ require a new protocol version byte.
 
 This document fixes every parameter that the paper
 [*Shielded Bitcoin: Private Transfers on the Bitcoin L1*](https://www.allocinit.xyz/uploads/shielded-bitcoin.pdf)
-(Shikhelman, Komarov, Moskvin, 24 Sep 2026) leaves to an "implementation
-profile" (paper §A, §22.1). Section numbers below refer to the paper.
+(Shikhelman, Komarov, Moskvin, 24 Sep 2026; IACR ePrint 2026/2749 since
+November 2026) leaves to an "implementation profile" (paper §A, §22.1).
+Section numbers below refer to the paper's 24 September version.
 Where this profile departs from a recommended default of the paper, the
 departure is listed in §10 with its reason.
 
