@@ -4,8 +4,8 @@ An independent implementation of
 [**Shielded Bitcoin: Private Transfers on the Bitcoin L1**](https://eprint.iacr.org/2026/2749)
 (Shikhelman, Komarov, Moskvin; IACR ePrint 2026/2749, November 2026; first
 published by [alloc] init on 24 September 2026 as a
-[PDF](https://www.allocinit.xyz/uploads/shielded-bitcoin.pdf), the version
-whose section numbers the documents here cite).
+[PDF](https://www.allocinit.xyz/uploads/shielded-bitcoin.pdf); the ePrint
+version keeps that version's section numbering, which the documents here cite).
 
 Shielded Bitcoin is a *metaprotocol*: encrypted notes, nullifiers and Groth16
 transfer proofs are published in a single `OP_RETURN` output of an ordinary

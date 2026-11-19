@@ -364,8 +364,8 @@ implementation of the paper? Rules this repository adopts:
 
 ## 8. Sources
 
-* The paper [SB26] (Shikhelman, Komarov, Moskvin; IACR ePrint 2026/2749;
-  section numbers of the 24 September 2026 version): §8.4, §9, §12.1,
+* The paper [SB26] (Shikhelman, Komarov, Moskvin; IACR ePrint 2026/2749,
+  the same section numbering as the 24 September 2026 version): §8.4, §9, §12.1,
   §14.3, §20.4, §22.1, §22.2, §22.4, §A, §D.
 * This repository: `PROFILE.md`, `CEREMONY.md`, `WITNESS-CARRIER.md`
   §6, `REPLAY-PROOF.md` §4.4, `REMAINING.md` §1–2, `POST-QUANTUM.md`
