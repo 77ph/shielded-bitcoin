@@ -1226,7 +1226,13 @@ depth**: a block is proven only when `confirm` blocks stand above it
 (three by default), so a step is never cut at the very tip and a short
 reorganisation touches nothing proven; the settle wait then waits for
 confirmed blocks. And a **rewind**: a reorganisation deeper than that is
-reported as its own error with the last height still on the chain; the
+reported as its own error with the last height still on the chain (at
+the runner's first look after it, a ready block or none: before it says
+nothing is ready it checks that the last replayed block is still on the
+chain — until 19 November it looked only when syncing a ready block, so
+a proven block replaced at the same height went unseen until the block
+after it was confirmed; the chain test's reorganisation, written on
+17 November, found it the first time it ran); the
 CLI takes the last step at or below it from disk, rebuilds the prover's
 state from that step alone — its two proofs captured again with the
 claims they opened, read out of their public inputs as the decider reads
@@ -1392,7 +1398,10 @@ as it was; this section and its implementation go to the next batch.
   against the opening's (F-A2-1 of the auditor's 19 November pass, a
   binding-hygiene finding, no soundness impact), §3.4; the §3.9 prefix
   refused in the circuit for a swapped and a misplaced prefix as well as
-  a dropped one (the review's coverage residual).
+  a dropped one (the review's coverage residual). The runner reports a
+  reorganisation of the replayed blocks at its first look, not at the
+  next ready block (the chain test's reorganisation run for the first
+  time, §3.8).
 * **v0.10** (18 November 2026) — the split transcript's adoption
   recorded as decided: not adopted as a-0.4 (the owner, 11 November),
   §3.6 and §4; §4's remaining items closed by the 17 November runs

@@ -1793,7 +1793,11 @@ impl From<String> for StepError {
 /// step and the time spent waiting. The indexer must stand exactly where
 /// the prover does (`reconcile`); a reorganisation below the proven chain
 /// is [`StepError::Reorg`] — the caller rewinds to the last step still on
-/// the chain (`ChainKeys::state_of_step`) and goes on.
+/// the chain (`ChainKeys::state_of_step`) and goes on. It is seen at the
+/// first call after it, ready block or none: before `None` the runner
+/// checks that the last replayed block is still on the chain
+/// ([`reorg_below`]), since the sync that would notice runs only for a
+/// ready block.
 #[allow(clippy::too_many_arguments)]
 pub fn prove_next_step(
     prover: &mut ChainProver,
@@ -1818,6 +1822,11 @@ pub fn prove_next_step(
         if !ready(height)? {
             // nothing more is ready: a step of the empty blocks so far, if any
             let Some(last) = empties.pop() else {
+                // nothing to prove; but what was replayed must still be on
+                // the chain, or the caller has a rewind to do now
+                if let Some(fork) = reorg_below(idx, chain)? {
+                    return Err(StepError::Reorg { fork });
+                }
                 return Ok(None);
             };
             let merged = BatchWitness {
@@ -1888,6 +1897,25 @@ pub fn prove_next_step(
                 .ok_or_else(|| "a replayed block without its root append".to_string())?,
         );
     }
+}
+
+/// Is the last block the indexer replayed still on the chain? `None` when
+/// it is (or nothing was replayed); otherwise the last replayed height
+/// that is — the fork the indexer's own sync would roll back to — or the
+/// block before the activation when none is.
+pub fn reorg_below(idx: &Indexer, chain: &dyn ChainSource) -> Result<Option<u32>, StepError> {
+    let Some(last) = idx.state.blocks.last() else {
+        return Ok(None);
+    };
+    if chain.block_hash(last.height).map_err(err)? == Some(last.hash) {
+        return Ok(None);
+    }
+    for cp in idx.state.blocks.iter().rev().skip(1) {
+        if chain.block_hash(cp.height).map_err(err)? == Some(cp.hash) {
+            return Ok(Some(cp.height));
+        }
+    }
+    Ok(Some(idx.deployment.activation_height.saturating_sub(1)))
 }
 
 /// Put the indexer where the prover is: blocks it replayed beyond
@@ -2187,6 +2215,31 @@ mod chain_tests {
         let mut bad = step;
         bad.height = u32::MAX;
         assert!(check_heights(&bad).is_err(), "no wrap");
+    }
+
+    /// A reorganisation of blocks already replayed is reported by the
+    /// runner at once, with the fork, even when no block is ready — the
+    /// case the chain test's reorganisation is in (the replacing block at
+    /// the same height), found when that test first ran, 19 November.
+    #[test]
+    fn a_reorganisation_of_replayed_blocks_is_seen_when_nothing_is_ready() {
+        let w = World::new();
+        let mut chain = MockChain::new(ACTIVATION);
+        let mut idx = w.indexer();
+        chain.push_block(vec![]);
+        chain.push_block(vec![]);
+        idx.sync(&chain).unwrap();
+        assert_eq!(idx.state.last_height(), Some(ACTIVATION + 1));
+        assert_eq!(reorg_below(&idx, &chain).unwrap(), None);
+        // the last block replaced by another at the same height
+        chain.reorg_to(ACTIVATION);
+        chain.push_block_salted(vec![], 1);
+        assert_eq!(reorg_below(&idx, &chain).unwrap(), Some(ACTIVATION));
+        // everything replaced: the fork is the block before the activation
+        chain.reorg_to(ACTIVATION - 1);
+        chain.push_block_salted(vec![], 2);
+        chain.push_block_salted(vec![], 3);
+        assert_eq!(reorg_below(&idx, &chain).unwrap(), Some(ACTIVATION - 1));
     }
 
     /// The verifier mirror takes one instance column: the relation shares
