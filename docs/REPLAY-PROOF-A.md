@@ -1232,7 +1232,11 @@ nothing is ready it checks that the last replayed block is still on the
 chain — until 19 November it looked only when syncing a ready block, so
 a proven block replaced at the same height went unseen until the block
 after it was confirmed; the chain test's reorganisation, written on
-17 November, found it the first time it ran); the
+17 November, found it the first time it ran, and passed on the server
+the same day once fixed: the reorganisation reported, the rewind to
+step 2 from its proof on disk, the new block proven in 419 s, the
+orphaned step still verifying on its own; 53 min for the whole test at
+k = 18, 22.8 GB resident); the
 CLI takes the last step at or below it from disk, rebuilds the prover's
 state from that step alone — its two proofs captured again with the
 claims they opened, read out of their public inputs as the decider reads
