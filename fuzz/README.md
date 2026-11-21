@@ -57,6 +57,8 @@ done; wait
 | `http_request` | the relayer's and the API's request reader on any bytes | no panic; a body returned is within the limit |
 | `indexer_s` | the paper family's indexer over a generated chain: blocks of mints (paid and underpaid), the one valid transfer, flipped copies of it and of a mint, raw and foreign candidates, memos, two carriers in one transaction; reorganisations to any depth down to the activation; syncs | no panic; synced to the tip after every operation; the commitments in step; at the end the state equals a fresh indexer's replay of the final chain; one event per carrier; the nullifier set is the events' nullifiers |
 | `indexer_a` | variant A's indexer (the one replaying public signet) over the same grammar, the mint and the transfer from its test world | the same, with the nullifier tree holding the set exactly |
+| `wallet_s` | the paper family's wallet scanning accepted events an adversary shaped (the auditor's request of 21 November): outputs of arbitrary bytes, notes encrypted honestly to the wallet's addresses, the same with a ciphertext byte flipped, the wallet's own diversifier under a stranger's key, a stranger's notes; each leaf honest or arbitrary; the recovery field absent, arbitrary, honest or flipped; then the whole history through `Wallet::scan`, cut at an arbitrary point | no panic; every note found is at an address the wallet owns, consistent with its ephemeral key and bound by its leaf; every honest note to the wallet under an honest leaf is found exactly once and nothing else is; a stranger's scan finds nothing of ours; the outgoing scan returns two consistent notes or nothing, and reads an honest recovery over intact outputs; both scans deterministic; the wallet scanned in two steps equals one scanned in one, and keeps exactly what the scan found |
+| `wallet_a` | variant A's wallet over the same grammar | the same |
 
 The grammar the two indexer targets share is `src/lib.rs`
 (`arbitrary`-derived operations), and each target prepares its family's
@@ -74,6 +76,12 @@ instrumentation, eight minutes on twenty cores. CI runs `indexer_s` on
 every push and `indexer_a` on the weekly schedule only, with a per-input
 timeout wide enough for the fixture.
 
+Not a target, on purpose: the client side of HTTP. The light client and
+the follower fetch through `ureq`, which does the response framing, and a
+served step reaches `ProvenStep::from_bytes` as a file's bytes — the
+`proven_step` target is that surface. Our own HTTP code is the relay's
+request reader, which `http_request` covers.
+
 ## Campaigns
 
 Runs on the development laptop (20 cores, the targets `nice`d, 1 GB of
@@ -85,6 +93,8 @@ reached (`cov`) and inputs executed.
 | 2026-11-21, run 1 | the ten parsers, unseeded | 2 min | **`proven_step` and `persist` aborted within seconds**: a count read off the wire sized a `Vec::with_capacity` of terabytes (a 14-byte and an 8-byte input). Fixed — `Rd::count` refuses a count the remaining bytes cannot hold before anything is allocated — with the inputs kept as `regress-huge-count` seeds and as unit tests. The other eight: no finding. |
 | 2026-11-21, run 2 | the ten parsers, seeded, after the fix | 5 min | `proven_step` and `persist` clean (2.3 M and 3.7 M inputs). **`carrier_script` failed its canonical-form invariant**: the witness rule accepted a tapscript carrying a 521-byte payload in one chunk — the rule says no chunk over 520, the code never checked a chunk's size, only that the earlier ones summed to full chunks. Fixed in `tapscript_payload` with a unit test; the input kept as `regress-oversize-chunk`. |
 | 2026-11-21, run 3 | all twelve, seeded, after the fixes | 10 min | The ten parsers clean: 1.0 M (`envelope_s`) to 47 M (`strings`) inputs each, `carrier_script` 31 M with the oversize-chunk seed in its corpus. `indexer_a` spent eight minutes in its fixture and ran 4 inputs. **`indexer_s` stopped at its 89th input on a `debug_assert` in the mock chain's memo helper** (`memo_output` demands the memo magic; the harness fed it arbitrary bytes) — a precondition of the test helper, not a finding against the indexer; the grammar now makes a proper memo of the bytes and sends arbitrary ones as a plain second `OP_RETURN`. |
+| 2026-11-21, run 5 | `wallet_s`, `wallet_a` (new, the auditor's request) | 5 min | `wallet_s` clean, 55 k inputs at about 180 a second. `wallet_a` stopped twice on the harness, not the wallet: first on an identity point as an ephemeral key (the harness's fallback for bytes that are no point made `0·G`; both families' `point_from_bytes` refuse the identity, so no accepted event carries one — the fallback now avoids it), then on `first_position + j` overflowing at a first position near `u64::MAX` (the indexer sets positions from its own tree; the harness now keeps them under 2^40). Both over-approximations of what an indexer can hand the wallet, removed from the grammar. |
+| 2026-11-21, run 6 | `wallet_s`, `wallet_a`, bounded grammar | 5 min | Both clean: 45 k and 35 k inputs (about 150 and 115 a second), coverage 1 298 and 908 edges; every honest note found, nothing else, the two-step wallet equal to the one-step one throughout. |
 | 2026-11-21, run 4 | the two indexers, corrected grammar | 10 and 15 min | Both clean. `indexer_s`: 3 684 inputs at about six a second, coverage 1 849 → 2 161 edges, a 295-input corpus. `indexer_a`: eight minutes in the fixture, then 7 inputs — about a minute each, the `K = 14` verifications under instrumentation — so it is a random walk with a determinism check more than a fuzzer; kept, weekly in CI. |
 
 ## What was found, and by what

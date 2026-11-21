@@ -361,6 +361,8 @@ fn main() {
             .collect();
         put("indexer_s", name, &bytes);
         put("indexer_a", name, &bytes);
+        put("wallet_s", name, &bytes);
+        put("wallet_a", name, &bytes);
     }
 
     // --- http

@@ -66,3 +66,81 @@ pub fn flipped(bytes: &[u8], at: u16, xor: u8) -> Vec<u8> {
     }
     v
 }
+
+/// How one output of a scanned event is made (the wallet targets).
+#[derive(Arbitrary, Debug, Clone)]
+pub enum NoteSrc {
+    /// Arbitrary ephemeral-key and ciphertext bytes: no key of ours opens them.
+    Random {
+        pk_eph: [u8; 32],
+        c0: [u8; 32],
+        c1: [u8; 32],
+        tag: [u8; 32],
+    },
+    /// A note of these parts encrypted honestly to our address `to`.
+    ToUs { to: u8, value: u64, rseed: [u8; 32] },
+    /// Honestly encrypted to us, then one byte of the ciphertext flipped.
+    ToUsFlipped {
+        to: u8,
+        value: u64,
+        rseed: [u8; 32],
+        at: u8,
+        xor: u8,
+    },
+    /// Our diversifier in the plaintext, but encrypted to a stranger's key
+    /// for it.
+    OurDiversifierForeignKey { to: u8, value: u64, rseed: [u8; 32] },
+    /// Encrypted to a stranger's address.
+    Stranger { value: u64, rseed: [u8; 32] },
+}
+
+/// The recovery field of a scanned event.
+#[derive(Arbitrary, Debug, Clone)]
+pub enum Recovery {
+    None,
+    /// Arbitrary bytes, padded or cut to the field's length.
+    Random(Vec<u8>),
+    /// Made honestly from the outputs' ephemeral secrets with our outgoing
+    /// key (when the event has two outputs the harness made).
+    Honest,
+    /// Honest, then one byte flipped.
+    HonestFlipped {
+        at: u8,
+        xor: u8,
+    },
+}
+
+/// One accepted event as the wallet sees it, shaped by the fuzzer.
+#[derive(Arbitrary, Debug, Clone)]
+pub struct EventSpec {
+    pub mint: bool,
+    pub outputs: Vec<NoteSrc>,
+    pub recovery: Recovery,
+    /// Bit `j`: the leaf of output `j` is computed honestly over it; the
+    /// other leaves are arbitrary.
+    pub honest_leaves: u8,
+    pub leaf_salt: [u8; 32],
+    pub h_body: [u8; 32],
+    pub first_position: u64,
+    pub height: u32,
+    pub txid: [u8; 32],
+    pub aux: Vec<[u8; 32]>,
+    pub nullifiers: Vec<[u8; 32]>,
+}
+
+/// A wallet's history: events, and where to cut it for the incremental scan.
+#[derive(Arbitrary, Debug, Clone)]
+pub struct WalletScript {
+    pub events: Vec<EventSpec>,
+    pub split: u8,
+}
+
+pub const MAX_EVENTS: usize = 6;
+pub const MAX_OUTPUTS: usize = 4;
+/// Values stay under the supply (the circuit binds a note's value; a forged
+/// one is outside the model, and the wallet sums what it finds).
+pub const MAX_VALUE: u64 = 1 << 51;
+/// Positions stay within a tree the indexer could have built: a first
+/// position near `u64::MAX` plus an output index overflowed the wallet's
+/// arithmetic in the harness, which no indexer state produces.
+pub const MAX_POSITION: u64 = 1 << 40;

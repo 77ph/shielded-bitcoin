@@ -2590,6 +2590,46 @@ mod chain_tests {
             );
             assert!(keys.state_of_step(&misshapen, 3).is_err(), "{name}");
         }
+        // the proof bytes themselves: the shape passes, the verifier must
+        // refuse without panicking — a flipped byte in either proof, zeroed
+        // proofs of the right length, empty proofs (the fuzzer has no keys,
+        // so the verifier's totality is exercised here on real ones)
+        for (name, tampered) in [
+            ("T_q proof byte flipped", {
+                let mut m = step3.clone();
+                m.proof_q[7] ^= 0x01;
+                m
+            }),
+            ("T_p proof byte flipped", {
+                let mut m = step3.clone();
+                let at = m.proof_p.len() / 2;
+                m.proof_p[at] ^= 0x80;
+                m
+            }),
+            ("T_q proof zeroed", {
+                let mut m = step3.clone();
+                m.proof_q.iter_mut().for_each(|b| *b = 0);
+                m
+            }),
+            ("T_p proof zeroed", {
+                let mut m = step3.clone();
+                m.proof_p.iter_mut().for_each(|b| *b = 0);
+                m
+            }),
+            ("both proofs empty", {
+                let mut m = step3.clone();
+                m.proof_q.clear();
+                m.proof_p.clear();
+                m
+            }),
+        ] {
+            assert!(
+                keys.check_step(&tampered).is_ok(),
+                "{name}: the shape is intact"
+            );
+            assert!(decider.decide_latest(&tampered).is_err(), "{name}");
+            assert!(decider.decide(&tampered, 3, o1.digest()).is_err(), "{name}");
+        }
         // a reorganisation: block 1002 replaced by another (a mint only); the
         // runner reports it, the chain is rewound to step 2 from its proof on
         // disk, and the new block 1002 becomes the new step 3

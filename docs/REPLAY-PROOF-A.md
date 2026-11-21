@@ -660,6 +660,23 @@ November 2026), and a count on the wire is refused before anything is
 allocated for it when the bytes left cannot hold that many (the fuzz
 target `proven_step` aborted the reader on a 14-byte input within
 seconds of its first run; `fuzz/README.md`).
+
+That the decider cannot be made to panic by what it is served rests on
+three guards, each for its own class of input, and none stands in for
+another. The reader is total: every field is read by a fixed size or by
+a count bounded by the bytes left, so a step either parses whole or
+returns an error, and the opening's 120 bytes are fixed reads that
+cannot be short once the step has parsed (the fuzz target `proven_step`
+is the evidence, millions of inputs). `check_shape` covers the lengths
+the layouts index into, the instance columns and the slot count, and is
+exact. The verifier's totality on the proof bytes themselves is Halo 2's
+contract — a wrong instance length is `InvalidInstances`, garbage proof
+bytes a transcript error, never a panic — and is not reached by the
+fuzzer, which has no keys (a gigabyte); it is exercised by the chain
+test on real keys, whose steps carry a flipped proof byte, zeroed proofs
+of the right length and empty proofs beside the misshapen ones, and is
+otherwise an assertion about the library (the auditor's point, 21
+November 2026).
 Measured for the two-transfer
 block (the server): **57 076 bytes** on the wire — `T_q`'s 442 public
 inputs (14 KB) and proof (5 KB), `T_p`'s 877 (28 KB) and proof (8 KB),
@@ -1410,7 +1427,10 @@ as it was; this section and its implementation go to the next batch.
   keys before any position is read (`check_shape`), and a count on the
   wire bounded by the bytes left before it sizes an allocation, in the
   step reader and the prover's state reader; both from the fuzzing pass
-  of that day (`fuzz/README.md`), §3.4. No figure changed.
+  of that day (`fuzz/README.md`), §3.4, which also names the three
+  guards the decider's panic-freedom rests on (reader totality, the
+  shape check, the verifier's own totality) and what evidences each.
+  No figure changed.
 * **v0.11** (19 November 2026) — the decider checks the wire's heights
   against the opening's (F-A2-1 of the auditor's 19 November pass, a
   binding-hygiene finding, no soundness impact), §3.4; the §3.9 prefix

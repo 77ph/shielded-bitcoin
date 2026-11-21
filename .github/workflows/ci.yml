@@ -121,7 +121,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: fuzz
-      - uses: taiki-e/install-action@cargo-fuzz
+      # taiki-e/install-action has no cargo-fuzz; built from source, kept
+      # in the cache (~/.cargo/bin is part of rust-cache)
+      - run: cargo install cargo-fuzz --locked
       - run: cd fuzz && cargo fuzz build -s none
       # the indexer targets build a proof before their first input, inside
       # the per-input timeout: seconds for indexer_s, but indexer_a makes
