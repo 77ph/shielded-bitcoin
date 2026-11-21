@@ -78,6 +78,17 @@ impl<'a> Rd<'a> {
         let n = self.u32()? as usize;
         Ok(self.take(n)?.to_vec())
     }
+    /// A count of items of at least `each` bytes: refused before anything
+    /// is allocated for it when the bytes left cannot hold that many (a
+    /// count is four bytes anyone can write; the allocation it would size
+    /// is not something to attempt).
+    pub(crate) fn count(&mut self, each: usize) -> Result<usize, String> {
+        let n = self.u32()? as usize;
+        match n.checked_mul(each) {
+            Some(bytes) if bytes <= self.0.len() => Ok(n),
+            _ => Err("short read".into()),
+        }
+    }
 }
 
 impl ProvenStep {
@@ -125,7 +136,7 @@ impl ProvenStep {
         // version 1 steps are of one block
         let first_height = if version == 2 { Some(r.u32()?) } else { None };
         let height = r.u32()?;
-        let n = r.u32()? as usize;
+        let n = r.count(32 * SLOT_ELEMENTS)?;
         let mut slots = Vec::with_capacity(n);
         for _ in 0..n {
             let mut e = [Fp::ZERO; SLOT_ELEMENTS];
@@ -149,13 +160,13 @@ impl ProvenStep {
             height: r.u32()?,
             applied: r.u32()?,
         };
-        let n = r.u32()? as usize;
+        let n = r.count(32)?;
         let mut instance_q = Vec::with_capacity(n);
         for _ in 0..n {
             instance_q.push(r.fq()?);
         }
         let proof_q = r.bytes()?;
-        let n = r.u32()? as usize;
+        let n = r.count(32)?;
         let mut instance_p = Vec::with_capacity(n);
         for _ in 0..n {
             instance_p.push(r.fp()?);
@@ -325,6 +336,18 @@ mod tests {
         let mut bad = bytes.clone();
         bad[0] = 3;
         assert!(ProvenStep::from_bytes(&bad).is_err());
+        // a count the bytes cannot hold is refused before it is allocated
+        // for (the fuzz target `proven_step` found the attempt: a 14-byte
+        // input asked for 3.4 billion slots and the process aborted)
+        let huge = hex::decode("0100000001000001ca0000ca0000").unwrap();
+        assert_eq!(ProvenStep::from_bytes(&huge), Err("short read".into()));
+        let mut many_q = bytes.clone();
+        // the count of T_q's values follows the header (16) , the slots
+        // and the opening (120)
+        let at = 16 + step.slots.len() * SLOT_ELEMENTS * 32 + 120;
+        assert_eq!(&many_q[at..at + 4], &2u32.to_le_bytes());
+        many_q[at..at + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert_eq!(ProvenStep::from_bytes(&many_q), Err("short read".into()));
         // a version-1 step (one block, no first_height) still reads
         let mut v1 = bytes.clone();
         v1[0] = 1;

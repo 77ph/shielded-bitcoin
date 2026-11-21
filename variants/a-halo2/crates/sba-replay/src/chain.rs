@@ -2011,13 +2011,64 @@ pub fn check_heights(step: &ProvenStep) -> Result<(), String> {
     Ok(())
 }
 
+/// The step's public inputs against the keys' shape, before any value is
+/// read at a position the layouts name: the slot count of a fragment, and
+/// the lengths `T_q`'s and `T_p`'s instance columns have under these keys.
+/// A step off the wire carries any lengths (`wire.rs` reads whatever the
+/// counts say); a decider that indexed them would panic on a short one,
+/// and a proof verifies against the values given, so a longer or shorter
+/// column is not something the proofs alone refuse.
+pub fn check_shape(
+    step: &ProvenStep,
+    n_slots: usize,
+    len_q: usize,
+    len_p: usize,
+) -> Result<(), String> {
+    if step.slots.len() != n_slots {
+        return Err(format!(
+            "{} slots on the wire, the keys take {n_slots}",
+            step.slots.len()
+        ));
+    }
+    if step.instance_q.len() != len_q {
+        return Err(format!(
+            "T_q's instance has {} values on the wire, the keys' shape {len_q}",
+            step.instance_q.len()
+        ));
+    }
+    if step.instance_p.len() != len_p {
+        return Err(format!(
+            "T_p's instance has {} values on the wire, the keys' shape {len_p}",
+            step.instance_p.len()
+        ));
+    }
+    Ok(())
+}
+
 impl ChainKeys {
+    /// The lengths of `T_q`'s and `T_p`'s instance columns under these
+    /// keys: every group side's layout, then for `T_p` the batch relation's
+    /// three values and `g`.
+    pub fn instance_lengths(&self) -> (usize, usize) {
+        let sq = &self.step_q;
+        let len_q = sq.offsets()[self.n_proofs] + sq.group_tp.layout().len();
+        let len_p = self.step_p.group_tq.layout().len() + 3 + 1;
+        (len_q, len_p)
+    }
+
+    /// [`check_heights`] and [`check_shape`] for a step under these keys.
+    pub fn check_step(&self, step: &ProvenStep) -> Result<(), String> {
+        check_heights(step)?;
+        let (len_q, len_p) = self.instance_lengths();
+        check_shape(step, self.n_slots, len_q, len_p)
+    }
+
     /// The prover's state right after `step` (the `index`-th), from the
     /// step alone: its two proofs captured again with the claims they
     /// opened — what the prover saved then, rebuilt — so a chain can be
     /// rewound to any step on disk (a reorganisation below later steps).
     pub fn state_of_step(&self, step: &ProvenStep, index: u32) -> Result<ChainState, String> {
-        check_heights(step)?;
+        self.check_step(step)?;
         let (claim_q_prev, claims) = claims_of_step(self, step)?;
         let cap_q = capture(
             &self.outer,
@@ -2079,10 +2130,11 @@ impl ChainDecider<'_> {
     /// from `T_p(i−1)`'s instance), `T_p(i)` with the transfers' claims and
     /// `T_p(i−1)`'s (from `T_q(i)`'s instance); both keys' commitments
     /// against the deployment's. First the wire's heights against the
-    /// opening's ([`check_heights`]).
+    /// opening's and its lengths against the keys' shape ([`check_heights`],
+    /// [`check_shape`]).
     fn verify(&self, step: &ProvenStep) -> Result<(), String> {
-        check_heights(step)?;
         let k = self.keys;
+        k.check_step(step)?;
         let sq = &k.step_q;
         let sp = &k.step_p;
         let off_tp = sq.offsets()[k.n_proofs];
@@ -2169,6 +2221,42 @@ mod chain_tests {
     /// The wire's heights against the opening's, before any proof: the
     /// opening stands at the block after the step, the first block is not
     /// above the last; each off by one is refused.
+    #[test]
+    fn the_wire_shape_is_checked_against_the_keys() {
+        let step = ProvenStep {
+            first_height: 1001,
+            height: 1003,
+            slots: vec![None, None],
+            opening_after: sba_core::batch::StateOpening {
+                root: Fp::from(1u64),
+                size: 2,
+                nf_root: Fp::from(3u64),
+                nf_size: 4,
+                h_root: Fp::from(5u64),
+                height: 1004,
+                applied: 0,
+            },
+            instance_q: vec![pallas::Scalar::from(1u64); 5],
+            proof_q: vec![],
+            instance_p: vec![Fp::from(2u64); 4],
+            proof_p: vec![],
+        };
+        assert!(check_shape(&step, 2, 5, 4).is_ok());
+        // a slot, a value of either column more or less: refused
+        assert!(check_shape(&step, 1, 5, 4).is_err());
+        assert!(check_shape(&step, 3, 5, 4).is_err());
+        assert!(check_shape(&step, 2, 4, 4).is_err());
+        assert!(check_shape(&step, 2, 6, 4).is_err());
+        assert!(check_shape(&step, 2, 5, 3).is_err());
+        assert!(check_shape(&step, 2, 5, 5).is_err());
+        // an empty step is refused for the shape, not by indexing it
+        let mut empty = step.clone();
+        empty.slots.clear();
+        empty.instance_q.clear();
+        empty.instance_p.clear();
+        assert!(check_shape(&empty, 2, 5, 4).is_err());
+    }
+
     #[test]
     fn the_wire_heights_are_checked_against_the_opening() {
         let step = ProvenStep {
@@ -2465,6 +2553,43 @@ mod chain_tests {
         );
         assert!(keys.state_of_step(&mislabelled, 3).is_err());
         assert!(keys.state_of_step(&step3, 3).is_ok());
+        // the columns' lengths are checked against the keys' shape before
+        // any position is read: a value fewer, a value more, a slot fewer
+        let (len_q, len_p) = keys.instance_lengths();
+        assert_eq!(
+            (step3.instance_q.len(), step3.instance_p.len()),
+            (len_q, len_p)
+        );
+        for (name, misshapen) in [
+            ("T_q short", {
+                let mut m = step3.clone();
+                m.instance_q.pop();
+                m
+            }),
+            ("T_p short", {
+                let mut m = step3.clone();
+                m.instance_p.pop();
+                m
+            }),
+            ("T_p long", {
+                let mut m = step3.clone();
+                m.instance_p.push(Fp::from(0u64));
+                m
+            }),
+            ("a slot fewer", {
+                let mut m = step3.clone();
+                m.slots.pop();
+                m
+            }),
+        ] {
+            let e = decider.decide_latest(&misshapen).unwrap_err();
+            assert!(e.contains("on the wire"), "{name}: {e}");
+            assert!(
+                decider.decide(&misshapen, 3, o1.digest()).is_err(),
+                "{name}"
+            );
+            assert!(keys.state_of_step(&misshapen, 3).is_err(), "{name}");
+        }
         // a reorganisation: block 1002 replaced by another (a mint only); the
         // runner reports it, the chain is rewound to step 2 from its proof on
         // disk, and the new block 1002 becomes the new step 3

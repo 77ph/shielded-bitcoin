@@ -39,8 +39,12 @@ may sit in the same block or an earlier one.
 
 * The chunks are the envelope bytes in order, every chunk but the last
   exactly 520 bytes (the largest push Bitcoin script allows), the last the
-  remainder, none empty. A 700-byte base envelope is `520 ‖ 180`; a
-  764-byte swap envelope `520 ‖ 244`; an 89-byte mint one push.
+  remainder, none empty, none over 520. A 700-byte base envelope is
+  `520 ‖ 180`; a 764-byte swap envelope `520 ‖ 244`; an 89-byte mint one
+  push. (An unexecuted branch could carry a longer push; the rule reads
+  the canonical form only. The indexer accepted a 521-byte chunk until 21
+  November 2026, when the fuzz target `carrier_script` found it against
+  the canonical-form invariant; `fuzz/README.md`.)
 * `OP_FALSE OP_IF … OP_ENDIF` never executes: the branch is inert data.
   The script's only live instruction is `OP_CHECKSIG` against the key,
   which the reveal satisfies with a 64-byte Schnorr signature
@@ -179,6 +183,8 @@ deployment assumption, not a consensus guarantee.
 
 ## 8. Changelog
 
+* **v0.2** (21 November 2026) — a chunk over 520 bytes refused (the rule
+  stated it, the code did not check it; found by fuzzing), §2.
 * **v0.1** — initial draft: tapscript shape, NUMS internal key, exactly-one
   revealing input rule, two-transaction publication through the three fee
   models, measurements on the private signet.

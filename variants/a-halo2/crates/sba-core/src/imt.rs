@@ -157,6 +157,9 @@ impl IndexedMerkleTree {
     }
 
     pub fn contains(&self, value: &Fp) -> bool {
+        // the zero sentinel counts as present: it can neither be inserted
+        // nor proven absent (the unit tests say so; a property test that
+        // modelled the tree as a plain set was corrected, not the tree)
         self.index.contains_key(&key(value))
     }
 

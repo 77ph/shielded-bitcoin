@@ -38,7 +38,7 @@ impl Rd<'_> {
         Option::from(C::from_bytes(&r)).ok_or_else(|| "not a point".to_string())
     }
     fn scalars<F: PrimeField>(&mut self) -> Result<Vec<F>, String> {
-        let n = self.u32()? as usize;
+        let n = self.count(F::Repr::default().as_ref().len())?;
         (0..n).map(|_| self.scalar()).collect()
     }
 }
@@ -98,8 +98,11 @@ impl<C: CurveAffine> Capture<C> {
     }
 
     pub(crate) fn read(rd: &mut Rd<'_>) -> Result<Self, String> {
+        let scalar_len = <C::Scalar as PrimeField>::Repr::default().as_ref().len();
+        let point_len = <C as group::GroupEncoding>::Repr::default().as_ref().len();
         let instance = rd.scalars()?;
-        let n = rd.u32()? as usize;
+        // a tag and at least one scalar per event
+        let n = rd.count(1 + scalar_len)?;
         let mut events = Vec::with_capacity(n);
         for _ in 0..n {
             events.push(match rd.take(1)?[0] {
@@ -111,7 +114,7 @@ impl<C: CurveAffine> Capture<C> {
                 t => return Err(format!("event tag {t}")),
             });
         }
-        let n = rd.u32()? as usize;
+        let n = rd.count(scalar_len + point_len)?;
         let mut terms = Vec::with_capacity(n);
         for _ in 0..n {
             terms.push((rd.scalar()?, rd.point()?));
@@ -120,7 +123,8 @@ impl<C: CurveAffine> Capture<C> {
         let u_scalar = rd.scalar()?;
         let g = rd.point()?;
         let u = rd.scalars()?;
-        let n = rd.u32()? as usize;
+        // a count per opened claim at least
+        let n = rd.count(4)?;
         let mut opened = Vec::with_capacity(n);
         for _ in 0..n {
             opened.push(rd.scalars()?);
@@ -255,6 +259,19 @@ mod tests {
             u: (0..n).map(|_| s(rng)).collect(),
             opened: vec![(0..n).map(|_| s(rng)).collect(), vec![]],
         }
+    }
+
+    #[test]
+    fn a_count_the_bytes_cannot_hold_is_refused_before_it_is_allocated_for() {
+        // the fuzz target `persist` found the attempt: eight bytes asking
+        // for 1.6 billion events, and the process aborted on the allocation
+        let bytes = hex::decode("000000000000fc60").unwrap();
+        assert_eq!(
+            Capture::<pallas::Affine>::from_bytes(&bytes).err(),
+            Some("short read".into())
+        );
+        assert!(ChainState::from_bytes(&bytes).is_err());
+        assert!(ClientState::from_bytes(&bytes).is_err());
     }
 
     #[test]

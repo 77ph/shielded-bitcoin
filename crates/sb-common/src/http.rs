@@ -1,7 +1,7 @@
 //! The few lines of HTTP/1.1 the relayer and the indexer API need: one
 //! request per connection, JSON in and out.
 
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
 
 use anyhow::{Context, Result, bail};
@@ -12,7 +12,11 @@ const MAX_BODY: usize = 16 * 1024;
 
 /// Request line, path and body of one HTTP/1.1 request.
 pub fn read_request(conn: &TcpStream) -> Result<(String, String, Vec<u8>)> {
-    let mut reader = BufReader::new(conn.try_clone()?);
+    read_request_from(BufReader::new(conn.try_clone()?))
+}
+
+/// [`read_request`] over any reader (the fuzz target feeds it bytes).
+pub fn read_request_from<R: BufRead>(mut reader: R) -> Result<(String, String, Vec<u8>)> {
     let mut line = String::new();
     if reader.read_line(&mut line)? == 0 {
         bail!("empty request");
@@ -104,6 +108,7 @@ pub fn respond(mut conn: TcpStream, status: u16, body: &Value) {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::io::Read;
     use std::net::TcpListener;
     use std::time::Duration;
 

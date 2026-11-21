@@ -90,9 +90,10 @@ impl PaymentAddress {
     pub fn decode(s: &str) -> Result<(Network, Self), AddressError> {
         let checked =
             CheckedHrpstring::new::<Bech32m>(s).map_err(|e| AddressError::Bech32(e.to_string()))?;
-        let hrp = checked.hrp();
-        let network = Network::from_hrp(hrp.as_str())
-            .ok_or_else(|| AddressError::UnknownHrp(hrp.to_string()))?;
+        // bech32m allows an all-uppercase string (and refuses a mixed one)
+        let hrp = checked.hrp().as_str().to_ascii_lowercase();
+        let network =
+            Network::from_hrp(&hrp).ok_or_else(|| AddressError::UnknownHrp(hrp.to_string()))?;
         let payload: Vec<u8> = checked.byte_iter().collect();
         Ok((network, Self::from_bytes(&payload)?))
     }

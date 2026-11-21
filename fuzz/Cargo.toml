@@ -1,0 +1,137 @@
+# Fuzz targets for the code that reads what nobody trusted: envelopes off the
+# chain, the carrier rules over scripts and transactions, the replay proof's
+# wire and the prover's persisted state, the codecs, the state and
+# deployment files, the HTTP request line. Its own workspace (the root
+# excludes it): `cargo +nightly fuzz run <target>` from this directory,
+# fuzz/README.md for the targets, their invariants and the campaigns run.
+[package]
+name = "sb-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+
+sb-primitives = { path = "../crates/sb-primitives" }
+sb-core = { path = "../crates/sb-core" }
+sb-common = { path = "../crates/sb-common" }
+sb-indexer = { path = "../crates/sb-indexer" }
+sb-circuit = { path = "../crates/sb-circuit" }
+sb-wallet = { path = "../crates/sb-wallet" }
+sba-primitives = { path = "../variants/a-halo2/crates/sba-primitives" }
+sba-core = { path = "../variants/a-halo2/crates/sba-core" }
+sba-indexer = { path = "../variants/a-halo2/crates/sba-indexer", features = ["testing"] }
+sba-wallet = { path = "../variants/a-halo2/crates/sba-wallet" }
+sba-replay = { path = "../variants/a-halo2/crates/sba-replay" }
+
+bitcoin = { version = "0.32", features = ["serde", "rand-std"] }
+ff = "0.13"
+group = "0.13"
+pasta_curves = "0.5"
+ark-ff = "0.5"
+hex = "0.4"
+serde_json = "1"
+rand = "0.8"
+rand_chacha = "0.3"
+
+# the root's patch: sba-replay builds on the vendored halo2_proofs
+[patch.crates-io]
+halo2_proofs = { path = "../experiments/halo2_proofs-patched" }
+
+[lib]
+path = "src/lib.rs"
+
+[profile.release]
+debug = 1
+overflow-checks = true
+
+[workspace]
+
+[[bin]]
+name = "envelope_s"
+path = "fuzz_targets/envelope_s.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "envelope_a"
+path = "fuzz_targets/envelope_a.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "carrier_script"
+path = "fuzz_targets/carrier_script.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "carrier_tx"
+path = "fuzz_targets/carrier_tx.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "proven_step"
+path = "fuzz_targets/proven_step.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "persist"
+path = "fuzz_targets/persist.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "codecs"
+path = "fuzz_targets/codecs.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "strings"
+path = "fuzz_targets/strings.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "state_json"
+path = "fuzz_targets/state_json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "http_request"
+path = "fuzz_targets/http_request.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "indexer_s"
+path = "fuzz_targets/indexer_s.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "indexer_a"
+path = "fuzz_targets/indexer_a.rs"
+test = false
+doc = false
+bench = false

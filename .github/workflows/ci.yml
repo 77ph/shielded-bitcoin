@@ -107,6 +107,43 @@ jobs:
           a_replayed_blocks_relation_inside_the_step
           a_block_with_two_transfers_in_one_step
           two_transfers_both_sides_split
+  # The fuzz targets (fuzz/README.md): every target built on nightly and
+  # run for a short while from its committed seeds, which hold a
+  # well-formed input of each shape and the minimised input of every crash
+  # found so far — so a push re-checks the fixed bugs and the invariants on
+  # the accepting paths; the weekly run gives each target longer.
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+      - uses: taiki-e/install-action@cargo-fuzz
+      - run: cd fuzz && cargo fuzz build -s none
+      # the indexer targets build a proof before their first input, inside
+      # the per-input timeout: seconds for indexer_s, but indexer_a makes
+      # the K = 14 proving key under instrumentation (eight minutes on 20
+      # cores), so it runs on the weekly schedule only (fuzz/README.md)
+      - run: >-
+          cd fuzz && weekly=$([ "${{ github.event_name }}" = schedule ] && echo 1 || echo 0) &&
+          for t in $(cargo fuzz list); do
+            case $t in
+              indexer_a) [ $weekly = 1 ] || continue; to=5400; secs=600;;
+              indexer_s) to=1200; secs=$([ $weekly = 1 ] && echo 1200 || echo 300);;
+              *) to=60; secs=$([ $weekly = 1 ] && echo 300 || echo 30);;
+            esac;
+            echo "== $t ($secs s)";
+            cargo fuzz run $t -s none -- -max_total_time=$secs -rss_limit_mb=2048 -timeout=$to seeds/$t || exit 1;
+          done
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: fuzz-artifacts
+          path: fuzz/artifacts
+          if-no-files-found: ignore
   # Secrets and network addresses: the stock gitleaks rules plus the
   # project's own rule against a public IPv4 literal (.gitleaks.toml). A push
   # or pull request is scanned over its commits; a manual run scans the

@@ -25,3 +25,4 @@ blake2.workspace = true
 
 [dev-dependencies]
 sba-indexer = { workspace = true, features = ["testing"] }
+proptest.workspace = true

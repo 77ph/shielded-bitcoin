@@ -23,7 +23,7 @@ members = [
     "experiments/vesta-ecc",
 ]
 # standalone measurements with their own dependencies (experiments/README.md)
-exclude = ["experiments/twochain"]
+exclude = ["experiments/twochain", "fuzz"]
 
 [workspace.package]
 version = "0.1.0"

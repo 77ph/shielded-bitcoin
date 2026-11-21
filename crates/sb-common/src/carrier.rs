@@ -97,7 +97,11 @@ fn tapscript_payload(script: &ScriptBuf) -> Result<Option<Vec<u8>>, CarrierError
     loop {
         match it.next() {
             Some(Ok(Instruction::PushBytes(p))) => {
-                if p.is_empty() {
+                // no chunk empty, none over the push limit (an unexecuted
+                // branch could carry a longer one; the rule reads the
+                // canonical form only — the fuzz target `carrier_script`
+                // found a 521-byte chunk accepted, 21 November 2026)
+                if p.is_empty() || p.len() > MAX_PUSH {
                     return Err(CarrierError::MalformedTapscript);
                 }
                 // every chunk but the last is full
@@ -366,6 +370,73 @@ mod tests {
             extract_envelope(&tx, &CANDIDATE_PREFIX),
             Some(Err(CarrierError::MalformedScript))
         );
+    }
+
+    #[test]
+    fn a_chunk_over_the_push_limit_is_a_probe() {
+        use bitcoin::Witness;
+        use bitcoin::secp256k1::Secp256k1;
+        let key = bitcoin::secp256k1::Keypair::from_secret_key(
+            &Secp256k1::new(),
+            &bitcoin::secp256k1::SecretKey::from_slice(&[0x42u8; 32]).unwrap(),
+        )
+        .x_only_public_key()
+        .0;
+        let mut env = vec![0u8; MAX_PUSH + 1];
+        env[..4].copy_from_slice(&CANDIDATE_PREFIX);
+        let reveal = |chunks: &[&[u8]]| {
+            let mut b = Builder::new()
+                .push_x_only_key(&key)
+                .push_opcode(OP_CHECKSIG)
+                .push_opcode(OP_PUSHBYTES_0)
+                .push_opcode(OP_IF);
+            for c in chunks {
+                b = b.push_slice(PushBytesBuf::try_from(c.to_vec()).unwrap());
+            }
+            let script = b.push_opcode(OP_ENDIF).into_script();
+            let mut w = Witness::new();
+            w.push([1u8; 64]);
+            w.push(script.as_bytes());
+            w.push([0xc0u8; 33]);
+            Transaction {
+                version: bitcoin::transaction::Version::TWO,
+                lock_time: bitcoin::absolute::LockTime::ZERO,
+                input: vec![bitcoin::TxIn {
+                    previous_output: bitcoin::OutPoint::null(),
+                    script_sig: ScriptBuf::new(),
+                    sequence: bitcoin::Sequence::MAX,
+                    witness: w,
+                }],
+                output: vec![],
+            }
+        };
+        // the canonical form: a full chunk and the remainder
+        let canonical = reveal(&[&env[..MAX_PUSH], &env[MAX_PUSH..]]);
+        assert_eq!(
+            CarrierMode::Witness
+                .extract(&canonical, &CANDIDATE_PREFIX)
+                .unwrap()
+                .unwrap()
+                .envelope,
+            env
+        );
+        assert_eq!(
+            envelope_tapscript(&env, &key),
+            tapscript_of(&canonical.input[0].witness).unwrap()
+        );
+        // the same bytes in one 521-byte chunk, or as 519 ‖ 2: probes
+        for chunks in [
+            vec![&env[..]],
+            vec![&env[..MAX_PUSH - 1], &env[MAX_PUSH - 1..]],
+        ] {
+            assert_eq!(
+                CarrierMode::Witness
+                    .extract(&reveal(&chunks), &CANDIDATE_PREFIX)
+                    .unwrap()
+                    .unwrap_err(),
+                CarrierError::MalformedTapscript
+            );
+        }
     }
 
     #[test]

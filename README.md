@@ -193,6 +193,23 @@ and run weekly in the `recursion` job (`cargo test -p sba-replay --release
 -- --ignored <name>`); those at k = 18 need about 15 GB and run on the
 server, with their figures in `docs/REPLAY-PROOF-A.md`.
 
+### Fuzzing and properties
+
+The code that reads untrusted bytes — envelopes off the chain, scripts and
+transactions under the carrier rules, a proven step a light client is
+served, the prover's own files, the codecs, the deployment and state files,
+the HTTP request line — and the two indexers over generated chains with
+reorganisations, run under libFuzzer from `fuzz/` (its own workspace, on
+nightly: `cd fuzz && cargo +nightly fuzz run <target> -s none --
+seeds/<target>`). `fuzz/README.md` names each target's invariant, the
+campaigns run and what they found. CI builds every target and runs it from
+its committed seeds on each push — half a minute each, the paper family's
+indexer five minutes — and longer on the weekly schedule, which alone runs
+variant A's indexer target (its fixture builds the real proving key first).
+Beside them, `proptest` statements on the note tree, the nullifier tree,
+the envelopes, the carrier rules and the replay proof's wire run with
+`cargo test` in the crates.
+
 ## Coverage
 
 ```sh

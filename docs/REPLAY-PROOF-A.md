@@ -1,4 +1,4 @@
-# Succinct replay proofs for variant A (study, draft v0.11)
+# Succinct replay proofs for variant A (study, draft v0.12)
 
 Status: a study; its code is the crate `sba-replay` (§3.8) over the
 vendored `experiments/halo2_proofs-patched` and `experiments/vesta-ecc`,
@@ -651,7 +651,15 @@ block after the step's last), before any proof, and returns the
 opening's (the review of 19 November 2026, F-A2-1: `decide_latest` and
 the prover's rewind state read the wire's height until then — a wrong
 label at most, since the client's state keeps the step index and the
-digest, and the prover's rewind reconciles against the indexer).
+digest, and the prover's rewind reconciles against the indexer). The
+wire's shape is checked next, before any position the layouts name is
+read: the slot count and both columns' lengths against the keys'
+(`check_shape`; a decider that indexed a short column would have
+panicked — found by reading while the fuzz targets were written, 21
+November 2026), and a count on the wire is refused before anything is
+allocated for it when the bytes left cannot hold that many (the fuzz
+target `proven_step` aborted the reader on a 14-byte input within
+seconds of its first run; `fuzz/README.md`).
 Measured for the two-transfer
 block (the server): **57 076 bytes** on the wire — `T_q`'s 442 public
 inputs (14 KB) and proof (5 KB), `T_p`'s 877 (28 KB) and proof (8 KB),
@@ -1398,6 +1406,11 @@ as it was; this section and its implementation go to the next batch.
 
 ## 6. Changelog
 
+* **v0.12** (21 November 2026) — the wire's shape checked against the
+  keys before any position is read (`check_shape`), and a count on the
+  wire bounded by the bytes left before it sizes an allocation, in the
+  step reader and the prover's state reader; both from the fuzzing pass
+  of that day (`fuzz/README.md`), §3.4. No figure changed.
 * **v0.11** (19 November 2026) — the decider checks the wire's heights
   against the opening's (F-A2-1 of the auditor's 19 November pass, a
   binding-hygiene finding, no soundness impact), §3.4; the §3.9 prefix
