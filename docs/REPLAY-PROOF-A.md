@@ -1503,7 +1503,13 @@ as it was; this section and its implementation go to the next batch.
   another hash of `T_p`'s key refused and the honest dummy accepted
   (mock prover); a base step over a dummy step 0 carrying another hash
   of `T_q`'s key refused by both deciders (the real-key chain test); a
-  transfer slot bound to no proof refused (mock prover).
+  transfer slot bound to no proof refused (mock prover). The auditor
+  read the commit firsthand the same evening and passed both
+  mechanisms (the hash is over the very cells the multi-scalar
+  multiplication uses; the one active bit gates the state writes and
+  the proof binding alike), noting that the decider's check of the
+  exposed key points against the deployment's is what its security
+  rests on, the hashes serving the chaining.
 * **v0.13** (24 November 2026) — the decider reads its own part of the
   key set (`ChainKeys::read_for_decider`: parameters, verifying keys,
   transfer key, shapes over fake captures; no proving key, padding or
