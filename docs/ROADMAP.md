@@ -50,8 +50,7 @@ in `RUNS.md`.
 The aim now is to exhaust the paper's §22: every item ends either as an
 implementation run on a test network, or as a demonstration, with
 numbers, that it cannot be implemented at present (or that nobody knows
-how). The intended output is an article in academic form, a
-continuation of the original devoted to its §22. The owner's
+how). `REMAINING.md` §4 records where each item ends. The owner's
 post-quantum thread comes after that.
 
 Variant A, the paper's protocol without a trusted setup (Halo 2 over
