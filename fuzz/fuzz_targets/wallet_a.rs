@@ -9,9 +9,7 @@ use ff::Field;
 use group::prime::PrimeCurveAffine;
 use group::{Curve, Group};
 use libfuzzer_sys::fuzz_target;
-use sb_fuzz::{
-    EventSpec, MAX_EVENTS, MAX_OUTPUTS, MAX_POSITION, MAX_VALUE, NoteSrc, Recovery, WalletScript,
-};
+use sb_fuzz::{EventSpec, MAX_EVENTS, MAX_OUTPUTS, MAX_VALUE, NoteSrc, Recovery, WalletScript};
 use sba_core::address::{Network, PaymentAddress};
 use sba_core::event::{AcceptedEvent, EventKind};
 use sba_core::keys::{Seed, WalletKeys};
@@ -201,10 +199,13 @@ fn event(
             }
         })
         .collect();
+    // a position that would overflow is no position: the wallet skips the
+    // output (fail closed), so nothing of ours is expected there
+    let fits = |j: usize| spec.first_position.checked_add(j as u64).is_some();
     let expect: Vec<Option<NotePlaintext>> = made
         .iter()
         .enumerate()
-        .map(|(j, m)| if honest(j) { m.expect } else { None })
+        .map(|(j, m)| if honest(j) && fits(j) { m.expect } else { None })
         .collect();
     let (ct_out, expect_sent) = match &spec.recovery {
         Recovery::None => (None, false),
@@ -232,7 +233,8 @@ fn event(
                 } else {
                     false
                 };
-                let complete = !flipped && made.iter().all(|m| m.intact) && honest(0) && honest(1);
+                let complete =
+                    !flipped && made.iter().all(|m| m.intact) && honest(0) && honest(1) && fits(1);
                 (Some(out), complete)
             } else {
                 (None, false)
@@ -253,8 +255,7 @@ fn event(
         nullifiers: spec.nullifiers.iter().take(4).map(fp).collect(),
         outputs,
         ct_out,
-        // the indexer sets a position from its own tree, never near u64::MAX
-        first_position: spec.first_position % MAX_POSITION,
+        first_position: spec.first_position,
         leaves,
         memo: None,
     };

@@ -140,7 +140,3 @@ pub const MAX_OUTPUTS: usize = 4;
 /// Values stay under the supply (the circuit binds a note's value; a forged
 /// one is outside the model, and the wallet sums what it finds).
 pub const MAX_VALUE: u64 = 1 << 51;
-/// Positions stay within a tree the indexer could have built: a first
-/// position near `u64::MAX` plus an output index overflowed the wallet's
-/// arithmetic in the harness, which no indexer state produces.
-pub const MAX_POSITION: u64 = 1 << 40;

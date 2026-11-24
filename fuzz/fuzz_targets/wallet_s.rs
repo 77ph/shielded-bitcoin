@@ -16,9 +16,7 @@ use sb_core::note::{
     NoteCiphertext, NotePlaintext, check_note_consistency, encrypt_note, note_leaf_aux,
 };
 use sb_core::recovery::{CT_OUT_LEN, RecoveryEntry, binding_digest, encrypt_recovery};
-use sb_fuzz::{
-    EventSpec, MAX_EVENTS, MAX_OUTPUTS, MAX_POSITION, MAX_VALUE, NoteSrc, Recovery, WalletScript,
-};
+use sb_fuzz::{EventSpec, MAX_EVENTS, MAX_OUTPUTS, MAX_VALUE, NoteSrc, Recovery, WalletScript};
 use sb_primitives::encoding::point_from_bytes;
 use sb_primitives::{Fr, JubjubAffine, JubjubScalar};
 use sb_wallet::{Wallet, scan_incoming, scan_outgoing};
@@ -217,10 +215,13 @@ fn event(
             }
         })
         .collect();
+    // a position that would overflow is no position: the wallet skips the
+    // output (fail closed), so nothing of ours is expected there
+    let fits = |j: usize| spec.first_position.checked_add(j as u64).is_some();
     let expect: Vec<Option<NotePlaintext>> = made
         .iter()
         .enumerate()
-        .map(|(j, m)| if honest(j) { m.expect } else { None })
+        .map(|(j, m)| if honest(j) && fits(j) { m.expect } else { None })
         .collect();
     let (ct_out, expect_sent) = match &spec.recovery {
         Recovery::None => (None, false),
@@ -248,7 +249,8 @@ fn event(
                 } else {
                     false
                 };
-                let complete = !flipped && made.iter().all(|m| m.intact) && honest(0) && honest(1);
+                let complete =
+                    !flipped && made.iter().all(|m| m.intact) && honest(0) && honest(1) && fits(1);
                 (Some(out), complete)
             } else {
                 (None, false)
@@ -269,8 +271,7 @@ fn event(
         nullifiers: spec.nullifiers.iter().take(4).map(fr).collect(),
         outputs,
         ct_out,
-        // the indexer sets a position from its own tree, never near u64::MAX
-        first_position: spec.first_position % MAX_POSITION,
+        first_position: spec.first_position,
         leaves,
         h_aux,
         memo: None,
