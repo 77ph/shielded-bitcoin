@@ -1,4 +1,4 @@
-# Succinct replay proofs for variant A (study, draft v0.12)
+# Succinct replay proofs for variant A (study, draft v0.13)
 
 Status: a study; its code is the crate `sba-replay` (§3.8) over the
 vendored `experiments/halo2_proofs-patched` and `experiments/vesta-ecc`,
@@ -676,7 +676,11 @@ fuzzer, which has no keys (a gigabyte); it is exercised by the chain
 test on real keys, whose steps carry a flipped proof byte, zeroed proofs
 of the right length and empty proofs beside the misshapen ones, and is
 otherwise an assertion about the library (the auditor's point, 21
-November 2026).
+November 2026). Run on the server on 24 November with all nine
+negatives in the test — the four misshapen steps and the five tampered
+ones — every one was refused with an error and none with a panic
+(`RUNS.md`, 17–24 November).
+
 Measured for the two-transfer
 block (the server): **57 076 bytes** on the wire — `T_q`'s 442 public
 inputs (14 KB) and proof (5 KB), `T_p`'s 877 (28 KB) and proof (8 KB),
@@ -720,7 +724,13 @@ accumulators (≈ 1 KB), the state opening: independent of the number of
 blocks. Built as the chain of §3.8 with the genesis digest carried
 through it (10 November): the newest step alone — two proofs, two
 instances, the slot statements and the opening, 69 716 bytes measured —
-is decided from the keys and the deployment's genesis digest.
+is decided from the keys and the deployment's genesis digest. What the
+decider holds of the keys (24 November, `ChainKeys::read_for_decider`,
+§3.8): the two circuits' parameters (16 MB each), their verifying keys
+(0.95 and 1.28 MB) and the transfer circuit's parameters and verifying
+key (1.1 MB) — **35 MB on disk**, a quarter of a gigabyte resident with
+the shapes rebuilt — and no proving key, which is the prover's 1.08 GB
+on disk and ten gigabytes resident as cosets.
 
 ### 3.6 Fewer values across the cycle: the split transcript [built, measured; not adopted as a-0.4, the owner's decision of 11 November 2026]
 
@@ -1178,7 +1188,33 @@ decider 2.10 s a step, **the decider of the latest step alone 2.06 s**
 keys, and the deployment's genesis digest, whatever the history's length.
 Run as such a client on 17 November (`RUNS.md`): a fresh directory with
 the key set and one 70 296-byte step, the keys read in 185 s and the
-step decided from the genesis in 2.46 s, 11.5 GB resident.
+step decided from the genesis in 2.46 s, 11.5 GB resident. That read was
+the prover's — the two proving keys with their cosets, the padding
+proved afresh, a dummy step 0 — charged to a client that needs none of
+it. **The decider's own read** (24 November) [built, measured]:
+`ChainKeys::read_for_decider` takes the parameters, the two verifying
+keys and the transfer key from their files, rebuilds the shapes over
+fake captures of the transfer statement — the shapes depend on the keys'
+structure alone: the full read rebuilt them from fresh random padding
+proofs on every read and reached the id the metadata pins — and checks
+the id against the metadata as the full read does; the set it returns
+has no prover's part (`ProverKeys`: the proving keys, the padding, step
+0; `ChainProver::new` refuses such a set), and `replay-decide` uses it,
+never generating keys. The chain test reads both sets from one
+directory and asserts the same id, shapes and genesis digest, that the
+decider's set decides step 3 as the full one does and reads its state,
+and that it refuses to prove. Run as the client of 17 November again, on
+the laptop, from the server's key files (35 MB, checksums compared) and
+the one file `step-000427-332274.bin` (70 296 bytes), the box under
+another project's load (load average 13): the keys read in **21.5 s** —
+the parameters and verifying keys 10.9 s, the transfer key 7.2 s (made
+and written, the set predating `t.params`/`t.vk`), the shapes 3.3 s —
+and step 427 decided from the genesis in **1.04 s**; 30.4 s of wall
+clock, **243 MB resident**. The second run, the transfer key from its
+files: 12.5 s (8.5 + 0.4 + 3.5) and 1.16 s. So the 185 s and 11.5 GB of
+17 November were the prover's figures; the client's are tens of seconds
+and a quarter of a gigabyte, most of the read now the two parameter
+files' points.
 
 **Keys on disk** (11 November) [built]. The vendored `halo2_proofs`
 gains `keys_io` — read and write for `VerifyingKey` and `ProvingKey`,
@@ -1192,7 +1228,9 @@ permutation columns' Lagrange values, their coefficient and coset forms
 and `l_0`, `l_blind`, `l_last` recomputed as `keygen_pk` computes them
 (a k = 18 key is hundreds of megabytes this way, gigabytes with its
 cosets). `ChainKeys::write` puts the four keys and the sizes under a
-directory; `ChainKeys::read` takes them back and rebuilds all the rest —
+directory (the parameters too since 17 November, and since 24 November
+the transfer circuit's parameters and verifying key, 1.1 MB, for the
+decider's read above); `ChainKeys::read` takes them back and rebuilds all the rest —
 the transfer key, fresh sample proofs for the padding, the two circuits'
 shapes by the bootstrap's rounds over fake captures under the final keys
 from the start (no key generation: seconds), a fresh dummy step 0 — and
@@ -1423,6 +1461,15 @@ as it was; this section and its implementation go to the next batch.
 
 ## 6. Changelog
 
+* **v0.13** (24 November 2026) — the decider reads its own part of the
+  key set (`ChainKeys::read_for_decider`: parameters, verifying keys,
+  transfer key, shapes over fake captures; no proving key, padding or
+  step 0, which move into `ProverKeys`), `replay-decide` uses it; the
+  light client of §3.5/§3.8 re-measured with it — 35 MB of keys, the
+  read in tens of seconds, the step in about a second, a quarter of a
+  gigabyte resident — against the 185 s / 11.5 GB of 17 November, which
+  were the prover's read. The chain test checks the two reads agree;
+  its server run of 24 November passed with the nine negatives of §3.4.
 * **v0.12** (21 November 2026) — the wire's shape checked against the
   keys before any position is read (`check_shape`), and a count on the
   wire bounded by the bytes left before it sizes an allocation, in the

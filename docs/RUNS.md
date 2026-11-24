@@ -604,3 +604,75 @@ one step. 3 min 22 s of wall clock and 11.5 GB resident in all, the key
 set's cosets being the memory. The follower was stopped for those four
 minutes and restarted from its state on disk (the 24 GB container
 holds one key set comfortably, not two while a step is proven).
+
+## Public signet, 17–24 November 2026: the follower's second week, the light client with the decider's own keys (deployment `signet-a-2`)
+
+**The week.** The follower ran on from step 188 (17 November, 15:45
+UTC) to step 427 (24 November, 10:31 UTC: blocks 332270–332274, five
+blocks without events, 0 slots, 70 296 bytes, proved in 596.9 s after
+the 1 800 s settle wait, decided in 7.92 s) — 239 steps, 33 to 37 a day,
+one every 40 minutes or so: the settle wait and then ten minutes of
+proving, each step four or five signet blocks. At step 427 the chain
+stands at block 332274, 1 842 blocks since activation, attested by the
+newest step alone. Its log for 19–24 November (steps 257–427) was lost
+at the stop of 24 November, by a mistake of the operator's and worth
+recording: the runner script of 19 November was still alive, blocked in
+its last line (the follower run in the foreground, its output to
+`follow.log`), when the 24 November runner was uploaded over the same
+file name; a shell reads a script by offset, so when the new runner
+killed the follower the old shell resumed reading the new file mid-line
+— `follow --poll … > follow.log` — and the redirect truncated the log
+before "follow: not found" was written into it. The step files are all
+there (427, their dates the cadence above); the last line survives in
+the chain test's log; the figures lost are the week's per-step timings,
+which the earlier weeks recorded. Runner scripts get new names from now
+on.
+
+**The light client with the decider's own keys** (24 November). The 17
+November run above read the key set the prover reads — the two proving
+keys and their cosets, 1.1 GB on disk, 11.5 GB resident, 185 s — which
+a client needs none of. `ChainKeys::read_for_decider`
+(`REPLAY-PROOF-A.md` §3.8, v0.13) reads the decider's part: the two
+circuits' parameters (16 MB each), their verifying keys (0.95 and
+1.28 MB) and the transfer circuit's parameters and verifying key
+(1.1 MB), 35 MB in all, and rebuilds the shapes; `sb replay-decide`
+uses it and never generates keys. Run on the laptop as the client of 17
+November: a fresh directory with the server's five key files (copied,
+checksums compared) and the one file `step-000427-332274.bin` of
+70 296 bytes — no proving key, no indexer state, no earlier step, no
+chain source consulted — the laptop under another project's load (load
+average 13). The keys read in **21.5 s** (the parameters and verifying
+keys 10.9 s; the transfer key 7.2 s, made and written, as the server's
+set predates the `t.params`/`t.vk` files; the shapes 3.3 s) and step 427
+accepted from the deployment's genesis digest in **1.04 s** — block
+332274 and the 1 842 blocks before it — 30.4 s of wall clock and
+**243 MB resident**. A second run, the transfer key now from its files:
+the keys in 12.5 s (8.5 + 0.4 + 3.5), the step in 1.16 s, 22.0 s in all,
+the same 243 MB. The digest accepted,
+`b74f45ad8a0a9e9792a35459951995cb12e773bc8dc873ed035a8ae4a2245c18`, is
+the one the follower holds as its state after step 427 (its restart
+line of 11:25 UTC: 427 steps, next block 332275, the same digest).
+
+**The chain test with nine negatives** (24 November, the server
+container, host load 12–15). The real-key chain test of
+`REPLAY-PROOF-A.md` §3.8, run with the follower stopped between steps
+(the stop above), now carries beside the mislabelled step the four
+misshapen steps of 21 November (an instance column too short, too long,
+a slot too many, a position past the end) and the five proof-tampered
+steps of the same day (a byte flipped in either proof, either proof
+zeroed, both emptied) — the inputs the three guards of §3.4 answer for.
+It passed: keys generated in 1 087.2 s; step 1 (two mints, the base)
+426.4 s and 69 784 bytes; the keys written, 1 111 762 397 bytes, in
+2.3 s and read back in 214.8 s (the parameters and key files 149.2 s,
+the transfer key and padding 52.1 s, the shapes 9.7 s, step 0 3.8 s);
+step 2 (two transfers, a mint) 366.4 s; the rogue base step at block
+1001 308.8 s to prove and refused by both deciders; step 3 (one
+transfer, padded) 382.8 s; decided in sequence in 2.47 s, alone in
+2.42 s; every misshapen and tampered step refused with an error, none
+with a panic (the test asserts them without printing; the pass is the
+record); step 3 again after a reorganisation (a mint) 324.2 s. 53 min
+59 s of wall clock, 22.77 GB resident at the peak. The run was at the
+fuzzing commit of 21 November, before the decider's own key read, whose
+assertions in the same test (both reads from one directory: the same
+id, shapes and genesis digest; the decider's set deciding step 3 as the
+full one does; refusing to prove) wait for the next server run.
