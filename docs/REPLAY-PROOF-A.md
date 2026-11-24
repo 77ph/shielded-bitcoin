@@ -1203,10 +1203,13 @@ has no prover's part (`ProverKeys`: the proving keys, the padding, step
 never generating keys. The chain test reads both sets from one
 directory and asserts the same id, shapes and genesis digest, that the
 decider's set decides step 3 as the full one does and reads its state,
-and that it refuses to prove. Run as the client of 17 November again, on
-the laptop, from the server's key files (35 MB, checksums compared) and
-the one file `step-000427-332274.bin` (70 296 bytes), the box under
-another project's load (load average 13): the keys read in **21.5 s** —
+and that it refuses to prove; run on the server on 24 November with the
+follower stopped between steps, it passed, the prover's read 164 s and
+the decider's 18 s from one directory (`RUNS.md`). Run as the client of
+17 November again, on the laptop, from the server's key files (35 MB,
+checksums compared) and the one file `step-000427-332274.bin` (70 296
+bytes), the box under another project's load (load average 13): the
+keys read in **21.5 s** —
 the parameters and verifying keys 10.9 s, the transfer key 7.2 s (made
 and written, the set predating `t.params`/`t.vk`), the shapes 3.3 s —
 and step 427 decided from the genesis in **1.04 s**; 30.4 s of wall
@@ -1476,8 +1479,9 @@ as it was; this section and its implementation go to the next batch.
   server beside the live follower — 35 MB of keys, the read in 18–30 s,
   the step in one to three seconds, a quarter of a gigabyte resident —
   against the 185 s / 11.5 GB of 17 November, which were the prover's
-  read. The chain test checks the two reads agree;
-  its server run of 24 November passed with the nine negatives of §3.4.
+  read. The chain test checks the two reads agree; its server runs of
+  24 November passed, the morning's with the nine negatives of §3.4, the
+  afternoon's with the two reads' assertions beside them.
 * **v0.12** (21 November 2026) — the wire's shape checked against the
   keys before any position is read (`check_shape`), and a count on the
   wire bounded by the bytes left before it sizes an allocation, in the

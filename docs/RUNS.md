@@ -700,7 +700,25 @@ transfer, padded) 382.8 s; decided in sequence in 2.47 s, alone in
 with a panic (the test asserts them without printing; the pass is the
 record); step 3 again after a reorganisation (a mint) 324.2 s. 53 min
 59 s of wall clock, 22.77 GB resident at the peak. The run was at the
-fuzzing commit of 21 November, before the decider's own key read, whose
-assertions in the same test (both reads from one directory: the same
-id, shapes and genesis digest; the decider's set deciding step 3 as the
-full one does; refusing to prove) wait for the next server run.
+fuzzing commit of 21 November, before the decider's own key read.
+
+The same test ran again that afternoon at the day's last commit, with
+that read's assertions beside the nine negatives — both sets read from
+one directory: the same id, shapes and genesis digest; the decider's set
+deciding step 3 as the full one does and reading its state; refusing to
+prove — the follower stopped after step 431 (the test binary built
+beside it while it idled: the memory guard of the morning's measurement
+aborted the build twice as a step began, the third attempt took 262 s).
+It passed: keys generated in 1 225.4 s; step 1 315.9 s; the keys written
+in 2.2 s and read back by the prover's read in 164.1 s (the parameters
+and key files 121.9 s, the transfer key and padding 30.5 s, the shapes
+9.1 s, step 0 2.6 s) and by the decider's read, from the same directory
+in the same process, in **18.0 s** (the parameters and verifying keys
+10.2 s, the transfer key 0.6 s, the shapes 7.2 s); step 2 368.0 s; the
+rogue base step 345.6 s; step 3 312.6 s, decided in 2.91 s and alone in
+2.98 s; step 3 after the reorganisation 347.6 s. 53 min 58 s of wall
+clock, 22.75 GB resident at the peak — the same hour and the same peak
+as the morning's run, the decider's read costing the test nothing it
+could measure. The follower was restarted at 15:01 UTC, read its keys in
+190 s and went on from step 431 (its log of the afternoon kept as
+`follow-run8.log`, 58 lines).
