@@ -722,3 +722,68 @@ as the morning's run, the decider's read costing the test nothing it
 could measure. The follower was restarted at 15:01 UTC, read its keys in
 190 s and went on from step 431 (its log of the afternoon kept as
 `follow-run8.log`, 58 lines).
+
+## Public signet, 24 November 2026: the circuits carry the keys — the chain test under them, the chain restarted from the genesis (deployment `signet-a-2`)
+
+**What changed** (`REPLAY-PROOF-A.md` v0.14, the commit of the
+evening). Each chain circuit hashes the key points it verifies the
+other circuit's proof under and ends its instance with that hash and
+the other circuit's, copied from the verified proof's instance; the
+hashes are constrained equal from step to step from the dummy step 0
+on, and the decider checks them beside the key points of the step it
+holds (`key_tail`, §3.8). The batch relation shows a slot's inverse
+both ways and hands its active bits to the slot binding, which no
+longer witnesses its own. A circuit change is a new key set, so the
+chain restarts from the genesis (activation 330433) in a fresh data
+directory with the same profile and arguments; the old follower's
+directory, log and binary are left as they are.
+
+**The chain test under the new circuits** (the server container, host
+load 18–20 at the start). The test binary and the CLI were built beside
+the live follower under the memory guard of the morning (a build only
+while the follower is between steps, aborted the moment it begins
+proving): the guard aborted the build twice, after 755 s and 269 s, as
+steps began; the third attempt took 318 s. The follower was stopped at
+17:51 UTC after step 435 (blocks 332319–332324, five without events,
+no slots, 1 059.5 s to prove beside the build after a 1 800 s wait,
+decided in 7.29 s) — 435 steps over blocks 330433–332324 under the key
+set of 11 November; its log of the afternoon, steps 432–435, kept as
+`follow-run9.log`. The test passed: keys generated in **1 239.0 s**;
+**`T_p` 225 836 rows at k = 18**, 2 477 more than before the tail (of
+262 144); step 1 (two mints, the base) 367.8 s and **70 040 bytes** on
+the wire, 256 more than before — the four tail values of each instance;
+the base step over a dummy step 0 carrying another hash of `T_q`'s key
+(the test's new negative) 355.3 s to prove and refused by both
+deciders; the saved chain state 92 802 bytes (92 546 before); the keys
+written, 1 112 871 649 bytes — the same count as before, the files
+sized by `k` and the columns, not the rows — in 2.5 s and read back by
+the prover's read in 179.5 s (the parameters and key files 133.9 s, the
+transfer key and padding 35.6 s, the shapes 7.5 s, step 0 2.5 s) and by
+the decider's read in **17.0 s** (9.1 + 0.5 + 7.4), the same id, shapes
+and genesis digest; step 2 (two transfers, a mint) 323.1 s; the rogue
+base step at block 1001 310.8 s, refused; step 3 (one transfer, padded)
+315.4 s, decided in sequence in **2.59 s** and alone in **2.32 s**; the
+nine negatives of the morning refused without a panic; step 3 again
+after a reorganisation (a mint) 343.0 s. 1 h 0 min 58 s of wall clock,
+**22.85 GB** resident at the peak (22.75–22.77 GB in the morning's and
+the afternoon's runs).
+
+**The chain restarted from the genesis** (18:52 UTC, the server
+container: the binary of the evening's commit in a fresh data
+directory, the same profile, chain source and arguments). The new
+follower generated its key set in **1 069 s** (id
+`476461074b30810a4de3bf3a8603af6bbf2bc1eefb1b5d47f9a1ba812614f6ad`,
+written in 2 s: the proving keys 647 and 429 MB, the parameters 16 MB
+each, the verifying keys 1.28 and 0.95 MB, the transfer key's files
+1.1 MB) and started at block 330433 from the deployment's genesis digest
+`87f0f4604b52d600a2c6e37ab21ecb86863aefbf045c046e4d9f69f5f20fb212`; its
+step 1, blocks 330433–330441 (eight without events, no slots), proved
+in **359.5 s** with no wait, **70 552 bytes** on the wire (70 296 under
+the key set of 11 November: the four tail values of each instance),
+decided in 3.25 s; at 19:18 UTC it was proving step 2 at 17.9 GB
+resident. It has the 1 892 blocks to 332324 to redo, nine a step where
+none has events — about 210 steps, a day at six minutes a step — before
+it is at the network's head again and follows block by block. The
+first chain's step files do not decide under the new keys (another key
+set is another id) and stay in the old directory with its log and
+binary.

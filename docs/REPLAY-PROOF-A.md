@@ -723,8 +723,9 @@ a constant-size download.** With it: one `T` proof (≈ 6–7 KB), two
 accumulators (≈ 1 KB), the state opening: independent of the number of
 blocks. Built as the chain of §3.8 with the genesis digest carried
 through it (10 November): the newest step alone — two proofs, two
-instances, the slot statements and the opening, 69 716 bytes measured —
-is decided from the keys and the deployment's genesis digest. What the
+instances, the slot statements and the opening, 69 716 bytes measured
+on 10 November, 70 040 with the key tail of 24 November — is decided
+from the keys and the deployment's genesis digest. What the
 decider holds of the keys (24 November, `ChainKeys::read_for_decider`,
 §3.8): the two circuits' parameters (16 MB each), their verifying keys
 (0.95 and 1.28 MB) and the transfer circuit's parameters and verifying
@@ -1062,7 +1063,11 @@ its hash of `T_p`'s key equal to the one `T_p(i−1)` carried, `T_p(i)`
 its hash of `T_q`'s key equal to the one `T_q(i)` carried, at every
 step, the base one over the dummy step 0's honest tail included
 (`key_tail`, 24 November) — so the keys the decider checks on the
-last step are every step's, and it checks the hashes beside them. **The
+last step are every step's, and it checks the hashes beside them.
+[measured, the server, 24 November: `T_p` 225 836 rows at k = 18,
+2 477 more than before the tail; a step 70 040 bytes, 256 more — the
+four tail values of each instance; proving and deciding times unchanged
+within the run-to-run spread, `RUNS.md`] **The
 mechanism is built** (`verifier_body.rs`, `keys_as_inputs` and
 `allow_base`, the same night) [measured]: over a transfer proof the
 `q` group side exposes its key's 33 commitments as 66 cells and the base
@@ -1411,7 +1416,8 @@ is a prefix after statements were applied in the block in progress.
 three slots]: keys 951 s; **`T_p` 223 359 rows at k = 18** (of 262 144:
 room for about seven more appends, so `E ≤ 12` fits the CLI's four
 slots); steps 304.7, 284.1, 281.2 s, 69 784 bytes each (four more than
-before: the step's first block); the rogue base step refused; the
+before: the step's first block; with the key tail of 24 November,
+225 836 rows and 70 040 bytes, `RUNS.md`); the rogue base step refused; the
 decider 2.19 s, the latest step alone 2.27 s. What it does not change:
 the anchor rule, the digests, the decider, the keys' structure beyond
 the relation's new rows.
@@ -1489,8 +1495,11 @@ as it was; this section and its implementation go to the next batch.
   (`key_tail`, §3.8; the decider checks the hashes beside the key
   points); the relation's active bit is the bit the slot binding uses
   (`bind_slots` takes it from `synthesize_core`, which shows the inverse
-  both ways). A new key set; the live chain restarted from the genesis
-  under it (`RUNS.md`). Tests: the chain's `T_q` over a dummy carrying
+  both ways). A new key set: the real-key chain test passed on the
+  server under it the same evening (`T_p` 225 836 rows at k = 18, 2 477
+  more; a step 70 040 bytes, 256 more; steps 315–368 s; 1 h 1 min,
+  22.85 GB at the peak) and the live chain was restarted from the
+  genesis under it at 18:52 UTC (`RUNS.md`). Tests: the chain's `T_q` over a dummy carrying
   another hash of `T_p`'s key refused and the honest dummy accepted
   (mock prover); a base step over a dummy step 0 carrying another hash
   of `T_q`'s key refused by both deciders (the real-key chain test); a
