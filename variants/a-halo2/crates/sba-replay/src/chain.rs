@@ -741,13 +741,26 @@ pub struct ChainKeys {
     pub tvk: VerifyingKey<vesta::Affine>,
     pub outer: Params<pallas::Affine>,
     pub ovk: VerifyingKey<pallas::Affine>,
-    pub opk: ProvingKey<pallas::Affine>,
     pub pparams: Params<vesta::Affine>,
     pub pvk: VerifyingKey<vesta::Affine>,
-    pub ppk: ProvingKey<vesta::Affine>,
     pub step_q: StepQChain,
     pub step_p: StepPChain,
     pub batch_params: BatchParams,
+    /// The digest of the genesis opening, the state before step 1 (what
+    /// the dummy step 0 exposes as its `g`).
+    pub genesis_digest: Fp,
+    /// What only the prover needs; `None` for a key set read for deciding
+    /// alone ([`Self::read_for_decider`]).
+    pub prover: Option<ProverKeys>,
+}
+
+/// The prover's part of a key set: the two proving keys (a gigabyte on
+/// disk, ten times that resident as cosets), the padding proofs and the
+/// dummy step 0 the chain starts from. The decider needs none of it: it
+/// verifies with the parameters, the verifying keys and the shapes.
+pub struct ProverKeys {
+    pub opk: ProvingKey<pallas::Affine>,
+    pub ppk: ProvingKey<vesta::Affine>,
     /// One valid transfer proof of the sample statement per fragment slot,
     /// all distinct: the verifier's MSM merges equal points, so identical
     /// proofs in two slots would open identical claims and `T_p`'s proof
@@ -773,14 +786,20 @@ impl ChainKeys {
         let file = |name: &str| -> std::io::Result<BufWriter<std::fs::File>> {
             Ok(BufWriter::new(std::fs::File::create(dir.join(name))?))
         };
+        let p = self.prover().map_err(std::io::Error::other)?;
         self.ovk.write(&mut file("t_q.vk")?)?;
-        self.opk.write(&mut file("t_q.pk")?)?;
+        p.opk.write(&mut file("t_q.pk")?)?;
         self.pvk.write(&mut file("t_p.vk")?)?;
-        self.ppk.write(&mut file("t_p.pk")?)?;
+        p.ppk.write(&mut file("t_p.pk")?)?;
         // the parameters too: `Params::new` at k = 18 hashes 2^18 points to
         // the curve, minutes; their file is 16 MB and reads in a second
         self.outer.write(&mut file("t_q.params")?)?;
         self.pparams.write(&mut file("t_p.params")?)?;
+        // the transfer circuit's parameters and verifying key, so a reader
+        // need not generate them (seconds each; the decider's read is the
+        // one that minds)
+        self.tparams.write(&mut file("t.params")?)?;
+        self.tvk.write(&mut file("t.vk")?)?;
         let mut meta = vec![KEYS_META_VERSION];
         for v in [
             self.n_proofs as u32,
@@ -831,6 +850,65 @@ impl ChainKeys {
         batch_params: BatchParams,
         genesis: &StateOpening,
     ) -> Result<Self, String> {
+        Self::read_inner(
+            dir,
+            n_proofs,
+            n_slots,
+            n_empty,
+            k_q,
+            k_p,
+            batch_params,
+            genesis,
+            true,
+        )
+    }
+
+    /// The decider's part of a key set written by [`Self::write`]: the
+    /// parameters, the two verifying keys, the transfer key and the shapes
+    /// — no proving key read (a gigabyte less on disk, ten less resident),
+    /// no padding proved, no step 0; the shapes are rebuilt over fake
+    /// captures of the transfer statement, as they depend on the keys'
+    /// structure alone (the full read rebuilds them from fresh padding
+    /// proofs each time, so they cannot depend on a proof's values). The
+    /// metadata's id must be the keys' id, as for [`Self::read`]. The
+    /// result decides steps ([`ChainDecider`]) and reads states
+    /// ([`Self::state_of_step`]); [`ChainProver::new`] refuses it.
+    #[allow(clippy::too_many_arguments)]
+    pub fn read_for_decider(
+        dir: &std::path::Path,
+        n_proofs: usize,
+        n_slots: usize,
+        n_empty: usize,
+        k_q: u32,
+        k_p: u32,
+        batch_params: BatchParams,
+        genesis: &StateOpening,
+    ) -> Result<Self, String> {
+        Self::read_inner(
+            dir,
+            n_proofs,
+            n_slots,
+            n_empty,
+            k_q,
+            k_p,
+            batch_params,
+            genesis,
+            false,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn read_inner(
+        dir: &std::path::Path,
+        n_proofs: usize,
+        n_slots: usize,
+        n_empty: usize,
+        k_q: u32,
+        k_p: u32,
+        batch_params: BatchParams,
+        genesis: &StateOpening,
+        with_prover: bool,
+    ) -> Result<Self, String> {
         use crate::step4::StepQN;
         use std::io::BufReader;
         if !Self::on_disk(dir, n_proofs, n_slots, n_empty, k_q, k_p) {
@@ -869,29 +947,77 @@ impl ChainKeys {
         let ovk =
             VerifyingKey::<pallas::Affine>::read::<_, StepQChain>(&mut open("t_q.vk")?, &outer)
                 .map_err(|e| format!("t_q.vk: {e}"))?;
-        let opk = ProvingKey::<pallas::Affine>::read::<_, StepQChain>(&mut open("t_q.pk")?, &outer)
-            .map_err(|e| format!("t_q.pk: {e}"))?;
         let pvk =
             VerifyingKey::<vesta::Affine>::read::<_, StepPChain>(&mut open("t_p.vk")?, &pparams)
                 .map_err(|e| format!("t_p.vk: {e}"))?;
-        let ppk =
-            ProvingKey::<vesta::Affine>::read::<_, StepPChain>(&mut open("t_p.pk")?, &pparams)
-                .map_err(|e| format!("t_p.pk: {e}"))?;
-        lap(&mut t, "params and key files");
-        // the transfer key and the padding
-        let tp = TransferParams::build().map_err(err)?;
+        let pks = if with_prover {
+            let opk =
+                ProvingKey::<pallas::Affine>::read::<_, StepQChain>(&mut open("t_q.pk")?, &outer)
+                    .map_err(|e| format!("t_q.pk: {e}"))?;
+            let ppk =
+                ProvingKey::<vesta::Affine>::read::<_, StepPChain>(&mut open("t_p.pk")?, &pparams)
+                    .map_err(|e| format!("t_p.pk: {e}"))?;
+            Some((opk, ppk))
+        } else {
+            None
+        };
+        lap(
+            &mut t,
+            if with_prover {
+                "params and key files"
+            } else {
+                "params and verifying keys"
+            },
+        );
+        // the transfer key: its parameters and verifying key from their files
+        // when present (written since 24 November), made otherwise and
+        // written for the next read
         let (st, w) = crate::sample::sample();
-        let tparams: Params<vesta::Affine> = Params::new(K);
-        let tvk = plonk::keygen_vk(&tparams, &TransferCircuit::default()).map_err(err)?;
+        let tparams: Params<vesta::Affine> = params_from(dir, "t.params", K);
+        let tvk = match std::fs::File::open(dir.join("t.vk")) {
+            Ok(f) => VerifyingKey::<vesta::Affine>::read::<_, TransferCircuit>(
+                &mut BufReader::new(f),
+                &tparams,
+            )
+            .map_err(|e| format!("t.vk: {e}"))?,
+            Err(_) => {
+                let vk = plonk::keygen_vk(&tparams, &TransferCircuit::default()).map_err(err)?;
+                if let Ok(f) = std::fs::File::create(dir.join("t.vk")) {
+                    let _ = vk.write(&mut std::io::BufWriter::new(f));
+                }
+                vk
+            }
+        };
+        // the padding for the prover: n fresh proofs of the sample statement,
+        // captured; for the decider, fake captures of the same statement —
+        // the shapes read only a capture's structure
         let mut padding = Vec::with_capacity(n_proofs);
         let mut caps: Vec<Capture<vesta::Affine>> = Vec::with_capacity(n_proofs);
-        for _ in 0..n_proofs {
-            let proof = tp.prove(&st, &w, &mut OsRng).map_err(err)?;
-            caps.push(capture(&tparams, &tvk, &st.to_field_elements(), &proof, &[]).map_err(err)?);
-            padding.push((st.clone(), proof));
+        if with_prover {
+            let tp = TransferParams::build().map_err(err)?;
+            for _ in 0..n_proofs {
+                let proof = tp.prove(&st, &w, &mut OsRng).map_err(err)?;
+                caps.push(
+                    capture(&tparams, &tvk, &st.to_field_elements(), &proof, &[]).map_err(err)?,
+                );
+                padding.push((st.clone(), proof));
+            }
+        } else {
+            for _ in 0..n_proofs {
+                let (cap, _) = fake_capture(&tparams, &tvk, &st.to_field_elements(), &[], OsRng)
+                    .map_err(err)?;
+                caps.push(cap);
+            }
         }
         let claims_t: Vec<Claim<vesta::Affine>> = caps.iter().map(|c| c.claim()).collect();
-        lap(&mut t, "transfer key and padding");
+        lap(
+            &mut t,
+            if with_prover {
+                "transfer key and padding"
+            } else {
+                "transfer key"
+            },
+        );
         let k_p_usize = k_p as usize;
         // the shapes: the bootstrap's rounds with the final keys throughout
         let q0 = StepQN {
@@ -1007,25 +1133,21 @@ impl ChainKeys {
             tvk,
             outer,
             ovk,
-            opk,
             pparams,
             pvk,
-            ppk,
             step_q: sq.without_witnesses(),
             step_p: sp.without_witnesses(),
             batch_params,
-            padding,
-            step0: Artifacts {
-                cap_q: cap_q_final.clone(),
-                cap_p: cap_p_final.clone(),
-                sq: sq.without_witnesses(),
-                sp: sp.without_witnesses(),
-            },
+            genesis_digest: genesis.digest(),
+            prover: None,
         };
         lap(&mut t, "shapes");
         if keys.id() != stored_id {
             return Err("the key files are not the key set the metadata names".into());
         }
+        let Some((opk, ppk)) = pks else {
+            return Ok(keys);
+        };
         // the dummy step 0 under genesis, as generate() makes it
         let sq0 = keys
             .shaper()
@@ -1064,12 +1186,17 @@ impl ChainKeys {
         sp0.batch.witness = None;
         lap(&mut t, "step 0");
         Ok(ChainKeys {
-            step0: Artifacts {
-                cap_q: cap_q0f,
-                cap_p: cap_p0f,
-                sq: sq0.without_witnesses(),
-                sp: sp0.without_witnesses(),
-            },
+            prover: Some(ProverKeys {
+                opk,
+                ppk,
+                padding,
+                step0: Artifacts {
+                    cap_q: cap_q0f,
+                    cap_p: cap_p0f,
+                    sq: sq0.without_witnesses(),
+                    sp: sp0.without_witnesses(),
+                },
+            }),
             ..keys
         })
     }
@@ -1128,8 +1255,14 @@ impl ChainKeys {
     /// The digest of the genesis opening, as the dummy step 0 exposes it:
     /// its `g`, the last of its public values `[s_prev, s_next, D, g]`.
     pub fn genesis_digest(&self) -> Fp {
-        let i = &self.step0.cap_p.instance;
-        i[i.len() - 1]
+        self.genesis_digest
+    }
+
+    /// The prover's part, or why there is none.
+    pub fn prover(&self) -> Result<&ProverKeys, String> {
+        self.prover
+            .as_ref()
+            .ok_or_else(|| "this key set was read for deciding alone: no proving keys".to_string())
     }
 
     /// Keys for fragments of `n_proofs` over `n_slots` at `k_q`, `k_p`,
@@ -1459,20 +1592,23 @@ impl ChainKeys {
             tvk,
             outer,
             ovk,
-            opk,
             pparams,
             pvk,
-            ppk,
             step_q: sq3.without_witnesses(),
             step_p: sp3.without_witnesses(),
             batch_params,
-            padding,
-            step0: Artifacts {
-                cap_q: cap_q0f,
-                cap_p: cap_p0f,
-                sq: sq0,
-                sp: sp0,
-            },
+            genesis_digest: s0,
+            prover: Some(ProverKeys {
+                opk,
+                ppk,
+                padding,
+                step0: Artifacts {
+                    cap_q: cap_q0f,
+                    cap_p: cap_p0f,
+                    sq: sq0,
+                    sp: sp0,
+                },
+            }),
         })
     }
 
@@ -1508,13 +1644,13 @@ pub struct ChainProver<'k> {
 }
 
 impl<'k> ChainProver<'k> {
-    pub fn new(keys: &'k ChainKeys) -> Self {
-        ChainProver {
+    pub fn new(keys: &'k ChainKeys) -> Result<Self, String> {
+        Ok(ChainProver {
             keys,
-            prev: keys.step0.clone(),
+            prev: keys.prover()?.step0.clone(),
             steps: 0,
             s: keys.genesis_digest(),
-        }
+        })
     }
 
     /// The prover as a saved state left it: the previous step's captures
@@ -1581,7 +1717,7 @@ impl<'k> ChainProver<'k> {
         let used: Vec<bool> = (0..k.n_proofs).map(|i| i < transfers.len()).collect();
         let mut transfers = transfers.to_vec();
         while transfers.len() < k.n_proofs {
-            transfers.push(k.padding[transfers.len()].clone());
+            transfers.push(k.prover()?.padding[transfers.len()].clone());
         }
         let mut next = 0;
         let slot_proof: Vec<Option<usize>> = witness
@@ -1617,7 +1753,7 @@ impl<'k> ChainProver<'k> {
         let mut tr = crate::native::PoseidonWrite::<_, pallas::Affine>::init(vec![]);
         plonk::create_proof_with_openings(
             &k.outer,
-            &k.opk,
+            &k.prover()?.opk,
             std::slice::from_ref(&sq),
             &[&[&instance_q[..]]],
             std::slice::from_ref(&self.prev.cap_q.claim()),
@@ -1650,7 +1786,7 @@ impl<'k> ChainProver<'k> {
         let mut tr = crate::native::PoseidonWrite::<_, vesta::Affine>::init(vec![]);
         plonk::create_proof_with_openings(
             &k.pparams,
-            &k.ppk,
+            &k.prover()?.ppk,
             std::slice::from_ref(&sp),
             &[&[&instance_p[..]]],
             &claims,
@@ -1980,7 +2116,7 @@ pub fn claims_of_step(
             .collect();
         claims.push(claim_at::<vesta::Affine>(iq, &pos)?);
     }
-    let k_p = k.step0.cap_p.u.len();
+    let k_p = k.pparams.k() as usize;
     let pos: Vec<usize> = claim_positions(&sq.group_tp, k_p)
         .iter()
         .map(|p| off_tp + p)
@@ -2370,7 +2506,7 @@ mod chain_tests {
             "chain T_p shape: {:?}",
             halo2_proofs::dev::CircuitCost::<vesta::Point, _>::measure(18, &keys.step_p)
         );
-        let mut prover = ChainProver::new(&keys);
+        let mut prover = ChainProver::new(&keys).unwrap();
         let decider = ChainDecider { keys: &keys };
         // block 1000 (the two mints) as the first step: no transfers
         let mut s = genesis.digest();
@@ -2416,6 +2552,19 @@ mod chain_tests {
         let keys = ChainKeys::read(&dir, 2, 3, 8, 18, 18, bparams, &genesis).unwrap();
         println!("keys read: {:.1} s", t.elapsed().as_secs_f64());
         assert_eq!(keys.id(), id);
+        // the decider's part alone: no proving key read, no padding proved,
+        // the same id, the same shapes, the same genesis digest; it decides
+        // (below, on step 3) and refuses to prove
+        let t = std::time::Instant::now();
+        let slim = ChainKeys::read_for_decider(&dir, 2, 3, 8, 18, 18, bparams, &genesis).unwrap();
+        println!("keys read for deciding: {:.1} s", t.elapsed().as_secs_f64());
+        assert_eq!(slim.id(), id);
+        assert!(slim.prover.is_none());
+        assert_eq!(slim.genesis_digest(), keys.genesis_digest());
+        assert_eq!(slim.instance_lengths(), keys.instance_lengths());
+        assert_eq!(slim.step_q.offsets(), keys.step_q.offsets());
+        assert_eq!(slim.n_slots, keys.n_slots);
+        assert!(ChainProver::new(&slim).is_err());
         std::fs::remove_dir_all(&dir).unwrap();
         let decider = ChainDecider { keys: &keys };
         let mut prover = ChainProver::resume(&keys, &restored).unwrap();
@@ -2590,6 +2739,22 @@ mod chain_tests {
             );
             assert!(keys.state_of_step(&misshapen, 3).is_err(), "{name}");
         }
+        // the decider's key set decides step 3 as the full one does, from
+        // the genesis and in sequence, and reads its state
+        let slim_decider = ChainDecider { keys: &slim };
+        assert_eq!(
+            slim_decider.decide_latest(&step3).unwrap(),
+            decider.decide_latest(&step3).unwrap()
+        );
+        assert_eq!(
+            slim_decider.decide(&step3, 3, o1.digest()).unwrap(),
+            decider.decide(&step3, 3, o1.digest()).unwrap()
+        );
+        assert_eq!(
+            slim.state_of_step(&step3, 3).unwrap().to_bytes(),
+            keys.state_of_step(&step3, 3).unwrap().to_bytes()
+        );
+        assert!(slim_decider.decide_latest(&mislabelled).is_err());
         // the proof bytes themselves: the shape passes, the verifier must
         // refuse without panicking — a flipped byte in either proof, zeroed
         // proofs of the right length, empty proofs (the fuzzer has no keys,

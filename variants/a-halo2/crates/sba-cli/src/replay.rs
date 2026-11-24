@@ -161,6 +161,56 @@ fn keys(ctx: &Ctx, dir: &Dir, sizes: Sizes) -> Result<ChainKeys> {
     Ok(keys)
 }
 
+/// The key set for deciding alone — the parameters, the verifying keys,
+/// the transfer key and the shapes, no proving key — from `keys/` under
+/// the data directory. The decider reads keys; it never makes them.
+fn keys_for_decider(ctx: &Ctx, dir: &Dir, sizes: Sizes) -> Result<ChainKeys> {
+    let genesis = ReplayState::new().opening(ctx.deployment.activation_height);
+    let verifier = ctx.deployment.verifier()?;
+    let params = Indexer::new(ctx.deployment.clone(), verifier, ReplayState::new()).batch_params();
+    let kdir = dir.0.join("keys");
+    if !ChainKeys::on_disk(
+        &kdir,
+        sizes.proofs,
+        sizes.slots,
+        sizes.empty,
+        sizes.k_q,
+        sizes.k_p,
+    ) {
+        anyhow::bail!(
+            "no key set of {} proofs over {} slots, {} empty blocks, k = {}/{} under {}: the decider reads keys, it does not make them",
+            sizes.proofs,
+            sizes.slots,
+            sizes.empty,
+            sizes.k_q,
+            sizes.k_p,
+            kdir.display()
+        );
+    }
+    println!(
+        "chain keys: {} proofs over {} slots, {} empty blocks a step, k = {}/{}; reading the decider's part …",
+        sizes.proofs, sizes.slots, sizes.empty, sizes.k_q, sizes.k_p
+    );
+    let t = Instant::now();
+    let keys = ChainKeys::read_for_decider(
+        &kdir,
+        sizes.proofs,
+        sizes.slots,
+        sizes.empty,
+        sizes.k_q,
+        sizes.k_p,
+        params,
+        &genesis,
+    )
+    .map_err(|e| anyhow::anyhow!("chain keys on disk: {e}"))?;
+    println!(
+        "chain keys: read for deciding in {:.1} s, id {}",
+        t.elapsed().as_secs_f64(),
+        hex::encode(keys.id())
+    );
+    Ok(keys)
+}
+
 /// Prove the next steps of the chain: `steps` of them, or — following —
 /// every step the chain offers, looking again every `poll` when it
 /// offers none.
@@ -191,7 +241,7 @@ pub fn prove(
             (p, st.next_height)
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            let p = ChainProver::new(&keys);
+            let p = ChainProver::new(&keys).map_err(|e| anyhow::anyhow!("chain keys: {e}"))?;
             println!(
                 "chain state: none; starting at block {} from the genesis digest {}",
                 ctx.deployment.activation_height,
@@ -302,7 +352,7 @@ pub fn prove(
 /// the genesis digest (one step attests the whole history).
 pub fn decide(ctx: &Ctx, sizes: Sizes, latest: bool) -> Result<()> {
     let dir = Dir::of(ctx)?;
-    let keys = keys(ctx, &dir, sizes)?;
+    let keys = keys_for_decider(ctx, &dir, sizes)?;
     if latest {
         let (index, height, path) = dir.steps()?.into_iter().last().context("no step on disk")?;
         let step = ProvenStep::from_bytes(&std::fs::read(&path)?)
