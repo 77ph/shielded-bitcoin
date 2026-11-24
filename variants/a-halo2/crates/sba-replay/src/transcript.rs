@@ -32,6 +32,8 @@ pub use crate::native::tag;
 pub use sba_primitives::poseidon_fq::Fq;
 
 type Cell<F> = AssignedCell<F, F>;
+/// A squeezed element and its two limbs: `(s0, c, h)`, `s0 = c + 2^128 h`.
+pub type Split<F> = (Cell<F>, Cell<F>, Cell<F>);
 type Chip<F> = Pow5Chip<F, 3, 2>;
 
 /// The fields the gadget runs over.
@@ -225,6 +227,13 @@ where
         &mut self,
         layouter: &mut impl Layouter<F>,
     ) -> Result<(Cell<F>, Cell<F>), Error> {
+        let (s0, c, _) = self.squeeze_split(layouter)?;
+        Ok((s0, c))
+    }
+
+    /// Squeeze: the full `s0` and its split `s0 = c + 2^128 h`, `c` below
+    /// `2^128` and `h` below `2^127` — the element as two canonical cells.
+    pub fn squeeze_split(&mut self, layouter: &mut impl Layouter<F>) -> Result<Split<F>, Error> {
         self.flush(layouter)?;
         let s0: Cell<F> = self.state[0].clone().into();
         let cfg = self.cfg;
@@ -257,7 +266,7 @@ where
             .copy_check(layouter.namespace(|| "h words"), h.clone(), 12, false)?;
         cfg.range
             .copy_short_check(layouter.namespace(|| "h short"), zs[12].clone(), 7)?;
-        Ok((s0, c))
+        Ok((s0, c, h))
     }
 }
 

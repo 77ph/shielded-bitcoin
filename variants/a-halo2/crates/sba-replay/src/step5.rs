@@ -160,7 +160,7 @@ impl Circuit<vesta::Scalar> for StepPSplit {
             let cells: Vec<_> = inputs.into_iter().chain(outputs).collect();
             bind(&mut ch, &mut l, &cells, links, &ex.instance_values, *offset)?;
         }
-        let (slots, _) = self.batch.synthesize_core(
+        let (slots, _, _) = self.batch.synthesize_core(
             &cfg.batch,
             &mut l,
             Some((cfg.group.instance, ex.cells.len())),

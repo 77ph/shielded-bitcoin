@@ -119,6 +119,37 @@ pub struct VerifierConfig {
 pub struct Exposed {
     pub cells: Vec<Cell>,
     pub instance_values: Vec<Vec<Cell>>,
+    /// `keys_as_inputs`: the hash of the key the proof was verified under
+    /// — of the very points the multiplication used — as two 128-bit
+    /// limbs, low first, for the circuit embedding this one to carry
+    /// across steps (§3.8).
+    pub key_hash: Option<(Cell, Cell)>,
+}
+
+/// The hash of a key's commitments as the circuit computes it over the
+/// points it multiplies when `keys_as_inputs`: a sponge in this side's
+/// domain over the coordinates in `Source::Key` order, split into two
+/// 128-bit limbs, low first.
+pub fn key_hash(keys: &[C]) -> (F, F) {
+    let mut s = crate::native::Sponge::<C>::default();
+    s.absorb(F::from(KEY_HASH_TAG));
+    for k in keys {
+        s.absorb_point(*k).expect("a key commitment is not the identity");
+    }
+    split_128(s.squeeze())
+}
+
+/// `v = lo + 2^128 hi`, the transcript gadget's split.
+pub fn split_128(v: F) -> (F, F) {
+    let repr = v.to_repr();
+    let bytes: &[u8] = repr.as_ref();
+    let mut lo = <F as PrimeField>::Repr::default();
+    let mut hi = <F as PrimeField>::Repr::default();
+    let lo_bytes: &mut [u8] = lo.as_mut();
+    lo_bytes[..16].copy_from_slice(&bytes[..16]);
+    let hi_bytes: &mut [u8] = hi.as_mut();
+    hi_bytes[..16].copy_from_slice(&bytes[16..]);
+    (F::from_repr(lo).unwrap(), F::from_repr(hi).unwrap())
 }
 
 impl VerifierCircuit {
@@ -858,6 +889,31 @@ impl VerifierCircuit {
             expose(&cfg, layouter, &kp.inner().x(), &mut exposed)?;
             expose(&cfg, layouter, &kp.inner().y(), &mut exposed)?;
         }
+        // the hash of those very points, in this side's domain, as two
+        // canonical limbs (`key_hash` natively)
+        let key_hash = if self.keys_as_inputs {
+            let mut h = Transcript::new(&cfg.transcript, layouter)?;
+            let tag = layouter.assign_region(
+                || "key hash domain",
+                |mut r| {
+                    r.assign_advice_from_constant(
+                        || "tag",
+                        cfg.advices[3],
+                        0,
+                        F::from(KEY_HASH_TAG),
+                    )
+                },
+            )?;
+            h.absorb(layouter, tag)?;
+            for kp in &key_points {
+                h.absorb(layouter, kp.inner().x())?;
+                h.absorb(layouter, kp.inner().y())?;
+            }
+            let (_, lo, hi) = h.squeeze_split(layouter)?;
+            Some((lo, hi))
+        } else {
+            None
+        };
         let sum = acc.fold(&cfg, &ecc, layouter)?;
         if self.allow_base {
             // (1 − base) · Σ = 0: the base step's previous proof is a dummy
@@ -893,6 +949,7 @@ impl VerifierCircuit {
         Ok(Exposed {
             cells: exposed.cells,
             instance_values,
+            key_hash,
         })
     }
 }

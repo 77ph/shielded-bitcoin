@@ -127,7 +127,7 @@ impl Circuit<vesta::Scalar> for StepPBatch {
             0,
         )?;
         // the relation, its public values after the group side's
-        let (slots, _) = self.batch.synthesize_core(
+        let (slots, _, _) = self.batch.synthesize_core(
             &cfg.batch,
             &mut layouter,
             Some((cfg.group.instance, ex.cells.len())),

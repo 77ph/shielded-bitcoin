@@ -596,15 +596,16 @@ impl BatchCircuit {
     }
 
     /// The relation, as a function of the configuration and a layouter;
-    /// the slots' element cells are returned for an embedding circuit to
-    /// bind, and the three public values follow in the instance column
+    /// the slots' element cells and their active bits (1 exactly when the
+    /// slot's `h_body` is non-zero) are returned for an embedding circuit
+    /// to bind, and the three public values follow in the instance column
     /// from `first_row` (or are only returned, without a column).
     pub fn synthesize_core(
         &self,
         cfg: &BatchConfig,
         l: &mut impl Layouter<Fp>,
         instance: Option<(Column<Instance>, usize)>,
-    ) -> Result<(Vec<Vec<Cell>>, [Cell; 3]), Error> {
+    ) -> Result<Synthesized, Error> {
         let mut ctx = Ctx::new(cfg);
         let ctx = &mut ctx;
         let w = self.witness.as_ref();
@@ -637,6 +638,7 @@ impl BatchCircuit {
         let mut cur_nf_size = prev.nf_size.clone();
         let mut cur_applied = prev.applied.clone();
         let mut all_elems: Vec<Vec<Cell>> = Vec::with_capacity(self.n);
+        let mut actives: Vec<Cell> = Vec::with_capacity(self.n);
 
         // ---- blocks without events before this one (§3.9): each closes by
         // appending the unchanged note root at its height; a used prefix
@@ -700,6 +702,20 @@ impl BatchCircuit {
             let nfs = [elems[2].clone(), elems[3].clone()];
             let h_body = elems[SLOT_ELEMENTS - 2].clone();
             let kind = elems[SLOT_ELEMENTS - 1].clone();
+            // and the other way round: a non-zero h_body makes the slot
+            // active (with the zeroing above, active ⟺ h_body ≠ 0), so
+            // that the bit an embedding circuit binds the slot's proof by
+            // is this one
+            let inv = ctx.witness(
+                l,
+                if known {
+                    Value::known(elems_native[SLOT_ELEMENTS - 2].invert().unwrap_or(Fp::ZERO))
+                } else {
+                    Value::unknown()
+                },
+            )?;
+            let hi = ctx.mul(l, &h_body, &inv)?;
+            ctx.assert_equal(l, &hi, &active)?;
             // the kind: 0 a transfer, 1 a mint; anything else refused
             let kk = ctx.mul(l, &kind, &kind)?;
             ctx.assert_equal(l, &kk, &kind)?;
@@ -846,6 +862,7 @@ impl BatchCircuit {
                 cur_size = ctx.add(l, &cur_size, &on)?;
             }
             cur_applied = ctx.add(l, &cur_applied, &active)?;
+            actives.push(active);
             all_elems.push(elems);
         }
 
@@ -905,7 +922,7 @@ impl BatchCircuit {
             l.constrain_instance(d.cell(), col, first_row + 2)?;
         }
         eprintln!("batch relation: {} small rows, {} slots", ctx.rows, self.n);
-        Ok((all_elems, [s_prev, s_next, d]))
+        Ok((all_elems, actives, [s_prev, s_next, d]))
     }
 
     fn siblings(
@@ -931,6 +948,10 @@ impl BatchCircuit {
 fn known_of(w: Option<&BatchWitness>) -> bool {
     w.is_some()
 }
+
+/// What [`BatchCircuit::synthesize_core`] returns: the slots' element
+/// cells, their active bits, and `[s_prev, s_next, D]`.
+pub type Synthesized = (Vec<Vec<Cell>>, Vec<Cell>, [Cell; 3]);
 
 impl Circuit<Fp> for BatchCircuit {
     type Config = BatchConfig;

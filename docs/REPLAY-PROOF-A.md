@@ -1,4 +1,4 @@
-# Succinct replay proofs for variant A (study, draft v0.13)
+# Succinct replay proofs for variant A (study, draft v0.14)
 
 Status: a study; its code is the crate `sba-replay` (§3.8) over the
 vendored `experiments/halo2_proofs-patched` and `experiments/vesta-ecc`,
@@ -980,10 +980,11 @@ vendored `halo2_proofs` — now the whole workspace's through the root
   the same structure) and from a sample `T_q` proven with those keys;
   the relation's shape from the counts. A step's circuit depends only on
   `(n_proofs, n_slots)`: a slot binds to a proof through witnessed bits
-  — one proof per active transfer slot (a slot is active when its
-  `h_body` is non-zero, shown by an inverse), one slot per proof, the
-  bits selecting which statement the slot's elements equal — so a block
-  with its mints in any position uses the same keys.
+  — one proof per active transfer slot (a slot is active exactly when
+  its `h_body` is non-zero: the relation's bit, shown by an inverse both
+  ways, is the bit the binding uses, 24 November), one slot per proof,
+  the bits selecting which statement the slot's elements equal — so a
+  block with its mints in any position uses the same keys.
 * `prover::Prover::prove_block(height, witness, opening_after,
   transfers)`: the indexer's batch witness and the block's accepted
   transfer proofs in slot order to a `wire::ProvenStep` — `T_q` over
@@ -1051,7 +1052,17 @@ identity (`(1 − base) · Σ = 0`); the field side asserts nothing of its
 own (it only computes the scalars the group side uses), and the claims
 a dummy opened are the trivial one `(G_0, 0)`. The decider knows step 1
 is the base. Cost: the key commitments as public inputs add ≈ 100
-cells to each `T_q` and `T_p` instance per verified proof. **The
+cells to each `T_q` and `T_p` instance per verified proof. The keys as
+inputs reach the decider for the step it holds; for the steps before
+it, each circuit hashes the very key points it multiplies by (a
+Poseidon sponge in a domain of its own, the result as two 128-bit
+limbs) and ends its instance with that hash and, copied from the
+verified proof's instance, the other circuit's: `T_q(i)` constrains
+its hash of `T_p`'s key equal to the one `T_p(i−1)` carried, `T_p(i)`
+its hash of `T_q`'s key equal to the one `T_q(i)` carried, at every
+step, the base one over the dummy step 0's honest tail included
+(`key_tail`, 24 November) — so the keys the decider checks on the
+last step are every step's, and it checks the hashes beside them. **The
 mechanism is built** (`verifier_body.rs`, `keys_as_inputs` and
 `allow_base`, the same night) [measured]: over a transfer proof the
 `q` group side exposes its key's 33 commitments as 66 cells and the base
@@ -1471,6 +1482,19 @@ as it was; this section and its implementation go to the next batch.
 
 ## 6. Changelog
 
+* **v0.14** (24 November 2026) — the chain's circuits carry the keys:
+  each hashes the key points it verifies the other's proof under and
+  ends its instance with the hash and the other circuit's, copied,
+  constrained equal from step to step from the dummy step 0 on
+  (`key_tail`, §3.8; the decider checks the hashes beside the key
+  points); the relation's active bit is the bit the slot binding uses
+  (`bind_slots` takes it from `synthesize_core`, which shows the inverse
+  both ways). A new key set; the live chain restarted from the genesis
+  under it (`RUNS.md`). Tests: the chain's `T_q` over a dummy carrying
+  another hash of `T_p`'s key refused and the honest dummy accepted
+  (mock prover); a base step over a dummy step 0 carrying another hash
+  of `T_q`'s key refused by both deciders (the real-key chain test); a
+  transfer slot bound to no proof refused (mock prover).
 * **v0.13** (24 November 2026) — the decider reads its own part of the
   key set (`ChainKeys::read_for_decider`: parameters, verifying keys,
   transfer key, shapes over fake captures; no proving key, padding or

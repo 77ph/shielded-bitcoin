@@ -7,7 +7,9 @@
 //! relation, with `s_prev` chained to `T_p(i−1)`'s `s_next`. Neither
 //! circuit's constants depend on the other's key, so the same keys serve
 //! every step; the first step verifies a dummy previous step under
-//! `base = 1`.
+//! `base = 1`. Each circuit hashes the key it verifies the other under
+//! and ends its instance with that hash and the other's, copied, so that
+//! every step's keys are the next step's (`key_tail`).
 
 use halo2_proofs::circuit::{Layouter, SimpleFloorPlanner};
 use halo2_proofs::plonk::{Circuit, ConstraintSystem, Error};
@@ -16,6 +18,7 @@ use pasta_curves::{pallas, vesta};
 use crate::batch::{BatchCircuit, BatchConfig};
 use crate::field;
 use crate::fieldside;
+use crate::native::Limbs;
 use crate::step2::bind;
 use crate::step4::bind_slots;
 use crate::verifier::{p, q};
@@ -56,7 +59,22 @@ impl StepQChain {
             self.group_tp
                 .instance(self.group_tp.capture.as_ref().expect("values")),
         );
+        v.extend(self.key_tail());
         v
+    }
+    /// The last four public inputs: the hash of the key `T_p(i−1)` is
+    /// verified under, two limbs, then `T_p(i−1)`'s own hash of `T_q(i−1)`'s
+    /// key, copied from its instance for `T_p(i)` to check against its own.
+    pub fn key_tail(&self) -> [pallas::Scalar; 4] {
+        let cap = self.group_tp.capture.as_ref().expect("values");
+        let (lo, hi) = q::key_hash(&key_commitments_q(&self.group_tp));
+        let n_p = cap.instance.len();
+        [
+            lo,
+            hi,
+            vesta::Affine::embed(&cap.instance[n_p - 8]),
+            vesta::Affine::embed(&cap.instance[n_p - 7]),
+        ]
     }
     /// Where each transfer proof's part starts, then `T_p(i−1)`'s.
     pub fn offsets(&self) -> Vec<usize> {
@@ -76,6 +94,7 @@ impl StepQChain {
             .flat_map(|g| g.instance_limbs_when_verified())
             .collect();
         v.extend(self.group_tp.instance_limbs_when_verified());
+        v.extend([1, 1, 1, 1]);
         v
     }
 }
@@ -126,6 +145,29 @@ impl Circuit<pallas::Scalar> for StepQChain {
             &ex_tp.instance_values,
             0,
         )?;
+        // the key T_p(i−1) is verified under, hashed over the very points
+        // the verification used, is the one T_p(i−1) carried as T_q(i−1)'s
+        // (its instance ends [.., kh_q, kh_p, s_prev, s_next, D, g], each
+        // hash two limbs) — at every step, the base one included
+        let (kh_lo, kh_hi) = ex_tp
+            .key_hash
+            .as_ref()
+            .expect("the chain verifies T_p under a key given as input");
+        let vals = &ex_tp.instance_values;
+        let n_p = vals.len();
+        for v in &vals[n_p - 8..n_p - 4] {
+            assert_eq!(v.len(), 1);
+        }
+        ch.assert_equal(&mut l, kh_lo, &vals[n_p - 6][0])?;
+        ch.assert_equal(&mut l, kh_hi, &vals[n_p - 5][0])?;
+        // the tail: that hash, then T_p(i−1)'s own copied for T_p(i)
+        let first = at + ex_tp.cells.len();
+        for (i, cell) in [kh_lo, kh_hi, &vals[n_p - 8][0], &vals[n_p - 7][0]]
+            .into_iter()
+            .enumerate()
+        {
+            l.constrain_instance(cell.cell(), cfg.group.instance, first + i)?;
+        }
         Ok(())
     }
 }
@@ -173,8 +215,9 @@ impl std::fmt::Debug for StepPChain {
 }
 
 impl StepPChain {
-    /// The public inputs: `T_q(i)`'s group side's exposure, the relation's
-    /// `[s_prev, s_next, D]`, then `g` — the chain's genesis digest.
+    /// The public inputs: `T_q(i)`'s group side's exposure, the key tail,
+    /// the relation's `[s_prev, s_next, D]`, then `g` — the chain's
+    /// genesis digest.
     pub fn instance(&self) -> Vec<Fp> {
         let cap = self.group_tq.capture.as_ref().expect("values");
         let mut v = self.group_tq.instance(cap);
@@ -193,9 +236,25 @@ impl StepPChain {
             }
             _ => batch[0],
         };
+        v.extend(self.key_tail());
         v.extend(batch);
         v.push(g);
         v
+    }
+    /// Four public inputs before the relation's: the hash of the key
+    /// `T_q(i)` is verified under, two limbs, then `T_q(i)`'s own hash of
+    /// `T_p(i−1)`'s key, copied from its instance for `T_q(i+1)` to check
+    /// against its own.
+    pub fn key_tail(&self) -> [Fp; 4] {
+        let cap = self.group_tq.capture.as_ref().expect("values");
+        let (lo, hi) = p::key_hash(&key_commitments_p(&self.group_tq));
+        let n_q = cap.instance.len();
+        [
+            lo,
+            hi,
+            pallas::Affine::embed(&cap.instance[n_q - 4]),
+            pallas::Affine::embed(&cap.instance[n_q - 3]),
+        ]
     }
 }
 
@@ -242,15 +301,38 @@ impl Circuit<vesta::Scalar> for StepPChain {
             let cells: Vec<_> = inputs.into_iter().chain(outputs).collect();
             bind(&mut ch, &mut l, &cells, links, &ex.instance_values, *offset)?;
         }
-        let (slots, [s_prev, _, _]) = self.batch.synthesize_core(
+        // the key T_q(i) is verified under, hashed over the very points the
+        // verification used, is the one T_q(i) carried as T_p(i−1)'s (its
+        // instance ends [.., kh_p, kh_q], each hash two limbs)
+        let (kh_lo, kh_hi) = ex
+            .key_hash
+            .as_ref()
+            .expect("the chain verifies T_q under a key given as input");
+        let vals = &ex.instance_values;
+        let n_q = vals.len();
+        for v in &vals[n_q - 4..] {
+            assert_eq!(v.len(), 1);
+        }
+        ch.assert_equal(&mut l, kh_lo, &vals[n_q - 2][0])?;
+        ch.assert_equal(&mut l, kh_hi, &vals[n_q - 1][0])?;
+        // the tail: that hash, then T_q(i)'s own copied for T_q(i+1)
+        let first = ex.cells.len();
+        for (i, cell) in [kh_lo, kh_hi, &vals[n_q - 4][0], &vals[n_q - 3][0]]
+            .into_iter()
+            .enumerate()
+        {
+            l.constrain_instance(cell.cell(), cfg.group.instance, first + i)?;
+        }
+        let (slots, actives, [s_prev, _, _]) = self.batch.synthesize_core(
             &cfg.batch,
             &mut l,
-            Some((cfg.group.instance, ex.cells.len())),
+            Some((cfg.group.instance, first + 4)),
         )?;
         bind_slots(
             &mut ch,
             &mut l,
             &slots,
+            &actives,
             &ex.instance_values,
             &self.statement_positions,
             &self.slot_proof,
@@ -276,7 +358,7 @@ impl Circuit<vesta::Scalar> for StepPChain {
             }
             _ => s_prev.clone(),
         };
-        l.constrain_instance(g.cell(), cfg.group.instance, ex.cells.len() + 3)?;
+        l.constrain_instance(g.cell(), cfg.group.instance, first + 7)?;
         Ok(())
     }
 }
@@ -289,17 +371,20 @@ mod tests {
     use crate::step::tests_support::{tp, tq};
     use crate::verifier::p::Slot;
     use crate::verifier::tests_support::{q_circuit, real, real_with_seed};
+    use ff::Field;
     use halo2_proofs::dev::MockProver;
     use rand::SeedableRng;
     use rand::rngs::StdRng;
     use sba_circuit::K;
 
-    /// `T_q(2)` of the chain over a real `T_p(1)` (base 0) and over a dummy
-    /// `T_p(1)` of the same shape with the real instance (base 1, and
-    /// refused with base 0): `cargo test -p sba-replay --release the_chain_t_q -- --ignored --nocapture`
+    /// `T_q(1)` of the chain over a dummy `T_p(0)`: fake bytes of `T_p(1)`'s
+    /// shape over `T_p(1)`'s exposure, the chain's key tail and its public
+    /// values — accepted as the base step; refused with base 0 (the dummy
+    /// is no proof) and refused when the dummy carries another hash of
+    /// `T_p`'s key: `cargo test -p sba-replay --release the_chain_t_q -- --ignored --nocapture`
     #[test]
     #[ignore]
-    fn the_chain_t_q_over_a_real_and_a_dummy_previous_step() {
+    fn the_chain_t_q_over_a_dummy_previous_step() {
         let (params, vk, cap1) = real();
         let (_, _, cap2) = real_with_seed(6);
         let (outer, ovk, instance_q1, _proof_q1, cap_q1) = tq(&params, &vk, &cap1);
@@ -346,7 +431,36 @@ mod tests {
                 links_tq: step1.group.links_for_field_side(),
             }
         };
-        let step = build(&cap_p1, false);
+        // the dummy T_p(0)'s instance: T_p(1)'s group side's exposure (all
+        // `instance_p1` is), then the key tail — its own hash of T_q's key
+        // (not checked by T_q), the hash of T_p's key it carries — then
+        // [s_prev, s_next, D] and g, which T_q does not read
+        let (kp_lo, kp_hi) = q::key_hash(&key_commitments_q(&q::VerifierCircuit::over(
+            &pparams, &pvk, &cap_p1,
+        )));
+        // T_q's Fq limbs as T_p's instance holds them: the same integers in Fp
+        let (kp_lo, kp_hi) = (pallas::Affine::embed(&kp_lo), pallas::Affine::embed(&kp_hi));
+        assert_eq!(instance_p1.len(), step1.group.layout().len());
+        let dummy_instance = |carried_lo: Fp| -> Vec<Fp> {
+            let mut v = instance_p1.clone();
+            v.extend([Fp::ZERO, Fp::ZERO, carried_lo, kp_hi]);
+            v.extend([7, 8, 9, 7].map(|x| Fp::from(x as u64)));
+            v
+        };
+        let fake = |inst: &[Fp], seed: u64| {
+            fake_capture(
+                &pparams,
+                &pvk,
+                inst,
+                std::slice::from_ref(&claim1),
+                StdRng::seed_from_u64(seed),
+            )
+            .unwrap()
+            .0
+        };
+        let fake_p0 = fake(&dummy_instance(kp_lo), 3);
+        assert_eq!(fake_p0.events.len(), cap_p1.events.len());
+        let step = build(&fake_p0, true);
         let instance = step.instance();
         println!("chain T_q public inputs: {}", instance.len());
         let t = std::time::Instant::now();
@@ -369,18 +483,8 @@ mod tests {
             "{:?}",
             halo2_proofs::dev::CircuitCost::<pallas::Point, _>::measure(k, &step)
         );
-        // the dummy previous T_p: fake bytes of the same shape, the real
-        // instance and opened claim; base 0 refused, base 1 accepted
-        let (fake_p1, _bytes) = fake_capture(
-            &pparams,
-            &pvk,
-            &instance_p1,
-            std::slice::from_ref(&claim1),
-            StdRng::seed_from_u64(3),
-        )
-        .unwrap();
-        assert_eq!(fake_p1.events.len(), cap_p1.events.len());
-        let dummy0 = build(&fake_p1, false);
+        // base 0: the dummy is no proof
+        let dummy0 = build(&fake_p0, false);
         let pi = dummy0.instance();
         assert!(
             MockProver::run(k, &dummy0, vec![pi])
@@ -388,11 +492,15 @@ mod tests {
                 .verify()
                 .is_err()
         );
-        let dummy1 = build(&fake_p1, true);
-        let pi = dummy1.instance();
-        MockProver::run(k, &dummy1, vec![pi])
-            .unwrap()
-            .assert_satisfied();
+        // the dummy carrying another hash of T_p's key: refused at the base step
+        let other = build(&fake(&dummy_instance(kp_lo + Fp::ONE), 4), true);
+        let pi = other.instance();
+        assert!(
+            MockProver::run(k, &other, vec![pi])
+                .unwrap()
+                .verify()
+                .is_err()
+        );
         let _ = K;
     }
 }
@@ -1172,6 +1280,7 @@ impl ChainKeys {
         );
         let s0 = genesis.digest();
         let mut instance_p0 = sp0.group_tq.instance(&cap_q0f);
+        instance_p0.extend(sp0.key_tail());
         instance_p0.extend([s0, s0, Fp::from(0u64), s0]);
         let mut claims_p0f = claims_t.clone();
         claims_p0f.push(claim_at::<vesta::Affine>(
@@ -1572,6 +1681,7 @@ impl ChainKeys {
         );
         let s0 = genesis.digest();
         let mut instance_p0 = sp0.group_tq.instance(&cap_q0f);
+        instance_p0.extend(sp0.key_tail());
         instance_p0.extend([s0, s0, Fp::from(0u64), s0]);
         let mut claims_p0f = claims_t.clone();
         claims_p0f.push(claim_at::<vesta::Affine>(
@@ -2183,12 +2293,12 @@ pub fn check_shape(
 
 impl ChainKeys {
     /// The lengths of `T_q`'s and `T_p`'s instance columns under these
-    /// keys: every group side's layout, then for `T_p` the batch relation's
-    /// three values and `g`.
+    /// keys: every group side's layout and the key tail, then for `T_p`
+    /// the batch relation's three values and `g`.
     pub fn instance_lengths(&self) -> (usize, usize) {
         let sq = &self.step_q;
-        let len_q = sq.offsets()[self.n_proofs] + sq.group_tp.layout().len();
-        let len_p = self.step_p.group_tq.layout().len() + 3 + 1;
+        let len_q = sq.offsets()[self.n_proofs] + sq.group_tp.layout().len() + 4;
+        let len_p = self.step_p.group_tq.layout().len() + 4 + 3 + 1;
         (len_q, len_p)
     }
 
@@ -2286,6 +2396,11 @@ impl ChainDecider<'_> {
                 return Err("T_p's key is not the deployment's".into());
             }
         }
+        let (lo, hi) = q::key_hash(&keys_p);
+        let n_q = iq.len();
+        if iq[n_q - 4] != lo || iq[n_q - 3] != hi {
+            return Err("T_q's hash of T_p's key is not the deployment's".into());
+        }
         let mut tr = crate::native::PoseidonRead::<_, pallas::Affine>::init(&step.proof_q[..]);
         plonk::verify_proof_with_openings(
             &k.outer,
@@ -2304,6 +2419,11 @@ impl ChainDecider<'_> {
             if ip[pos[0]] != *c.x() || ip[pos[1]] != *c.y() {
                 return Err("T_q's key is not the deployment's".into());
             }
+        }
+        let (lo, hi) = p::key_hash(&keys_q);
+        let n_p = ip.len();
+        if ip[n_p - 8] != lo || ip[n_p - 7] != hi {
+            return Err("T_p's hash of T_q's key is not the deployment's".into());
         }
         let mut tr = crate::native::PoseidonRead::<_, vesta::Affine>::init(&step.proof_p[..]);
         plonk::verify_proof_with_openings(
@@ -2353,6 +2473,7 @@ impl ChainDecider<'_> {
 #[cfg(test)]
 mod chain_tests {
     use super::*;
+    use ff::Field;
 
     /// The wire's heights against the opening's, before any proof: the
     /// opening stands at the block after the step, the first block is not
@@ -2521,6 +2642,47 @@ mod chain_tests {
         );
         s = decider.decide(&step1, 1, s).unwrap();
         assert_eq!(s, o0.digest());
+        // a base step over a dummy step 0 carrying another hash of T_q's
+        // key: T_q(1) copies it as any, T_p(1) finds it is not its own
+        let t = std::time::Instant::now();
+        let mut other = ChainProver::new(&keys).unwrap();
+        let mut claims: Vec<Claim<vesta::Affine>> = keys
+            .prover()
+            .unwrap()
+            .padding
+            .iter()
+            .map(|(st, proof)| {
+                capture(
+                    &keys.tparams,
+                    &keys.tvk,
+                    &st.to_field_elements(),
+                    proof,
+                    &[],
+                )
+                .unwrap()
+                .claim()
+            })
+            .collect();
+        let sq = &keys.step_q;
+        let pos: Vec<usize> = claim_positions(&sq.group_tp, other.prev.cap_p.u.len())
+            .iter()
+            .map(|p| sq.offsets()[keys.n_proofs] + p)
+            .collect();
+        claims.push(claim_at::<vesta::Affine>(&other.prev.cap_q.instance, &pos).unwrap());
+        let mut inst = other.prev.cap_p.instance.clone();
+        let n = inst.len();
+        inst[n - 8] += Fp::ONE;
+        other.prev.cap_p = fake_capture(&keys.pparams, &keys.pvk, &inst, &claims, OsRng)
+            .unwrap()
+            .0;
+        let bad1 = other.prove(1000, 1000, &w0, &o0, &[]).unwrap();
+        println!(
+            "base step over a dummy with another key hash: {:.1} s",
+            t.elapsed().as_secs_f64()
+        );
+        let e = decider.decide(&bad1, 1, genesis.digest()).unwrap_err();
+        assert!(e.starts_with("T_p"), "{e}");
+        assert!(decider.decide_latest(&bad1).is_err());
         // the prover put away and taken up again from its saved state
         let saved = prover.state(idx.next_height()).to_bytes();
         println!("chain state: {} bytes", saved.len());

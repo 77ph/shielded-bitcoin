@@ -146,12 +146,14 @@ impl StepPN {
 }
 
 /// The slots' binding to the proofs' statements, by witnessed bits
-/// (`StepPN`'s rule; the chain's circuit uses it too).
+/// (`StepPN`'s rule; the chain's circuit uses it too). `actives` are the
+/// relation's bits for the same slots.
 #[allow(clippy::too_many_arguments)]
 pub fn bind_slots(
     ch: &mut FieldChip,
     l: &mut impl Layouter<Fp>,
     slots: &[Vec<crate::field::fp::Cell>],
+    actives: &[crate::field::fp::Cell],
     instance_values: &[Vec<crate::field::fp::Cell>],
     statement_positions: &[Vec<usize>],
     slot_proof: &[Option<usize>],
@@ -162,34 +164,21 @@ pub fn bind_slots(
     // the slots' binding to the proofs' statements, by witnessed bits:
     // link[s][p] ∈ {0, 1}; Σ_p link[s][p] = active_s · (1 − kind_s) (an
     // active transfer slot binds to exactly one proof, a mint or an
-    // empty slot to none); Σ_s link[s][p] = used_p ∈ {0, 1} (a used
-    // proof is exactly one slot's, an unused one none's — it is still
-    // verified); link[s][p] · (slot_s[i] − statement_p[i]) = 0
+    // empty slot to none), active_s the relation's bit for the slot — the
+    // slot the relation applies is the slot bound here; Σ_s link[s][p] =
+    // used_p ∈ {0, 1} (a used proof is exactly one slot's, an unused one
+    // none's — it is still verified); link[s][p] · (slot_s[i] −
+    // statement_p[i]) = 0
     let one = ch.constant(l, Fp::ONE)?;
     let n_p = statement_positions.len();
     let mut per_proof: Vec<Option<_>> = vec![None; n_p];
+    assert_eq!(actives.len(), slots.len());
     for (s, slot) in slots.iter().enumerate() {
         assert_eq!(slot.len(), SLOT_ELEMENTS);
         let kind = &slot[SLOT_ELEMENTS - 1];
-        // active: the slot is not all zeros — its h_body is non-zero for
-        // a real statement; use the witness to say so, bound below
-        let active_v = witness.map(|w| w.slots[s].is_some());
-        let active = ch.witness(
-            l,
-            active_v
-                .map(|a| halo2_proofs::circuit::Value::known(Fp::from(a as u64)))
-                .unwrap_or(halo2_proofs::circuit::Value::unknown()),
-        )?;
-        let aa = ch.mul(l, &active, &active)?;
-        ch.assert_equal(l, &aa, &active)?;
-        // an inactive slot is all zeros (h_body = 0); an active one has
-        // h_body ≠ 0 — bind `active` to that through an inverse witness
-        let h_body = &slot[sba_core::batch::SLOT_H_BODY];
-        let inv = ch.witness(l, h_body.value().map(|v| v.invert().unwrap_or(Fp::ZERO)))?;
-        let hi = ch.mul(l, h_body, &inv)?;
-        ch.assert_equal(l, &hi, &active)?;
+        let active = &actives[s];
         let not_kind = ch.sub(l, &one, kind)?;
-        let want = ch.mul(l, &active, &not_kind)?;
+        let want = ch.mul(l, active, &not_kind)?;
         let mut row_sum: Option<_> = None;
         for (p, proof_sum) in per_proof.iter_mut().enumerate() {
             let bit_v = match (known, slot_proof[s]) {
@@ -274,7 +263,7 @@ impl Circuit<vesta::Scalar> for StepPN {
             let cells: Vec<_> = inputs.into_iter().chain(outputs).collect();
             bind(&mut ch, &mut l, &cells, links, &ex.instance_values, *offset)?;
         }
-        let (slots, _) = self.batch.synthesize_core(
+        let (slots, actives, _) = self.batch.synthesize_core(
             &cfg.batch,
             &mut l,
             Some((cfg.group.instance, ex.cells.len())),
@@ -283,6 +272,7 @@ impl Circuit<vesta::Scalar> for StepPN {
             &mut ch,
             &mut l,
             &slots,
+            &actives,
             &ex.instance_values,
             &self.statement_positions,
             &self.slot_proof,
@@ -582,6 +572,17 @@ mod tests {
         swapped.slot_proof.swap(0, 1);
         assert!(
             MockProver::run(k_p, &swapped, vec![instance_p.clone()])
+                .unwrap()
+                .verify()
+                .is_err()
+        );
+        // a transfer slot bound to no proof is refused, its proof left unused
+        let mut unbound = step_p.clone();
+        let s = unbound.slot_proof.iter().position(|p| p.is_some()).unwrap();
+        let p = unbound.slot_proof[s].take().unwrap();
+        unbound.used[p] = false;
+        assert!(
+            MockProver::run(k_p, &unbound, vec![instance_p.clone()])
                 .unwrap()
                 .verify()
                 .is_err()

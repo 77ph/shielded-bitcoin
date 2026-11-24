@@ -37,6 +37,8 @@ pub mod q {
     use vesta_ecc::utilities::lookup_range_check::{
         LookupRangeCheck, VestaLookupRangeCheckConfig as RangeConfig,
     };
+    /// The domain of this side's hash of a verified key (§3.8).
+    const KEY_HASH_TAG: u64 = 0x5342_4b48_5f51; // "SBKH_Q"
     include!("verifier_body.rs");
 }
 
@@ -49,6 +51,8 @@ pub mod p {
         LookupRangeCheck, PallasLookupRangeCheckConfig as RangeConfig,
     };
     use pasta_curves::pallas as curve;
+    /// The domain of this side's hash of a verified key (§3.8).
+    const KEY_HASH_TAG: u64 = 0x5342_4b48_5f50; // "SBKH_P"
     include!("verifier_body.rs");
 }
 
