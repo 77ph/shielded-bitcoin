@@ -1213,8 +1213,15 @@ and step 427 decided from the genesis in **1.04 s**; 30.4 s of wall
 clock, **243 MB resident**. The second run, the transfer key from its
 files: 12.5 s (8.5 + 0.4 + 3.5) and 1.16 s. So the 185 s and 11.5 GB of
 17 November were the prover's figures; the client's are tens of seconds
-and a quarter of a gigabyte, most of the read now the two parameter
-files' points.
+and a quarter of a gigabyte, the read now being the two parameter files'
+points and the shapes' rebuild. On the server beside the live follower
+(the same day; four cores on a host at load 10–13, the follower idle at
+10.3 GB): **29.9 s** and **17.9 s** to read, step 428 decided from the
+genesis in **3.18 s** and **2.86 s**, **242.5 MB resident** — against
+the prover's read in the same place minutes earlier, 227–282 s and
+2.91–3.43 s to decide (`RUNS.md`). The deciding is the same work on
+either read path; the laptop's 1.0–1.2 s against the server's 2.9–3.4 s
+is the machine, not the keys.
 
 **Keys on disk** (11 November) [built]. The vendored `halo2_proofs`
 gains `keys_io` — read and write for `VerifyingKey` and `ProvingKey`,
@@ -1465,10 +1472,11 @@ as it was; this section and its implementation go to the next batch.
   key set (`ChainKeys::read_for_decider`: parameters, verifying keys,
   transfer key, shapes over fake captures; no proving key, padding or
   step 0, which move into `ProverKeys`), `replay-decide` uses it; the
-  light client of §3.5/§3.8 re-measured with it — 35 MB of keys, the
-  read in tens of seconds, the step in about a second, a quarter of a
-  gigabyte resident — against the 185 s / 11.5 GB of 17 November, which
-  were the prover's read. The chain test checks the two reads agree;
+  light client of §3.5/§3.8 re-measured with it on the laptop and on the
+  server beside the live follower — 35 MB of keys, the read in 18–30 s,
+  the step in one to three seconds, a quarter of a gigabyte resident —
+  against the 185 s / 11.5 GB of 17 November, which were the prover's
+  read. The chain test checks the two reads agree;
   its server run of 24 November passed with the nine negatives of §3.4.
 * **v0.12** (21 November 2026) — the wire's shape checked against the
   keys before any position is read (`check_shape`), and a count on the

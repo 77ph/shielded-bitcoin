@@ -653,6 +653,34 @@ the same 243 MB. The digest accepted,
 the one the follower holds as its state after step 427 (its restart
 line of 11:25 UTC: 427 steps, next block 332275, the same digest).
 
+**The same on the server, beside the live follower** (24 November,
+11:36 and 11:41 UTC, the follower idle between steps at 10–11 GB, host
+load 10–16). A fresh client directory with the follower's key set linked
+and the one step file, no stop of the follower. A first attempt copied
+the follower's own binary and so measured the prover's read beside the
+follower — the comparison figure: the keys in 282 s and 227 s (the
+parameter and key files 217 s and 165 s, the transfer key and padding
+52 s and 49 s, the shapes 9.7 s and 9.2 s, step 0 3.3 s), step 427
+decided from the genesis in 2.91 s and 3.43 s, 5 min 3 s and 4 min 8 s
+of wall clock, the same digest. **The decider's own read**, with the
+binary of the day (11:56 and 11:57 UTC; the follower had meanwhile
+proven step 428 — blocks 332275–332283, eight without events, 572.8 s
+after a 900 s wait — and stood idle at 10.3 GB; host load 10–13; the
+build of the binary was aborted once by the guard when the follower
+began proving, and made in the next idle window): the keys read in
+**29.9 s** (the parameters and verifying keys 8.1 s; the transfer key
+13.7 s, made and written into the follower's key directory, 1 048 644
+and 60 608 bytes; the shapes 8.1 s) and step 428 accepted from the
+genesis in **3.18 s**, 44.1 s of wall clock, **242.5 MB resident**; the
+second run, the transfer key from its files, 17.9 s (9.7 + 0.6 + 7.6)
+and 2.86 s, 34.4 s in all, the same 242.5 MB. The digest accepted is the
+follower's for step 428. Against the prover's read in the same place
+minutes earlier — 227–282 s, 2.91–3.43 s to decide, and 11.5 GB on 17
+November — the decider's read is eight to fifteen times shorter and a
+forty-seventh of the memory, while the deciding itself is the same work
+on either read path: the laptop's 1.0–1.2 s against the server's
+2.9–3.4 s is the machine and its load, not the keys.
+
 **The chain test with nine negatives** (24 November, the server
 container, host load 12–15). The real-key chain test of
 `REPLAY-PROOF-A.md` §3.8, run with the follower stopped between steps
