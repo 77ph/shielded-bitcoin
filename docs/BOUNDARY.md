@@ -148,6 +148,14 @@ restart forgets neither. Clients use
 * Unavailable: the client gets an error and the carrier stays in the
   outbox; publish it with model 1 or 2 or another relayer. A relayer can
   censor but not forge, replay or redirect a transfer.
+* The check and the inclusion are two moments: the relayer (or the fee
+  vault) checks against the tip it replayed, then the carrier waits for a
+  block. A conflicting transfer (one of the same nullifiers, published by
+  anyone) can be included first; replay then rejects the relayed one and
+  the fee was spent for nothing. That is inherent to publishing through
+  anyone, oneself included, and it is bounded: the exposure is one
+  carrier's fee per such race, within the hourly budget, and the client's
+  envelope is still in its outbox.
 * The operator's exposure: anyone can make the relayer run a check
   (replay to the tip, one proof verification), so the service is a
   target for availability attacks: checks run one at a time. It limits
