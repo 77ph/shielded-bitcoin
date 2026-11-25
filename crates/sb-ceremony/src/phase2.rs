@@ -13,19 +13,25 @@
 use ark_bls12_381::{Bls12_381, Fr, G1Affine, G1Projective, G2Affine, G2Projective};
 use ark_ec::{CurveGroup, PrimeGroup};
 use ark_ff::{Field, UniformRand};
-use ark_groth16::ProvingKey;
+use ark_groth16::{ProvingKey, VerifyingKey};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Read, Write};
 use rand::{CryptoRng, RngCore, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use rayon::prelude::*;
 use sha2::{Digest, Sha256};
 
+use crate::phase1::read_bounded;
 use crate::transcript::{
     digest, hash_to_g2, merge_pairs_g1, point_bytes, same_ratio, valid_g1, valid_g2,
 };
 use crate::{CeremonyError, CeremonyResult};
 
 const MAGIC: &[u8; 4] = b"sbp2";
+/// Contributions a file may hold.
+const MAX_CONTRIBUTIONS: usize = 1 << 16;
+/// Elements a query of the proving key may hold (the circuits here have a
+/// few hundred thousand constraints).
+const MAX_QUERY: usize = 1 << 26;
 const VERSION: u32 = 1;
 
 /// A participant's contribution: the new `[δ]₁` and a proof of knowledge
@@ -282,9 +288,11 @@ impl Phase2 {
         }
         let mut cs_hash = [0u8; 32];
         r.read_exact(&mut cs_hash)?;
-        let contributions = Vec::<Phase2Key>::deserialize_compressed(&mut r)?;
-        // the key's vectors are validated in parallel below
-        let pk = ProvingKey::<Bls12_381>::deserialize_compressed_unchecked(&mut r)?;
+        let contributions = read_bounded::<Phase2Key, _>(&mut r, MAX_CONTRIBUTIONS, true)?;
+        // the key field by field: no vector is allocated from a length the
+        // file names before its elements are read; the points are
+        // validated in parallel below
+        let pk = read_proving_key(&mut r)?;
         if !valid_g1(&[pk.vk.alpha_g1, pk.beta_g1, pk.delta_g1])
             || !valid_g2(&[pk.vk.beta_g2, pk.vk.gamma_g2, pk.vk.delta_g2])
             || !valid_g1(&pk.vk.gamma_abc_g1)
@@ -304,4 +312,36 @@ impl Phase2 {
             pk,
         })
     }
+}
+/// The proving key as `CanonicalSerialize` writes it (field by field), with
+/// every vector read through [`read_bounded`].
+fn read_proving_key<R: Read>(r: &mut R) -> CeremonyResult<ProvingKey<Bls12_381>> {
+    let alpha_g1 = G1Affine::deserialize_compressed_unchecked(&mut *r)?;
+    let beta_g2 = G2Affine::deserialize_compressed_unchecked(&mut *r)?;
+    let gamma_g2 = G2Affine::deserialize_compressed_unchecked(&mut *r)?;
+    let delta_g2 = G2Affine::deserialize_compressed_unchecked(&mut *r)?;
+    let gamma_abc_g1 = read_bounded::<G1Affine, _>(&mut *r, MAX_QUERY, false)?;
+    let beta_g1 = G1Affine::deserialize_compressed_unchecked(&mut *r)?;
+    let delta_g1 = G1Affine::deserialize_compressed_unchecked(&mut *r)?;
+    let a_query = read_bounded::<G1Affine, _>(&mut *r, MAX_QUERY, false)?;
+    let b_g1_query = read_bounded::<G1Affine, _>(&mut *r, MAX_QUERY, false)?;
+    let b_g2_query = read_bounded::<G2Affine, _>(&mut *r, MAX_QUERY, false)?;
+    let h_query = read_bounded::<G1Affine, _>(&mut *r, MAX_QUERY, false)?;
+    let l_query = read_bounded::<G1Affine, _>(&mut *r, MAX_QUERY, false)?;
+    Ok(ProvingKey {
+        vk: VerifyingKey {
+            alpha_g1,
+            beta_g2,
+            gamma_g2,
+            delta_g2,
+            gamma_abc_g1,
+        },
+        beta_g1,
+        delta_g1,
+        a_query,
+        b_g1_query,
+        b_g2_query,
+        h_query,
+        l_query,
+    })
 }

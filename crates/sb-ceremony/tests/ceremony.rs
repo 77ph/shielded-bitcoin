@@ -4,13 +4,14 @@
 //! circuit itself runs when `SB_CEREMONY_FULL` is set (minutes).
 
 use ark_bls12_381::{Bls12_381, Fr, G1Affine, G1Projective, G2Affine, G2Projective};
-use ark_ec::PrimeGroup;
+use ark_ec::{CurveGroup, PrimeGroup};
 use ark_ff::{Field, UniformRand};
 use ark_groth16::Groth16;
 use ark_r1cs_std::alloc::AllocVar;
 use ark_r1cs_std::eq::EqGadget;
 use ark_r1cs_std::fields::fp::FpVar;
 use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
+use ark_serialize::CanonicalSerialize;
 use ark_snark::SNARK;
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
@@ -303,4 +304,40 @@ fn the_transfer_circuit_when_asked() {
     let params = sb_circuit::TransferParams::from_pk(q.pk);
     let bytes = params.pk_to_bytes().unwrap();
     eprintln!("proving key: {} bytes", bytes.len());
+}
+
+/// A file whose length prefixes name more elements than exist is refused
+/// before anything of that size is allocated.
+#[test]
+fn crafted_lengths_are_refused_before_anything_is_allocated() {
+    // phase 1: n = 2, no key, then a vector of 2^60 elements
+    let mut f = Vec::new();
+    f.extend_from_slice(b"sbp1");
+    f.extend_from_slice(&1u32.to_le_bytes());
+    f.extend_from_slice(&2u64.to_le_bytes());
+    f.extend_from_slice(&[0u8; 32]);
+    f.push(0);
+    f.extend_from_slice(&(1u64 << 60).to_le_bytes());
+    assert!(Phase1::read(&f[..]).is_err());
+    // phase 2: 2^60 contributions
+    let mut g = Vec::new();
+    g.extend_from_slice(b"sbp2");
+    g.extend_from_slice(&1u32.to_le_bytes());
+    g.extend_from_slice(&[0u8; 32]);
+    g.extend_from_slice(&(1u64 << 60).to_le_bytes());
+    assert!(Phase2::read(&g[..]).is_err());
+    // phase 2: no contribution, a key whose first query names 2^60 elements
+    let mut g = Vec::new();
+    g.extend_from_slice(b"sbp2");
+    g.extend_from_slice(&1u32.to_le_bytes());
+    g.extend_from_slice(&[0u8; 32]);
+    g.extend_from_slice(&0u64.to_le_bytes());
+    let g1 = G1Projective::generator().into_affine();
+    let g2 = G2Projective::generator().into_affine();
+    g1.serialize_compressed(&mut g).unwrap();
+    for _ in 0..3 {
+        g2.serialize_compressed(&mut g).unwrap();
+    }
+    g.extend_from_slice(&(1u64 << 60).to_le_bytes());
+    assert!(Phase2::read(&g[..]).is_err());
 }

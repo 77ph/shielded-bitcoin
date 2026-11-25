@@ -358,11 +358,12 @@ impl Phase1 {
         let mut prev_digest = [0u8; 32];
         r.read_exact(&mut prev_digest)?;
         let key = Option::<Phase1Key>::deserialize_compressed(&mut r)?;
-        // the vectors are validated in parallel below
-        let tau_g1 = Vec::<G1Affine>::deserialize_compressed_unchecked(&mut r)?;
-        let tau_g2 = Vec::<G2Affine>::deserialize_compressed_unchecked(&mut r)?;
-        let alpha_tau_g1 = Vec::<G1Affine>::deserialize_compressed_unchecked(&mut r)?;
-        let beta_tau_g1 = Vec::<G1Affine>::deserialize_compressed_unchecked(&mut r)?;
+        // the vectors' lengths are what `n` says, checked before anything
+        // is allocated; the points are validated in parallel below
+        let tau_g1 = read_points::<G1Affine, _>(&mut r, 2 * n - 1)?;
+        let tau_g2 = read_points::<G2Affine, _>(&mut r, n)?;
+        let alpha_tau_g1 = read_points::<G1Affine, _>(&mut r, n)?;
+        let beta_tau_g1 = read_points::<G1Affine, _>(&mut r, n)?;
         let beta_g2 = G2Affine::deserialize_compressed(&mut r)?;
         if !valid_g1(&tau_g1)
             || !valid_g2(&tau_g2)
@@ -392,6 +393,47 @@ impl Phase1 {
         }
         Ok(p)
     }
+}
+
+/// A length-prefixed vector of exactly `expected` elements, read element
+/// by element without validation (the caller validates the points in
+/// parallel) and without allocating from a length the file names.
+pub(crate) fn read_points<T: CanonicalDeserialize, R: Read>(
+    r: &mut R,
+    expected: usize,
+) -> CeremonyResult<Vec<T>> {
+    let len = u64::deserialize_compressed(&mut *r)?;
+    if len != expected as u64 {
+        return Err(CeremonyError::Invalid("vector lengths".into()));
+    }
+    let mut out = Vec::with_capacity(expected);
+    for _ in 0..expected {
+        out.push(T::deserialize_compressed_unchecked(&mut *r)?);
+    }
+    Ok(out)
+}
+
+/// A length-prefixed vector of at most `max` elements.
+pub(crate) fn read_bounded<T: CanonicalDeserialize, R: Read>(
+    r: &mut R,
+    max: usize,
+    validate: bool,
+) -> CeremonyResult<Vec<T>> {
+    let len = u64::deserialize_compressed(&mut *r)?;
+    if len > max as u64 {
+        return Err(CeremonyError::Invalid(format!(
+            "a vector of {len} elements"
+        )));
+    }
+    let mut out = Vec::new();
+    for _ in 0..len {
+        out.push(if validate {
+            T::deserialize_compressed(&mut *r)?
+        } else {
+            T::deserialize_compressed_unchecked(&mut *r)?
+        });
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
