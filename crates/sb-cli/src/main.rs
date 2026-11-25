@@ -1787,7 +1787,11 @@ fn main() -> Result<()> {
                 &idx.state.events,
                 &idx.state.nullifiers,
             )?;
-            let pending = w.pending_payouts(&idx.state.events);
+            let tip = idx
+                .state
+                .last_height()
+                .ok_or_else(|| anyhow!("run `sb sync` first"))?;
+            let pending = w.pending_payouts(&idx.state.events, tip, ctx.deployment.k_min);
             println!("{} pending payout(s)", pending.len());
             for p in pending {
                 let spk = bitcoin::ScriptBuf::from_bytes(p.request.script_pubkey.clone());

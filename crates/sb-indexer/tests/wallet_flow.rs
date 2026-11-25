@@ -313,7 +313,14 @@ fn mint_pay_change_persist_reorg() {
         .scan(&salt, &idx.state.events, &idx.state.nullifiers)
         .unwrap();
     assert_eq!(operator.balance(), 250);
-    let pending = operator.pending_payouts(&idx.state.events);
+    // not before the carrier's block is k_min deep
+    let tip = idx.state.last_height().unwrap();
+    assert!(
+        operator
+            .pending_payouts(&idx.state.events, tip, 1)
+            .is_empty()
+    );
+    let pending = operator.pending_payouts(&idx.state.events, tip + 1, 1);
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0].request.amount, 250);
     assert_eq!(pending[0].request.script_pubkey[1], 0x14);
@@ -322,7 +329,11 @@ fn mint_pay_change_persist_reorg() {
         &pending[0].request,
         Some("deadbeef".into()),
     );
-    assert!(operator.pending_payouts(&idx.state.events).is_empty());
+    assert!(
+        operator
+            .pending_payouts(&idx.state.events, tip + 1, 1)
+            .is_empty()
+    );
     // the memo survives state persistence
     let reloaded = ReplayState::from_json(&idx.state.to_json()).unwrap();
     assert_eq!(reloaded, idx.state);

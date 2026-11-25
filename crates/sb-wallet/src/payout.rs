@@ -49,10 +49,21 @@ pub struct PendingPayout {
 
 impl Wallet {
     /// Received notes whose creating transfer carried a valid payout request
-    /// not exceeding the note value, and that have not been paid yet.
-    pub fn pending_payouts(&self, events: &[AcceptedEvent]) -> Vec<PendingPayout> {
+    /// not exceeding the note value, that have not been paid yet, and that
+    /// are settled: at least `k_min` blocks below `tip`. A request whose
+    /// carrier a reorganisation could still replace (with another txid,
+    /// which is what a payout is recorded by) is not one to pay yet.
+    pub fn pending_payouts(
+        &self,
+        events: &[AcceptedEvent],
+        tip: u32,
+        k_min: u32,
+    ) -> Vec<PendingPayout> {
         let mut out = Vec::new();
         for n in &self.notes {
+            if n.height.saturating_add(k_min) > tip {
+                continue;
+            }
             if self.payouts.iter().any(|p| p.txid == n.txid) {
                 continue;
             }

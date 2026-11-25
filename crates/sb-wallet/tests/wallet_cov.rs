@@ -307,12 +307,18 @@ fn pending_payout_branches() {
     w.scan(&salt_fe, &events, &Default::default()).unwrap();
     assert_eq!(w.notes.len(), 5);
     // only the first request is payable: no memo, bad memo, too large, zero are skipped
-    let pending = w.pending_payouts(&events);
+    let pending = w.pending_payouts(&events, 1_000, 1);
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0].request.amount, 5);
+    // not before the note is k_min blocks below the tip
+    let h = pending[0].note.height;
+    assert!(w.pending_payouts(&events, h, 1).is_empty());
+    assert!(w.pending_payouts(&events, h + 5, 6).is_empty());
+    assert_eq!(w.pending_payouts(&events, h + 1, 1).len(), 1);
+    assert_eq!(w.pending_payouts(&events, h + 6, 6).len(), 1);
     // a note whose creating event is unknown is skipped too
     w.notes.push(record(99, 7, &txid_hex(&[0xaa; 32])));
-    assert_eq!(w.pending_payouts(&events).len(), 1);
+    assert_eq!(w.pending_payouts(&events, 1_000, 1).len(), 1);
     w.record_payout(&pending[0].note.txid, &pending[0].request, None);
-    assert!(w.pending_payouts(&events).is_empty());
+    assert!(w.pending_payouts(&events, 1_000, 1).is_empty());
 }
