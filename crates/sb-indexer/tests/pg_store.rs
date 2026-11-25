@@ -258,3 +258,63 @@ fn pg_store_rejects_corrupt_rows() {
     ));
     assert!(format!("{}", StoreError::Corrupt("x".into())).contains("corrupt"));
 }
+
+/// A proof client keeps a state the Postgres store cannot hold (events
+/// without envelope bytes, the light view), so it refuses that store
+/// before asking the indexer for anything.
+#[test]
+#[ignore]
+fn a_proof_client_refuses_the_postgres_store() {
+    struct NoSource;
+    impl sb_indexer::proof::ProofSource for NoSource {
+        fn proven_block(
+            &self,
+            _height: u32,
+        ) -> Result<Option<sb_indexer::proof::ProvenBlockJson>, sb_indexer::ChainError> {
+            panic!("the store is refused before any block is asked for")
+        }
+    }
+    let conn = std::env::var("SB_TEST_PG").expect("SB_TEST_PG connection string");
+    let name = format!("pgtest-light-{}", std::process::id());
+    let params = TransferParams::insecure_setup(&[0u8; 32]).unwrap();
+    let deployment = Deployment {
+        profile: sb_core::PROFILE_VERSION.into(),
+        name: name.clone(),
+        network: Network::Regtest,
+        activation_height: 10,
+        const_salt: Deployment::derive_const_salt(&name),
+        transfer_vk_sha256: vk_sha256(params.vk()),
+        setup: Setup::InsecureSeed { seed: [0u8; 32] },
+        window_w: 100,
+        anchor_depth: 3,
+        batch: None,
+        k_min: 1,
+        boundary: None,
+        swap: None,
+        carrier: Default::default(),
+    };
+    let mut store = PgStore::connect(&conn, &name).unwrap();
+    assert!(!store.keeps_light_state());
+    let mut state = store.load().unwrap();
+    // any key: the store is refused before a proof is looked at
+    let batch = sb_circuit::BatchVerifier::new(params.vk().clone());
+    let v = sb_indexer::proof::ProofVerifiers {
+        batch: &batch,
+        transfer: params.vk(),
+        swap: None,
+    };
+    let e = sb_indexer::proof::sync(
+        &mut state,
+        &NoSource,
+        &deployment,
+        &v,
+        Some(&mut store),
+        &mut rand::thread_rng(),
+    )
+    .unwrap_err();
+    assert!(e.to_string().contains("JSON store"), "{e}");
+    assert!(
+        sb_indexer::JsonStore::new(std::env::temp_dir().join("never-written.json"))
+            .keeps_light_state()
+    );
+}

@@ -22,6 +22,10 @@ impl JsonStore {
 }
 
 impl StateStore for JsonStore {
+    fn keeps_light_state(&self) -> bool {
+        true
+    }
+
     fn load(&mut self) -> Result<ReplayState, StoreError> {
         if self.path.exists() {
             Ok(ReplayState::load(&self.path)?)

@@ -33,4 +33,11 @@ pub trait StateStore {
     fn rollback_to(&mut self, state: &ReplayState, height: u32) -> Result<(), StoreError>;
     /// Called once at the end of a sync (whole-file stores write here).
     fn flush(&mut self, state: &ReplayState) -> Result<(), StoreError>;
+    /// Does the store keep a proof client's state (`crate::proof`): events
+    /// without envelope bytes and the light view? A store that does not
+    /// would load such a state back as corrupt, so a proof client refuses
+    /// it before writing.
+    fn keeps_light_state(&self) -> bool {
+        false
+    }
 }

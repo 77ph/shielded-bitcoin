@@ -204,6 +204,12 @@ pub fn sync<R: RngCore + CryptoRng>(
     rng: &mut R,
 ) -> Result<SyncReport, ProofSyncError> {
     let activation = deployment.activation_height;
+    if store.as_deref().is_some_and(|s| !s.keeps_light_state()) {
+        return Err(invalid(
+            activation,
+            "this store keeps full-replay state only; a proof client needs the JSON store",
+        ));
+    }
     if state.light.is_none() {
         if !state.blocks.is_empty() {
             return Err(invalid(
