@@ -1,6 +1,6 @@
 //! Deployment profile (profile §9): everything replay needs to agree on.
 
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -118,6 +118,10 @@ pub enum DeploymentError {
     VkMismatch { expected: String, got: String },
     #[error("deployment follows profile {found} but this build implements {expected}")]
     ProfileMismatch { found: String, expected: String },
+    #[error("key path {0:?} must be a relative path inside the profile's directory")]
+    KeyPath(String),
+    #[error("profile: {0}")]
+    Invalid(String),
 }
 
 impl Deployment {
@@ -154,6 +158,14 @@ impl Deployment {
                 expected: sb_core::PROFILE_VERSION.to_string(),
             });
         }
+        if let Some(b) = &d.boundary {
+            check_vault_script(&b.vault_script_hex)?;
+        }
+        if d.batch.as_ref().is_some_and(|b| b.n == 0) {
+            return Err(DeploymentError::Invalid(
+                "batch n must be at least 1".into(),
+            ));
+        }
         Ok(d)
     }
 
@@ -177,7 +189,7 @@ impl Deployment {
                         "profile has no proving key path",
                     )
                 })?;
-                TransferParams::from_pk_bytes(&std::fs::read(base_dir.join(pk_path))?)?
+                TransferParams::from_pk_bytes(&std::fs::read(key_file(base_dir, pk_path)?)?)?
             }
         };
         self.check_vk(&vk_sha256(params.vk()))?;
@@ -192,7 +204,7 @@ impl Deployment {
                 TransferVerifier::new(params.vk().clone())
             }
             Setup::Ceremony { vk_path, .. } => {
-                TransferVerifier::from_vk_bytes(&std::fs::read(base_dir.join(vk_path))?)?
+                TransferVerifier::from_vk_bytes(&std::fs::read(key_file(base_dir, vk_path)?)?)?
             }
         };
         self.check_vk(&vk_sha256(&verifier.vk))?;
@@ -227,7 +239,7 @@ impl Deployment {
                         "swap section has no proving key path",
                     )
                 })?;
-                SwapParams::from_pk_bytes(&std::fs::read(base_dir.join(pk_path))?)?
+                SwapParams::from_pk_bytes(&std::fs::read(key_file(base_dir, pk_path)?)?)?
             }
         };
         Self::check_pin(&sw.vk_sha256, &vk_sha256(params.vk()))?;
@@ -259,7 +271,7 @@ impl Deployment {
                 let pk_path = pk_path
                     .as_ref()
                     .ok_or_else(|| std::io::Error::other("no batch proving key in the profile"))?;
-                BatchParams::from_pk_bytes(shape, &std::fs::read(base_dir.join(pk_path))?)?
+                BatchParams::from_pk_bytes(shape, &std::fs::read(key_file(base_dir, pk_path)?)?)?
             }
         };
         if vk_sha256(params.vk()) != b.vk_sha256 {
@@ -284,7 +296,7 @@ impl Deployment {
                 BatchVerifier::new(BatchParams::insecure_setup(shape, seed)?.vk().clone())
             }
             Setup::Ceremony { vk_path, .. } => {
-                BatchVerifier::from_vk_bytes(&std::fs::read(base_dir.join(vk_path))?)?
+                BatchVerifier::from_vk_bytes(&std::fs::read(key_file(base_dir, vk_path)?)?)?
             }
         };
         if vk_sha256(&v.vk) != b.vk_sha256 {
@@ -306,12 +318,35 @@ impl Deployment {
                 SwapVerifier::new(params.vk().clone())
             }
             Setup::Ceremony { vk_path, .. } => {
-                SwapVerifier::from_vk_bytes(&std::fs::read(base_dir.join(vk_path))?)?
+                SwapVerifier::from_vk_bytes(&std::fs::read(key_file(base_dir, vk_path)?)?)?
             }
         };
         Self::check_pin(&sw.vk_sha256, &vk_sha256(&verifier.vk))?;
         Ok(Some(verifier))
     }
+}
+
+/// A key file named by a profile: a relative path inside the profile's
+/// directory (a profile is data; it must not name files elsewhere).
+fn key_file(base_dir: &Path, rel: &str) -> Result<PathBuf, DeploymentError> {
+    let p = Path::new(rel);
+    if rel.is_empty() || !p.components().all(|c| matches!(c, Component::Normal(_))) {
+        return Err(DeploymentError::KeyPath(rel.to_string()));
+    }
+    Ok(base_dir.join(p))
+}
+
+/// The vault `scriptPubKey` of a dev boundary: hex of a non-empty script
+/// no longer than consensus allows.
+fn check_vault_script(hex_script: &str) -> Result<(), DeploymentError> {
+    let script = hex::decode(hex_script)
+        .map_err(|e| DeploymentError::Invalid(format!("vault_script_hex: {e}")))?;
+    if script.is_empty() || script.len() > 10_000 {
+        return Err(DeploymentError::Invalid(
+            "vault_script_hex: not a script".into(),
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -347,5 +382,57 @@ mod tests {
             Deployment::from_json(&other),
             Err(DeploymentError::ProfileMismatch { .. })
         ));
+    }
+
+    /// A profile is data: its key paths stay inside its directory, its
+    /// vault script is a script and its batch has at least one slot.
+    #[test]
+    fn a_profile_is_checked_beyond_its_shape() {
+        assert_eq!(
+            key_file(Path::new("/p"), "keys/x.vk").unwrap(),
+            PathBuf::from("/p/keys/x.vk")
+        );
+        for bad in ["", "/etc/passwd", "../x.vk", "keys/../../x.vk"] {
+            assert!(matches!(
+                key_file(Path::new("/p"), bad),
+                Err(DeploymentError::KeyPath(_))
+            ));
+        }
+        let mut d = Deployment {
+            profile: sb_core::PROFILE_VERSION.into(),
+            name: "regtest-dev".into(),
+            network: Network::Regtest,
+            activation_height: 100,
+            const_salt: Deployment::derive_const_salt("regtest-dev"),
+            transfer_vk_sha256: [0u8; 32],
+            setup: Setup::InsecureSeed { seed: [1u8; 32] },
+            window_w: 100,
+            anchor_depth: 3,
+            batch: Some(BatchDeployment {
+                n: 0,
+                vk_sha256: [0u8; 32],
+                setup: Setup::InsecureSeed { seed: [1u8; 32] },
+            }),
+            k_min: 1,
+            boundary: None,
+            swap: None,
+            carrier: Default::default(),
+        };
+        assert!(matches!(
+            Deployment::from_json(&d.to_json()),
+            Err(DeploymentError::Invalid(_))
+        ));
+        d.batch = None;
+        for bad in ["", "zz", "0014"] {
+            d.boundary = Some(DevBoundary {
+                vault_script_hex: bad.into(),
+                operator_address: None,
+            });
+            let r = Deployment::from_json(&d.to_json());
+            assert!(
+                matches!(r, Err(DeploymentError::Invalid(_))) == (bad.len() != 4),
+                "{bad:?}: {r:?}"
+            );
+        }
     }
 }

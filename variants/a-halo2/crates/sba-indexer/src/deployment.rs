@@ -80,6 +80,8 @@ pub enum DeploymentError {
     ProfileMismatch { found: String, expected: String },
     #[error("deployment is of family {found}, this code is family {expected}")]
     FamilyMismatch { found: String, expected: String },
+    #[error("profile: {0}")]
+    Invalid(String),
     #[error("deployment names k = {found}, this circuit has k = {expected}")]
     KMismatch { found: u32, expected: u32 },
 }
@@ -129,6 +131,15 @@ impl Deployment {
                 found: d.transfer_k,
                 expected: K,
             });
+        }
+        if let Some(b) = &d.boundary {
+            let script = hex::decode(&b.vault_script_hex)
+                .map_err(|e| DeploymentError::Invalid(format!("vault_script_hex: {e}")))?;
+            if script.is_empty() || script.len() > 10_000 {
+                return Err(DeploymentError::Invalid(
+                    "vault_script_hex: not a script".into(),
+                ));
+            }
         }
         Ok(d)
     }
@@ -194,6 +205,15 @@ mod tests {
         assert!(matches!(
             Deployment::from_json(&other),
             Err(DeploymentError::FamilyMismatch { .. })
+        ));
+        let mut bad = d.clone();
+        bad.boundary = Some(DevBoundary {
+            vault_script_hex: "zz".into(),
+            operator_address: None,
+        });
+        assert!(matches!(
+            Deployment::from_json(&bad.to_json()),
+            Err(DeploymentError::Invalid(_))
         ));
         let other = json.replace(
             &format!("\"profile\": \"{}\"", sba_core::PROFILE_VERSION),
