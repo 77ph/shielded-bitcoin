@@ -12,7 +12,7 @@ use sb_common::chain::mock::MockChain;
 use sba_circuit::TransferParams;
 use sba_core::address::Network;
 use sba_core::envelope::MintEnvelope;
-use sba_core::keys::Seed;
+use sba_core::keys::{Seed, WalletKeys};
 use sba_core::note::NotePlaintext;
 use sba_indexer::{Deployment, DevBoundary, Indexer, ReplayState};
 use sba_primitives::Fp;
@@ -184,4 +184,24 @@ fn mint_pay_change_persist_reorg() {
         Err(sba_wallet::WalletError::Insufficient { .. })
     ));
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A key whose diversifier 0 is invalid has its default address at a
+/// later index; the first fresh address must still be another one.
+#[test]
+fn a_fresh_address_is_never_the_default_one() {
+    let seed = (0u8..=255)
+        .find(|s| {
+            WalletKeys::from_seed(&Seed([*s; 32]))
+                .ivk
+                .address_at(0)
+                .is_none()
+        })
+        .expect("about half of all diversifiers are invalid");
+    let mut w = Wallet::from_seed(Seed([seed; 32]), Network::Regtest, "flow");
+    let (i0, _) = w.keys.ivk.find_address(0);
+    assert!(i0 >= 1);
+    let (i, fresh) = w.new_address();
+    assert!(i > i0);
+    assert_ne!(fresh, w.default_address());
 }

@@ -452,7 +452,13 @@ impl Wallet {
 
     /// A fresh address, advancing the receive-path counter.
     pub fn new_address(&mut self) -> (u64, PaymentAddress) {
-        let (i, a) = self.keys.ivk.find_address(self.next_address_index.max(1));
+        // never the default address again: the first fresh index is the one
+        // after the default's, which is not 1 when `d_0` is invalid
+        let after_default = self.keys.ivk.find_address(0).0 + 1;
+        let (i, a) = self
+            .keys
+            .ivk
+            .find_address(self.next_address_index.max(after_default));
         self.next_address_index = i + 1;
         (i, a)
     }

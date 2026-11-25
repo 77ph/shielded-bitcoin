@@ -112,6 +112,26 @@ fn scans_reject_inconsistent_events() {
     assert!(scan_outgoing(&alice.ovk, &salt_fe, &no_ct).is_none());
 }
 
+/// A key whose diversifier 0 is invalid has its default address at a
+/// later index; the first fresh address must still be another one.
+#[test]
+fn a_fresh_address_is_never_the_default_one() {
+    let seed = (0u8..=255)
+        .find(|s| {
+            WalletKeys::from_seed(&Seed([*s; 32]))
+                .ivk
+                .address_at(0)
+                .is_none()
+        })
+        .expect("about half of all diversifiers are invalid");
+    let mut w = Wallet::from_seed(Seed([seed; 32]), Network::Regtest, "cov");
+    let (i0, _) = w.keys.ivk.find_address(0);
+    assert!(i0 >= 1);
+    let (i, fresh) = w.new_address();
+    assert!(i > i0);
+    assert_ne!(fresh, w.default_address());
+}
+
 #[test]
 fn wallet_files_and_rescans() {
     let mut rng = ChaCha20Rng::from_seed([2u8; 32]);
