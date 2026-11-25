@@ -209,6 +209,7 @@ where
         }
     });
     let mut served = 0u32;
+    let mut writers: Vec<std::thread::JoinHandle<()>> = Vec::new();
     while max_requests.is_none_or(|m| served < m) {
         let Ok((conn, ip, req)) = rx.recv() else {
             break;
@@ -219,15 +220,21 @@ where
         };
         log::info!("{ip}: {status}");
         let counter = in_flight.clone();
-        std::thread::spawn(move || {
+        writers.retain(|w| !w.is_finished());
+        writers.push(std::thread::spawn(move || {
             let _ = conn.set_write_timeout(Some(WRITE_TIMEOUT));
             respond(conn, status, &body);
             counter.fetch_sub(1, Ordering::SeqCst);
-        });
+        }));
         served += 1;
         if stop() {
             break;
         }
+    }
+    // the answers in flight are written (or time out) before the caller
+    // may exit
+    for w in writers {
+        let _ = w.join();
     }
     Ok(())
 }
