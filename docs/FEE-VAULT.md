@@ -243,7 +243,8 @@ Invariants, checked by the code on every write and reported by
   notes it received from others:
   `outstanding = Σ received(not own change) − Σ released − Σ reclaimed`,
   and its shielded wallet refuses to spend below `outstanding`: a `sb
-  send` or `sb withdraw` from a wallet that has a ledger checks it and
+  send`, `sb withdraw`, `sb fee-vault deposit` or `sb swap lock` from a
+  wallet that has a ledger checks it and
   stops. The one lever past it is `--force`, and it is the operator's
   **under-backing lever**: it prints the shortfall, requires the operator
   to type `under-back <shortfall>` on the terminal, and is logged. It

@@ -1082,6 +1082,10 @@ pub enum FeeVaultCmd {
         /// Top up an existing deposit key instead of using a fresh one.
         #[arg(long)]
         index: Option<u64>,
+        /// Spend even if it leaves this wallet's own fee-vault credit
+        /// under-backed (asks for confirmation).
+        #[arg(long)]
+        force: bool,
     },
     /// List this wallet's deposits with the credit each vault reports.
     Accounts {
@@ -1164,6 +1168,7 @@ pub fn run(ctx: &Ctx, cmd: FeeVaultCmd) -> Result<()> {
             no_broadcast,
             relay,
             index,
+            force,
         } => {
             let info = vault_info(&vault)?;
             if info["deployment"] != json!(ctx.deployment.name) {
@@ -1195,6 +1200,9 @@ pub fn run(ctx: &Ctx, cmd: FeeVaultCmd) -> Result<()> {
                 &idx.state.events,
                 &idx.state.nullifiers,
             )?;
+            // a vault's own wallet spending into another vault is a spend
+            // like any other against its clients' credit
+            backing_guard(ctx, &w, &name, amount, force)?;
             let top_up = index.is_some();
             let mut index = index.unwrap_or(w.fee_deposit_next);
             if top_up && !w.fee_accounts.iter().any(|a| a.index == index) {

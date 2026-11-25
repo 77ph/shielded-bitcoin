@@ -86,6 +86,10 @@ pub enum SwapCmd {
         no_broadcast: bool,
         #[arg(long, conflicts_with = "no_broadcast")]
         relay: Option<String>,
+        /// Lock even if it leaves this wallet's own fee-vault credit
+        /// under-backed (asks for confirmation).
+        #[arg(long)]
+        force: bool,
     },
     /// Y: after `sync`, check that the locked note is there with the agreed lock.
     Check {
@@ -386,6 +390,7 @@ pub fn run_swap(ctx: &Ctx, cmd: SwapCmd) -> Result<()> {
             fee_rate,
             no_broadcast,
             relay,
+            force,
         } => {
             let a = read_agreement(&input)?;
             let (mut w, mut r) = record(ctx, &name, &a.hash)?;
@@ -418,6 +423,7 @@ pub fn run_swap(ctx: &Ctx, cmd: SwapCmd) -> Result<()> {
                 &idx.state.events,
                 &idx.state.nullifiers,
             )?;
+            crate::vault::backing_guard(ctx, &w, &name, r.v_sh, force)?;
             eprintln!("loading the swap proving parameters…");
             let params = ctx.swap_params()?;
             eprintln!("proving the lock (anchor {h_anchor}, tree size {size})…");
