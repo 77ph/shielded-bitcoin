@@ -346,6 +346,11 @@ fn pending_payout_branches() {
     let pending = w.pending_payouts(&events, 1_000, 1);
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0].request.amount, 5);
+    // the two that ask wrongly are shown as refused, the others not at all
+    let refused = w.refused_payouts(&events);
+    assert_eq!(refused.len(), 2);
+    assert!(refused.iter().any(|r| r.reason.contains("more than")));
+    assert!(refused.iter().any(|r| r.reason.contains("nothing")));
     // not before the note is k_min blocks below the tip
     let h = pending[0].note.height;
     assert!(w.pending_payouts(&events, h, 1).is_empty());

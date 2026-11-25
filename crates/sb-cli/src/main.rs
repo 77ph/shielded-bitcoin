@@ -1798,6 +1798,12 @@ fn main() -> Result<()> {
                 .state
                 .last_height()
                 .ok_or_else(|| anyhow!("run `sb sync` first"))?;
+            for r in w.refused_payouts(&idx.state.events) {
+                println!(
+                    "  refused: the request in {} {} ({} sat of a {} sat note)",
+                    r.note.txid, r.reason, r.request.amount, r.note.value
+                );
+            }
             let pending = w.pending_payouts(&idx.state.events, tip, ctx.deployment.k_min);
             println!("{} pending payout(s)", pending.len());
             for p in pending {

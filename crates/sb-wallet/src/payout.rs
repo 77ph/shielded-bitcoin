@@ -47,6 +47,14 @@ pub struct PendingPayout {
     pub request: PayoutRequest,
 }
 
+/// A payout request a note carries that cannot be paid as written.
+#[derive(Clone, Debug)]
+pub struct RefusedPayout {
+    pub note: NoteRecord,
+    pub request: PayoutRequest,
+    pub reason: &'static str,
+}
+
 impl Wallet {
     /// Received notes whose creating transfer carried a valid payout request
     /// not exceeding the note value, that have not been paid yet, and that
@@ -82,6 +90,38 @@ impl Wallet {
             out.push(PendingPayout {
                 note: n.clone(),
                 request,
+            });
+        }
+        out
+    }
+
+    /// The requests [`Self::pending_payouts`] leaves out because they ask
+    /// for nothing or for more than the note holds, and that no payout
+    /// record covers: shown so that a misbuilt request is noticed, never
+    /// paid or recorded.
+    pub fn refused_payouts(&self, events: &[AcceptedEvent]) -> Vec<RefusedPayout> {
+        let mut out = Vec::new();
+        for n in &self.notes {
+            if self.payouts.iter().any(|p| p.txid == n.txid) {
+                continue;
+            }
+            let Some(ev) = events.iter().find(|e| txid_hex(&e.txid) == n.txid) else {
+                continue;
+            };
+            let Some(request) = ev.memo.as_deref().and_then(parse_payout_memo) else {
+                continue;
+            };
+            let reason = if request.amount == 0 {
+                "asks for nothing"
+            } else if request.amount > n.value {
+                "asks for more than the note holds"
+            } else {
+                continue;
+            };
+            out.push(RefusedPayout {
+                note: n.clone(),
+                request,
+                reason,
             });
         }
         out
