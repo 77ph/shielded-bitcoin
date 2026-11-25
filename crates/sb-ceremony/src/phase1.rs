@@ -264,7 +264,8 @@ impl Phase1 {
     pub fn verify_shape<R: RngCore>(&self, rng: &mut R) -> CeremonyResult<()> {
         let bad = |what: &str| CeremonyError::Invalid(what.to_string());
         let n = self.n;
-        if !n.is_power_of_two()
+        if n < 2
+            || !n.is_power_of_two()
             || self.tau_g1.len() != 2 * n - 1
             || self.tau_g2.len() != n
             || self.alpha_tau_g1.len() != n
