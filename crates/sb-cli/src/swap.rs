@@ -461,7 +461,7 @@ pub fn run_swap(ctx: &Ctx, cmd: SwapCmd) -> Result<()> {
             if r.role != "y" {
                 bail!("only Y checks the lock");
             }
-            let (idx, _tip, _h, _s) = anchor(ctx)?;
+            let (idx, tip, _h, _s) = anchor(ctx)?;
             w.scan(
                 &ctx.deployment.const_salt_fr(),
                 &idx.state.events,
@@ -483,6 +483,15 @@ pub fn run_swap(ctx: &Ctx, cmd: SwapCmd) -> Result<()> {
                     "the locked note holds {} sat, the agreement says {}: do not fund",
                     note.value,
                     r.v_sh
+                );
+            }
+            // settled: a lock a reorganisation could still undo is no lock
+            // to fund against
+            if note.height.saturating_add(ctx.deployment.k_min) > tip {
+                bail!(
+                    "the locked note (block {}) is not yet {} blocks below the tip ({tip}): sync later and check again",
+                    note.height,
+                    ctx.deployment.k_min
                 );
             }
             println!(

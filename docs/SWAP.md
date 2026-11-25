@@ -242,7 +242,8 @@ Steps, with what each party checks **before locking its own leg**:
 2. **X locks.** X publishes a swap envelope whose output to Y's address
    carries `h_aux = PH(T_AUX, H_lo, H_hi, pk_refund.x, pk_refund.y,
    t_refund)` and value `v_sh`.
-3. **Y verifies, then funds.** Y waits for the envelope to be accepted,
+3. **Y verifies, then funds.** Y waits for the envelope to be accepted
+   and `k_min` blocks deep (`sb swap check` refuses a shallower lock),
    decrypts the output as its owner, checks `v_sh`, and recomputes
    `h_aux` from the agreed `H`, `pk_refund` and `t_refund`: it must equal
    the published slot of that output. If it does not, Y does not fund;

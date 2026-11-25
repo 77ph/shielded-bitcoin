@@ -255,6 +255,13 @@ fn swap_out_completes_and_a_second_one_refunds_on_both_sides() {
     );
     shared.mine(5);
     cli.ok(&["sync"]);
+    // the lock is at the tip: not yet k_min deep
+    cli.fails(
+        &["swap", "check", "--name", "lp", "--hash", &h1],
+        "not yet 1 blocks below the tip",
+    );
+    shared.mine(50);
+    cli.ok(&["sync"]);
     assert_eq!(
         balance(&cli.ok(&["scan", "--name", "alice"])),
         3000,
@@ -420,6 +427,7 @@ fn swap_out_completes_and_a_second_one_refunds_on_both_sides() {
         "1",
     ]);
     shared.mine(100);
+    shared.mine(150);
     cli.ok(&["sync"]);
     cli.ok(&["swap", "check", "--name", "lp", "--hash", &h2]);
     let funded = cli.ok(&[
