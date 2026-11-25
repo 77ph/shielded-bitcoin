@@ -9,7 +9,7 @@ use sba_core::envelope::PROOF_LEN;
 use sba_core::note::{NotePlaintext, decrypt_as_recipient};
 use sba_core::tree::{DEPTH, EMPTY_ROOTS};
 use sba_indexer::testing::{ACTIVATION, MockChain, World, tx_with};
-use sba_indexer::{RejectReason, ReplayState};
+use sba_indexer::{Indexer, RejectReason, ReplayState};
 use sba_primitives::Fp;
 
 #[test]
@@ -101,6 +101,35 @@ fn mint_spend_reject_reorg_and_persist() {
     // persistence
     let json = idx.state.to_json();
     assert_eq!(ReplayState::from_json(&json).unwrap(), idx.state);
+
+    // a store is not trusted for contents: a planted leaf, a dropped spend
+    // or an event that is not what its envelope gives is refused on load
+    let bound = |state: ReplayState| {
+        let mut i = Indexer::new(
+            w.deployment.clone(),
+            w.deployment.verifier().unwrap(),
+            state,
+        );
+        i.bind_state().map_err(|e| e.to_string())
+    };
+    assert!(bound(idx.state.clone()).is_ok());
+    let mut planted = idx.state.clone();
+    planted.tree.append(Fp::from(7u64));
+    assert!(bound(planted).unwrap_err().contains("leaves no event made"));
+    let mut dropped = idx.state.clone();
+    let nf = *dropped.nullifiers.iter().next().unwrap();
+    dropped.nullifiers.remove(&nf);
+    assert!(bound(dropped).unwrap_err().contains("nullifier set"));
+    let mut forged = idx.state.clone();
+    forged.events[0].h_body += Fp::from(1u64);
+    assert!(
+        bound(forged)
+            .unwrap_err()
+            .contains("not what its envelope gives")
+    );
+    let mut moved = idx.state.clone();
+    moved.events[0].leaves[0] += Fp::from(1u64);
+    assert!(bound(moved).unwrap_err().contains("not the tree's"));
 
     // reorganisation: block 1002 is replaced by an empty one
     chain.reorg_to(1001);

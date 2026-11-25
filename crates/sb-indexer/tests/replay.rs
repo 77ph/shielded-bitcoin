@@ -11,6 +11,7 @@ use sb_core::keys::{Seed, WalletKeys};
 use sb_core::tree::{DEPTH, EMPTY_ROOTS};
 use sb_indexer::chain::mock::{MockChain, carrier_tx};
 use sb_indexer::{Deployment, Indexer, ReplayState, Setup};
+use sb_primitives::Fr;
 use sb_wallet::{Recipient, SpendableNote, build_transfer, scan_incoming, scan_outgoing};
 
 const ACTIVATION: u32 = 1000;
@@ -310,6 +311,32 @@ fn accept_spend_reject_and_reorg() {
     // Persistence round trip.
     let json = idx.state.to_json();
     assert_eq!(ReplayState::from_json(&json).unwrap(), idx.state);
+
+    // A store is not trusted for contents: a planted leaf, a dropped spend
+    // or an event that is not what its envelope gives is refused on load.
+    let bound = |state: ReplayState| {
+        let verifier = TransferVerifier::new(w.params.vk().clone());
+        let mut i = Indexer::new(w.deployment.clone(), verifier, state);
+        i.bind_state().map_err(|e| e.to_string())
+    };
+    assert!(bound(idx.state.clone()).is_ok());
+    let mut planted = idx.state.clone();
+    planted.tree.append(Fr::from(7u64));
+    assert!(bound(planted).unwrap_err().contains("leaves no event made"));
+    let mut dropped = idx.state.clone();
+    let nf = *dropped.nullifiers.iter().next().unwrap();
+    dropped.nullifiers.remove(&nf);
+    assert!(bound(dropped).unwrap_err().contains("nullifier set"));
+    let mut forged = idx.state.clone();
+    forged.events[0].h_body += Fr::from(1u64);
+    assert!(
+        bound(forged)
+            .unwrap_err()
+            .contains("not what its envelope gives")
+    );
+    let mut moved = idx.state.clone();
+    moved.events[0].leaves[0] += Fr::from(1u64);
+    assert!(bound(moved).unwrap_err().contains("not the tree's"));
 
     // Roots: every replayed height has one; anchors below activation are empty.
     for h in ACTIVATION..=ACTIVATION + 2 {

@@ -1,6 +1,8 @@
 //! Deterministic replay (paper §8, §15; profile §11), plus the development
 //! mint of docs/BOUNDARY.md.
 
+use std::collections::HashSet;
+
 use bitcoin::hashes::Hash;
 use bitcoin::{Block, ScriptBuf, Transaction};
 use log::{debug, info, warn};
@@ -118,14 +120,107 @@ impl Indexer {
     pub fn bind_state(&mut self) -> Result<(), crate::StateError> {
         let id = self.deployment.state_id();
         match &self.state.deployment {
-            Some(d) if *d != id => Err(crate::StateError::Corrupt(format!(
-                "the state was built under deployment {d}, this is {id}"
-            ))),
-            _ => {
-                self.state.deployment = Some(id);
-                Ok(())
+            Some(d) if *d != id => {
+                return Err(crate::StateError::Corrupt(format!(
+                    "the state was built under deployment {d}, this is {id}"
+                )));
+            }
+            _ => self.state.deployment = Some(id),
+        }
+        self.check_state()
+    }
+
+    /// The loaded state must be what replay would have built from the
+    /// envelopes it keeps: a store is trusted for availability, not for
+    /// contents (one that is written to from outside could otherwise
+    /// plant a note, drop a spend or change what an event says).
+    fn check_state(&self) -> Result<(), crate::StateError> {
+        let corrupt = |what: &str| crate::StateError::Corrupt(format!("state: {what}"));
+        let s = &self.state;
+        if s.blocks.windows(2).any(|w| w[0].height >= w[1].height) {
+            return Err(corrupt("block heights do not increase"));
+        }
+        let salt_fe = self.deployment.const_salt_fr();
+        let const_salt = &self.deployment.const_salt;
+        let leaves = s.tree.leaves();
+        let mut position = 0usize;
+        for e in &s.events {
+            let n = e.leaves.len();
+            if e.first_position != position as u64
+                || leaves.get(position..position + n) != Some(&e.leaves[..])
+            {
+                return Err(corrupt("an event's leaves are not the tree's"));
+            }
+            position += n;
+            if e.raw.is_empty() {
+                // a proof client's event carries no envelope
+                continue;
+            }
+            let envelope = parse_envelope(&e.raw)
+                .map_err(|_| corrupt("an event's envelope does not parse"))?;
+            let (h_body, derived, nullifiers): (Fr, Vec<Fr>, Vec<Fr>) = match &envelope {
+                Envelope::Transfer(t) => {
+                    let h = t.body.h_body(const_salt);
+                    let l = (0..N_OUT)
+                        .map(|j| {
+                            note_leaf(
+                                &salt_fe,
+                                &h,
+                                j as u64,
+                                &t.body.pk_eph[j],
+                                &t.body.ct_note[j],
+                            )
+                        })
+                        .collect();
+                    (h, l, t.body.nullifiers.to_vec())
+                }
+                Envelope::Swap(w) => {
+                    let h = w.body.h_body(const_salt);
+                    let b = &w.body.base;
+                    let l = (0..N_OUT)
+                        .map(|j| {
+                            note_leaf_aux(
+                                &salt_fe,
+                                &h,
+                                j as u64,
+                                &b.pk_eph[j],
+                                &b.ct_note[j],
+                                &w.body.h_aux[j],
+                            )
+                        })
+                        .collect();
+                    (h, l, b.nullifiers.to_vec())
+                }
+                Envelope::Mint(m) => {
+                    let h = m.h_body(const_salt);
+                    let d = m
+                        .derive()
+                        .ok_or_else(|| corrupt("a mint's diversifier is invalid"))?;
+                    (h, vec![note_leaf(&salt_fe, &h, 0, &d.0, &d.1)], Vec::new())
+                }
+            };
+            if h_body != e.h_body || derived != e.leaves || nullifiers != e.nullifiers {
+                return Err(corrupt("an event is not what its envelope gives"));
             }
         }
+        if position as u64 != s.tree.size() {
+            return Err(corrupt("the tree holds leaves no event made"));
+        }
+        if s.light.is_none() {
+            let mut spent = HashSet::with_capacity(s.nullifiers.len());
+            for nf in s.events.iter().flat_map(|e| e.nullifiers.iter()) {
+                if !spent.insert(*nf) {
+                    return Err(corrupt("a nullifier is spent twice"));
+                }
+            }
+            if spent != s.nullifiers {
+                return Err(corrupt("the nullifier set is not the events'"));
+            }
+            if !s.check_commitments() {
+                return Err(corrupt("the commitments do not match the sets"));
+            }
+        }
+        Ok(())
     }
 
     pub fn with_swap_verifier(mut self, verifier: SwapVerifier) -> Self {
