@@ -27,6 +27,9 @@ use serde::{Deserialize, Serialize};
 use super::{BlockId, ChainError, ChainSource};
 use crate::carrier::CarrierMode;
 
+/// More transactions than a block holds (under 16 000 at 4 MB of weight).
+const MAX_TX_COUNT: u32 = 1 << 16;
+
 /// What an indexer serves for one block: the header, every transaction the
 /// carrier rule would look at, and one partial merkle tree proving their
 /// positions. `root_after` is the indexer's own `R[h]` claim, for the
@@ -118,6 +121,12 @@ impl BlockView {
         }
         if self.tx_count == 0 {
             return Err(bad("empty block"));
+        }
+        // the placeholders below are allocated by this count, which the
+        // indexer states: a block of 4 MB weight holds under 16 000
+        // transactions
+        if self.tx_count > MAX_TX_COUNT {
+            return Err(bad("tx_count above what a block holds"));
         }
         let mut txs: Vec<(u32, Transaction)> = Vec::with_capacity(self.carriers.len());
         for c in &self.carriers {
@@ -423,6 +432,14 @@ mod tests {
         let mut v = good.clone();
         v.carriers[1].index = 9;
         assert!(err(v, &hash).contains("past tx_count"));
+        let mut v = good.clone();
+        v.tx_count = u32::MAX;
+        assert!(err(v, &hash).contains("above what a block holds"));
+        let mut v = good.clone();
+        v.carriers.clear();
+        v.merkle.clear();
+        v.tx_count = u32::MAX;
+        assert!(err(v, &hash).contains("above what a block holds"));
         // garbage fields
         for (field, needle) in [("header", "header hex"), ("merkle", "merkle hex")] {
             let mut v = good.clone();
