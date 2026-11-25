@@ -138,7 +138,9 @@ Indexer state lives in a JSON file by default; `--db "<libpq string>"`
 (e.g. `host=/var/run/postgresql dbname=shielded_bitcoin`) keeps it in
 PostgreSQL instead, one transaction per replayed block, rolled back by
 height on a reorganisation. Tables are shared across deployments and keyed
-by deployment name.
+by deployment name; one process at a time holds a deployment's rows (a
+session lock taken on connect), so a second `sb` against the same
+database and deployment is refused while the first runs.
 
 Wallet files are encrypted with a passphrase (Argon2id, 64 MiB / 3 passes,
 then ChaCha20-Poly1305). The passphrase comes from `--passphrase-file`, the

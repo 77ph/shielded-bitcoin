@@ -66,6 +66,17 @@ impl PgStore {
     pub fn connect(conn: &str, deployment: &str) -> Result<Self, StoreError> {
         let mut client = Client::connect(conn, NoTls)?;
         client.batch_execute(SCHEMA)?;
+        // one writer per deployment: a session lock, held while this
+        // connection lives (two indexers appending to one deployment's
+        // rows would interleave their blocks)
+        let locked: bool = client
+            .query_one("SELECT pg_try_advisory_lock(hashtext($1))", &[&deployment])?
+            .get(0);
+        if !locked {
+            return Err(StoreError::Busy(format!(
+                "another process holds the store of deployment {deployment}"
+            )));
+        }
         Ok(PgStore {
             client,
             deployment: deployment.to_string(),

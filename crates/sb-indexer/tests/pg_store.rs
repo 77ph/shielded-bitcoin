@@ -82,18 +82,28 @@ fn pg_store_round_trip_and_rollback() {
     let r = idx.sync_with(&chain, Some(&mut store)).unwrap();
     assert_eq!((r.accepted, r.rejected), (1, 1));
 
+    // A second connection to the same deployment is refused while the
+    // first lives: one writer per deployment.
+    assert!(matches!(
+        PgStore::connect(&conn, &name),
+        Err(sb_indexer::StoreError::Busy(_))
+    ));
+    drop(store);
     // A fresh store connection rebuilds exactly the in-memory state.
     let mut store2 = PgStore::connect(&conn, &name).unwrap();
     let loaded = store2.load().unwrap();
     assert_eq!(loaded, idx.state);
     assert_eq!(loaded.tree.root(), idx.state.tree.root());
+    let mut store = store2;
 
     // Reorg: drop blocks above 11, replace with an empty one.
     chain.reorg_to(11);
     chain.push_block_salted(vec![], 5);
     let r = idx.sync_with(&chain, Some(&mut store)).unwrap();
     assert_eq!(r.rolled_back_to, Some(11));
-    let loaded = PgStore::connect(&conn, &name).unwrap().load().unwrap();
+    drop(store);
+    let mut store = PgStore::connect(&conn, &name).unwrap();
+    let loaded = store.load().unwrap();
     assert_eq!(loaded, idx.state);
     assert_eq!(loaded.rejections.len(), 0);
     assert_eq!(loaded.events.len(), 1);
@@ -109,15 +119,7 @@ fn pg_store_round_trip_and_rollback() {
 
     // Clean up this deployment's rows.
     store.rollback_to(&idx.state, 0).unwrap();
-    assert_eq!(
-        PgStore::connect(&conn, &name)
-            .unwrap()
-            .load()
-            .unwrap()
-            .blocks
-            .len(),
-        0
-    );
+    assert_eq!(store.load().unwrap().blocks.len(), 0);
 }
 
 /// Rows damaged outside the indexer are reported as corruption, never
@@ -131,7 +133,7 @@ fn pg_store_rejects_corrupt_rows() {
     let name = format!("pgcorrupt-{}", std::process::id());
     let mut raw = Client::connect(&conn, NoTls).unwrap();
     // make sure the schema exists
-    let _ = PgStore::connect(&conn, &name).unwrap();
+    drop(PgStore::connect(&conn, &name).unwrap());
     let cases: Vec<(&str, &str)> = vec![
         (
             "leaf",

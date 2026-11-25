@@ -21,6 +21,8 @@ pub enum StoreError {
     Pg(#[from] postgres::Error),
     #[error("corrupt store: {0}")]
     Corrupt(String),
+    #[error("store busy: {0}")]
+    Busy(String),
 }
 
 pub trait StateStore {
