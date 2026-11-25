@@ -295,6 +295,7 @@ impl Indexer {
         let statement = SwapStatement {
             base: self.statement(body, r_anchor, h_body),
             h_anchor: body.h_anchor,
+            h_aux: envelope.body.h_aux,
         };
         if !verifier.verify(&statement, &envelope.proof) {
             return Err(RejectReason::ProofInvalid);

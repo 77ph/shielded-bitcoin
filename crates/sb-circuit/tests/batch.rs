@@ -103,6 +103,7 @@ impl Sim {
             h_body: f(9),
             h_aux: [Fr::from(0u64); N_OUT],
             mint: false,
+            swap: false,
         };
         let anchor_siblings = if pre {
             [Fr::from(0u64); sb_core::tree::DEPTH]
@@ -158,6 +159,7 @@ impl Sim {
             h_body: f(9),
             h_aux: [Fr::from(0u64); N_OUT],
             mint: true,
+            swap: false,
         };
         let leaf = note_leaf_aux(
             &salt(),
@@ -359,6 +361,52 @@ fn a_block_of_two_proves_fragments_chain_and_tampering_fails() {
     assert!(
         !satisfied(circuit(2, &st, &w)).0,
         "a mint presented as a transfer"
+    );
+    // a mint carries nothing beyond its one output
+    let mut w = w4.clone();
+    w.slots[0].as_mut().unwrap().statement.nullifiers[1] = Fr::from(5u64);
+    let st = BatchStatement {
+        d: batch_digest(&[
+            Some(w.slots[0].as_ref().unwrap().statement),
+            Some(tx.statement),
+        ]),
+        ..st4
+    };
+    assert!(!satisfied(circuit(2, &st, &w)).0, "a mint with a nullifier");
+    // only a swap's outputs carry a slot: the same leaves, another kind
+    let mut sim5 = Sim::new();
+    let s0 = sim5.opening();
+    let mut sw = sim5.slot(ACT - 1, 7);
+    let ra5 = sim5.finish_block();
+    let s1_5 = sim5.opening();
+    let st5 = |st: &sb_core::batch::SlotStatement| BatchStatement {
+        s_prev: s0.digest(),
+        s_next: s1_5.digest(),
+        d: batch_digest(&[Some(*st), None]),
+    };
+    let w5 = |sw: &SlotWitness| BatchWitness {
+        prev: s0,
+        slots: vec![Some(sw.clone()), None],
+        final_block: true,
+        root_append: Some(ra5.clone()),
+    };
+    assert!(satisfied(circuit(2, &st5(&sw.statement), &w5(&sw))).0);
+    sw.statement.swap = true;
+    assert!(
+        satisfied(circuit(2, &st5(&sw.statement), &w5(&sw))).0,
+        "a swap with empty slots"
+    );
+    sw.statement.swap = false;
+    sw.statement.h_aux[0] = Fr::from(9u64);
+    assert!(
+        !satisfied(circuit(2, &st5(&sw.statement), &w5(&sw))).0,
+        "a transfer whose output carries a slot"
+    );
+    sw.statement.mint = true;
+    sw.statement.swap = true;
+    assert!(
+        !satisfied(circuit(2, &st5(&sw.statement), &w5(&sw))).0,
+        "kind 3"
     );
     // a pre-activation anchor must open to the initial root, nothing else
     let mut w = w4.clone();

@@ -401,16 +401,16 @@ fn apply_fragments<R: RngCore + CryptoRng>(
                 ct_note: st.ct,
                 h_body: st.h_body,
             };
-            match (s.kind.as_str(), st.mint) {
-                ("mint", true) => {}
-                ("transfer", false) => {
+            match (s.kind.as_str(), st.mint, st.swap) {
+                ("mint", true, false) => {}
+                ("transfer", false, false) => {
                     let p = s
                         .proof
                         .as_deref()
                         .ok_or_else(|| bad("transfer without a proof"))?;
                     transfers.push((base.to_field_elements(), bytes(p, "transfer proof")?));
                 }
-                ("swap", false) => {
+                ("swap", false, true) => {
                     let p = s
                         .proof
                         .as_deref()
@@ -418,10 +418,11 @@ fn apply_fragments<R: RngCore + CryptoRng>(
                     let sw = SwapStatement {
                         base,
                         h_anchor: st.h_anchor,
+                        h_aux: st.h_aux,
                     };
                     swaps.push((sw.to_field_elements(), bytes(p, "swap proof")?));
                 }
-                (k, _) => {
+                (k, _, _) => {
                     return Err(bad(&format!(
                         "fragment {fi} slot {si}: kind {k:?} does not match the statement"
                     )));
@@ -479,10 +480,12 @@ fn apply_fragments<R: RngCore + CryptoRng>(
                 state.tree.append(leaf);
                 leaves.push(leaf);
             }
-            let kind = match (st.mint, sj.kind.as_str()) {
-                (true, _) => EventKind::Mint,
-                (false, "swap") => EventKind::Swap,
-                _ => EventKind::Transfer,
+            let kind = if st.mint {
+                EventKind::Mint
+            } else if st.swap {
+                EventKind::Swap
+            } else {
+                EventKind::Transfer
             };
             let nullifiers = if st.mint {
                 vec![]

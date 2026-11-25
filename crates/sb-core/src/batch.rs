@@ -52,7 +52,9 @@ impl StateOpening {
 
 /// One accepted envelope as the batch sees it: the public inputs of its
 /// proof without the constants (`const_salt`, arity), plus the anchor
-/// height, the `h_aux` slots and its kind. 18 field elements. A **mint**
+/// height, the `h_aux` slots and its kind (0 a transfer, 1 a mint, 2 a
+/// swap: the one kind whose outputs carry a slot, which its proof binds).
+/// 18 field elements. A **mint**
 /// (the development boundary, `BOUNDARY.md`) has no anchor, no
 /// nullifiers and one output: its validity is the carrier's vault
 /// payment, which is enumeration-class trust (`REPLAY-PROOF.md` §3), and
@@ -67,6 +69,7 @@ pub struct SlotStatement {
     pub h_body: Fr,
     pub h_aux: [Fr; N_OUT],
     pub mint: bool,
+    pub swap: bool,
 }
 
 pub const SLOT_ELEMENTS: usize = 1 + 1 + N_IN + N_OUT * 5 + 1 + N_OUT + 1;
@@ -84,13 +87,13 @@ impl SlotStatement {
         }
         v.push(self.h_body);
         v.extend_from_slice(&self.h_aux);
-        v.push(Fr::from(self.mint as u64));
+        v.push(Fr::from(self.mint as u64 + 2 * self.swap as u64));
         v.try_into().expect("SLOT_ELEMENTS")
     }
 
     /// The inverse of [`Self::to_elements`], `None` if the elements are
     /// not a statement: a height above `u32`, a point off the curve or
-    /// outside the prime-order subgroup, a kind other than 0 or 1.
+    /// outside the prime-order subgroup, a kind other than 0, 1 or 2.
     pub fn from_elements(e: &[Fr]) -> Option<Self> {
         use ark_ff::{BigInteger, PrimeField};
         if e.len() != SLOT_ELEMENTS {
@@ -123,9 +126,10 @@ impl SlotStatement {
                 tag: e[base + 4],
             };
         }
-        let mint = match u32_of(&e[17])? {
-            0 => false,
-            1 => true,
+        let (mint, swap) = match u32_of(&e[17])? {
+            0 => (false, false),
+            1 => (true, false),
+            2 => (false, true),
             _ => return None,
         };
         Some(SlotStatement {
@@ -137,6 +141,7 @@ impl SlotStatement {
             h_body: e[14],
             h_aux: [e[15], e[16]],
             mint,
+            swap,
         })
     }
 }
@@ -251,6 +256,7 @@ mod tests {
             h_body: Fr::from(14u64),
             h_aux: [Fr::from(0u64); N_OUT],
             mint: false,
+            swap: false,
         };
         assert_eq!(st.to_elements().len(), SLOT_ELEMENTS);
         assert_eq!(SLOT_ELEMENTS, 18);
@@ -262,8 +268,12 @@ mod tests {
             "the kind is committed"
         );
         assert_eq!(SlotStatement::from_elements(&st.to_elements()), Some(st));
+        let mut sw = st;
+        sw.swap = true;
+        assert_eq!(sw.to_elements()[17], Fr::from(2u64));
+        assert_eq!(SlotStatement::from_elements(&sw.to_elements()), Some(sw));
         let mut bad = st.to_elements();
-        bad[17] = Fr::from(2u64);
+        bad[17] = Fr::from(3u64);
         assert_eq!(SlotStatement::from_elements(&bad), None, "kind");
         let mut bad = st.to_elements();
         bad[4] += Fr::from(1u64);

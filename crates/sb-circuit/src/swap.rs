@@ -35,8 +35,9 @@ use crate::transfer::{
     InputWitness, NUM_PUBLIC_INPUTS, OutputWitness, TransferStatement, pk_d_root,
 };
 
-/// Public inputs of the swap statement: the base ones plus `h_anchor`.
-pub const NUM_SWAP_PUBLIC_INPUTS: usize = NUM_PUBLIC_INPUTS + 1;
+/// Public inputs of the swap statement: the base ones, `h_anchor`, and
+/// the `h_aux` slot of every output.
+pub const NUM_SWAP_PUBLIC_INPUTS: usize = NUM_PUBLIC_INPUTS + 1 + N_OUT;
 
 /// Private data for one input of a swap transfer (`docs/SWAP.md` §6).
 #[derive(Clone, Debug)]
@@ -83,17 +84,21 @@ pub struct SwapWitness {
     pub outputs: [OutputWitness; N_OUT],
 }
 
-/// The swap statement: the base statement and the anchor height.
+/// The swap statement: the base statement, the anchor height and the
+/// outputs' slots (the body's aux section): public, so that a batch's
+/// slot statement carries what the proof was made for.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SwapStatement {
     pub base: TransferStatement,
     pub h_anchor: u32,
+    pub h_aux: [Fr; N_OUT],
 }
 
 impl SwapStatement {
     pub fn to_field_elements(&self) -> Vec<Fr> {
         let mut v = self.base.to_field_elements();
         v.push(Fr::from(self.h_anchor as u64));
+        v.extend_from_slice(&self.h_aux);
         debug_assert_eq!(v.len(), NUM_SWAP_PUBLIC_INPUTS);
         v
     }
@@ -140,11 +145,20 @@ impl ConstraintSynthesizer<Fr> for SwapCircuit {
         }
         let h_body = input(&|s| s.base.h_body)?;
         let h_anchor = input(&|s| Fr::from(s.h_anchor as u64))?;
+        let mut h_aux_out = Vec::with_capacity(N_OUT);
+        for j in 0..N_OUT {
+            h_aux_out.push(input(&|s| s.h_aux[j])?);
+        }
 
         n.enforce_equal(&Var::Constant(Fr::from(N_IN as u64)))?;
         m.enforce_equal(&Var::Constant(Fr::from(N_OUT as u64)))?;
         let _ = h_body.square()?;
         let _ = r_anchor.square()?;
+        // the output slots are bound by being public inputs the key
+        // touches; a value in no constraint would not be
+        for h in &h_aux_out {
+            let _ = h.square()?;
+        }
         // h_anchor is a block height
         let _ = h_anchor.to_bits_le_with_top_bits_zero(32)?;
 

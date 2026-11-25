@@ -171,9 +171,15 @@ deployment's `batch` section accepts a ceremony's key files, and today
 inputs: `digest(S_prev)`, `digest(S_next)`, and `D = PH(T_BATCH, st_1 …
 st_n)` over the `n` statements (a statement is 18 field elements:
 `h_anchor`, `r_anchor`, the two nullifiers, per output `pk_eph` and the
-ciphertext, `h_body`, the two `h_aux`, and a kind flag that is 1 for a
-mint and 0 otherwise; a slot left empty is the all-zero statement, which
-the circuit enforces and skips). Witness: the state opening, the statements
+ciphertext, `h_body`, the two `h_aux`, and a kind element that is 0 for
+a transfer, 1 for a mint and 2 for a swap; a slot left empty is the
+all-zero statement, which the circuit enforces and skips). The kind is
+enforced, not only committed: a mint's statement has no nullifiers, one
+output and the second output's fields zero; only a swap's outputs may
+carry a non-zero `h_aux`; and the indexer's slot kinds come from the
+envelope kinds it replayed, so a block's slots cannot be relabelled
+(a transfer presented as a mint would skip its nullifier insertions, a
+swap as a transfer would hide its locks). Witness: the state opening, the statements
 and every path. Constraints per slot (`crates/sb-circuit/src/batch.rs`,
 **measured**):
 
@@ -203,7 +209,7 @@ that order, so it commits to the order, which is semantically
 significant (positions, roots). An empty slot is the all-zero
 statement; a real statement is never all zero (a transfer's nullifiers
 are Poseidon outputs, every kind's `h_body` is a SHA-256 output, and a
-mint carries the kind flag 1), so a skipped slot cannot hide a
+mint carries the kind element 1), so a skipped slot cannot hide a
 transfer and a transfer cannot pass as a skipped slot.
 
 What `T` does **not** do: verify the `n` transfer proofs, or parse

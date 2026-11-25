@@ -163,11 +163,25 @@ impl ConstraintSynthesizer<Fr> for BatchCircuit {
             let nfs = [&elems[2], &elems[3]];
             let h_body = &elems[14];
             let h_aux = [&elems[15], &elems[16]];
-            // the kind: 0 a transfer or swap, 1 a mint (one leaf, no anchor,
-            // no nullifiers); anything else is refused
+            // the kind: 0 a transfer, 1 a mint (one leaf, no anchor, no
+            // nullifiers), 2 a swap (the one kind whose outputs carry a
+            // slot); anything else is refused
             let kind = &elems[17];
-            (kind * (kind - Var::one())).enforce_equal(&Var::zero())?;
+            let two = Var::Constant(Fr::from(2u64));
+            (kind * (kind - Var::one()) * (kind - &two)).enforce_equal(&Var::zero())?;
             let is_mint = kind.is_eq(&Var::one())?;
+            let is_swap = kind.is_eq(&two)?;
+            // only a swap's outputs carry a slot
+            for h in &h_aux {
+                h.conditional_enforce_equal(&Var::zero(), &!is_swap.clone())?;
+            }
+            // a mint's statement is fixed outside its one output: no
+            // anchor, no nullifiers, and the second output's key is the
+            // identity (0, 1) with an all-zero ciphertext
+            for e in [0, 1, 2, 3, 9, 11, 12, 13] {
+                elems[e].conditional_enforce_equal(&Var::zero(), &is_mint)?;
+            }
+            elems[10].conditional_enforce_equal(&Var::one(), &is_mint)?;
             let active_tx = &active & &!is_mint;
             let active_tx_fr: Var = Var::from(active_tx.clone());
 

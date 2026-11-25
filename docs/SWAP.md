@@ -119,11 +119,16 @@ order, followed by:
 | # | Input | Source |
 |---|---|---|
 | 18 | `h_anchor` | the body's anchor height, as a field element |
+| 19, 20 | `h_aux_0`, `h_aux_1` | the aux section, per output |
 
 `h_anchor` is already bound by `h_body`; it is made a public input so the
 circuit can compare it with `t_refund`. Replay passes the body's value
 and has already checked the anchor window, so a prover cannot name an
-anchor above the chain (§8).
+anchor above the chain (§8). The two output `h_aux` are public inputs
+as well as part of `h_body`: the verifier binds them directly, without
+the proof depending on how the body bytes were hashed, and the batch
+circuit of `REPLAY-PROOF.md` §4.2 checks that only a swap's statement
+carries them.
 
 ## 6. Witness
 
@@ -367,7 +372,7 @@ the extension.
 |---|---|
 | SHA-256 of a 32-byte `s` in circuit (arkworks gadget) | 39 482 constraints per input |
 | Base transfer circuit | 84 362 constraints, domain `2^17` |
-| Swap circuit (measured) | 174 803 constraints, 18 public inputs, domain `2^18` |
+| Swap circuit (measured) | 174 805 constraints, 20 public inputs, domain `2^18` |
 | Envelope | 764 bytes (+64) |
 | Proof | 192 bytes (unchanged) |
 

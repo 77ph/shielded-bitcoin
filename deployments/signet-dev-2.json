@@ -18,7 +18,7 @@
   },
   "batch": {
     "n": 4,
-    "vk_sha256": "0db7bb6a5b817a41637d5a2d1d7378a11580dd0e5e34bee7071211ea0ad37d3b",
+    "vk_sha256": "1d95311369505d66d53ece8d092bc72c06680b00fa7a21d47afa9d35a960baeb",
     "setup": {
       "kind": "insecure-seed",
       "seed": "0000000000000000000000000000000000000000000000000000000000000000"

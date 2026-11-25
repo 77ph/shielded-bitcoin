@@ -146,6 +146,7 @@ fn statement(
             h_body: Fr::from(4242u64),
         },
         h_anchor,
+        h_aux: [f.h_aux, Fr::from(0u64)],
     }
 }
 
@@ -333,6 +334,10 @@ fn proofs_verify_and_bind_h_anchor() {
     // the anchor height is a public input: another height, another statement
     let mut other = st.clone();
     other.h_anchor = T_REFUND + 3;
+    assert!(!verifier.verify(&other, &proof));
+    // so are the outputs' slots
+    let mut other = st.clone();
+    other.h_aux[1] = Fr::from(1u64);
     assert!(!verifier.verify(&other, &proof));
     // the base verifying key does not accept a swap proof
     let base = TransferParams::insecure_setup(&[5u8; 32]).unwrap();

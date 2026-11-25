@@ -51,10 +51,10 @@ pub fn slot_statement(
 ) -> Result<SlotStatement, BatchError> {
     let env = parse_envelope(&event.raw)
         .map_err(|_| BatchError::Envelope(event.height, event.tx_index))?;
-    let (h_anchor, h_aux, mint) = match &env {
-        Envelope::Transfer(e) => (e.body.h_anchor, [Fr::from(0u64); N_OUT], false),
-        Envelope::Swap(e) => (e.body.base.h_anchor, e.body.h_aux, false),
-        Envelope::Mint(_) => (0, [Fr::from(0u64); N_OUT], true),
+    let (h_anchor, h_aux, mint, swap) = match &env {
+        Envelope::Transfer(e) => (e.body.h_anchor, [Fr::from(0u64); N_OUT], false, false),
+        Envelope::Swap(e) => (e.body.base.h_anchor, e.body.h_aux, false, true),
+        Envelope::Mint(_) => (0, [Fr::from(0u64); N_OUT], true, false),
     };
     let zero_ct = NoteCiphertext {
         c0: Fr::from(0u64),
@@ -87,6 +87,7 @@ pub fn slot_statement(
         h_body: event.h_body,
         h_aux,
         mint,
+        swap,
     })
 }
 

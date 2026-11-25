@@ -544,6 +544,7 @@ pub fn build_swap_transfer<R: RngCore + CryptoRng>(
             h_body,
         },
         h_anchor,
+        h_aux,
     };
     let witness = SwapWitness {
         sk_spend: keys.sk_spend,
