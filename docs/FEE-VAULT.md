@@ -225,7 +225,8 @@ wallet:
 }
 ```
 
-`raw` and `nullifiers` are kept while the entry is unsettled (I3) and
+`raw` and `nullifiers` are kept while the entry is unsettled (I3), that
+is until replay has accepted the transfer `K_min` blocks below the tip, and
 dropped once replay has accepted the transfer; `at` is the vault's tip
 when the entry was written.
 

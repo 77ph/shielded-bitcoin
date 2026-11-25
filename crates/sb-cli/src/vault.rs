@@ -13,7 +13,7 @@
 //! Wire (FEE-VAULT.md §7): `GET /info`, `GET /credit/<P>`, `POST /draw`,
 //! `POST /reclaim`, one JSON object each.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::net::{IpAddr, TcpListener};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -267,58 +267,91 @@ impl Vault {
         Ok(tip)
     }
 
-    /// Mark draws and reclaims whose transfer replay has accepted (I3):
-    /// their raw transactions and nullifiers are no longer needed.
+    /// Mark draws and reclaims whose transfer replay has accepted and that
+    /// are `k_min` blocks deep (I3): their raw transactions and nullifiers
+    /// are no longer needed. Shallower ones stay unsettled, so a
+    /// reorganisation within `k_min` still finds what to re-broadcast. A
+    /// settled entry whose transfer a deeper reorganisation removed is
+    /// reverted: nothing was published for it, so the charge goes back.
     fn settle(&mut self) -> Result<()> {
-        let open: HashSet<String> = self
-            .ledger
-            .accounts
-            .values()
-            .flat_map(|a| {
-                a.draws
-                    .iter()
-                    .filter(|d| !d.settled)
-                    .map(|d| d.h_body.clone())
-                    .chain(
-                        a.reclaims
-                            .iter()
-                            .filter(|r| !r.settled)
-                            .map(|r| r.h_body.clone()),
-                    )
-            })
-            .collect();
-        if open.is_empty() {
-            return Ok(());
-        }
-        let accepted: HashSet<String> = self
+        let tip = self.r.indexer.state.last_height().unwrap_or(0);
+        let k_min = self.k_min;
+        // h_body → settled (k_min deep) for every accepted transfer
+        let accepted: HashMap<String, bool> = self
             .r
             .indexer
             .state
             .events
             .iter()
-            .map(|e| hex_fr(&e.h_body))
-            .filter(|h| open.contains(h))
+            .map(|e| (hex_fr(&e.h_body), e.height.saturating_add(k_min) <= tip))
             .collect();
-        if accepted.is_empty() {
-            return Ok(());
-        }
-        for a in self.ledger.accounts.values_mut() {
-            for d in a.draws.iter_mut().filter(|d| accepted.contains(&d.h_body)) {
-                d.settled = true;
-                d.raw.clear();
-                d.nullifiers.clear();
+        let mut changed = false;
+        let mut unlock = Vec::new();
+        for (key, a) in self.ledger.accounts.iter_mut() {
+            for d in a.draws.iter_mut() {
+                if !d.settled && accepted.get(&d.h_body) == Some(&true) {
+                    d.settled = true;
+                    d.raw.clear();
+                    d.nullifiers.clear();
+                    changed = true;
+                }
             }
-            for r in a
+            for r in a.reclaims.iter_mut() {
+                if !r.settled && accepted.get(&r.h_body) == Some(&true) {
+                    r.settled = true;
+                    r.raw.clear();
+                    r.nullifiers.clear();
+                    changed = true;
+                }
+            }
+            let gone = |settled: bool, h_body: &String| settled && !accepted.contains_key(h_body);
+            let reverted_fees: u64 = a
+                .draws
+                .iter()
+                .filter(|d| gone(d.settled, &d.h_body))
+                .map(|d| d.fee)
+                .sum();
+            if reverted_fees > 0 {
+                a.draws.retain(|d| !gone(d.settled, &d.h_body));
+                a.released = a.released.saturating_sub(reverted_fees);
+                changed = true;
+                log::warn!(
+                    "settled draws of {} left the chain; {reverted_fees} sat of credit given back",
+                    &key[..16]
+                );
+            }
+            let reverted_credit: u64 = a
                 .reclaims
-                .iter_mut()
-                .filter(|r| accepted.contains(&r.h_body))
-            {
-                r.settled = true;
-                r.raw.clear();
-                r.nullifiers.clear();
+                .iter()
+                .filter(|r| gone(r.settled, &r.h_body))
+                .map(|r| r.credit)
+                .sum();
+            if reverted_credit > 0 {
+                unlock.extend(
+                    a.reclaims
+                        .iter()
+                        .filter(|r| gone(r.settled, &r.h_body))
+                        .map(|r| r.h_body.clone()),
+                );
+                a.reclaims.retain(|r| !gone(r.settled, &r.h_body));
+                a.reclaimed = a.reclaimed.saturating_sub(reverted_credit);
+                changed = true;
+                log::warn!(
+                    "a settled reclaim of {} left the chain; {reverted_credit} sat of credit given back",
+                    &key[..16]
+                );
             }
         }
-        self.ledger.save(&self.ledger_path)
+        for h in &unlock {
+            self.unlock(h);
+        }
+        if !unlock.is_empty() {
+            self.r.wallet.save(&self.r.wallet_path)?;
+        }
+        if changed {
+            self.ledger.save(&self.ledger_path)?;
+        }
+        Ok(())
     }
 
     /// Deposits under `key`: settled (at least `k_min` below `tip`) and
@@ -391,9 +424,24 @@ impl Vault {
     /// before the first request is served.
     fn resolve_pending(&mut self) -> Result<()> {
         self.settle()?;
+        // what replay accepted but is not yet k_min deep stays unsettled
+        // and needs no re-broadcast
+        let in_chain: HashSet<String> = self
+            .r
+            .indexer
+            .state
+            .events
+            .iter()
+            .map(|e| hex_fr(&e.h_body))
+            .collect();
         let mut revert: Vec<(String, bool, usize)> = Vec::new();
         for (key, a) in &self.ledger.accounts {
-            for (i, d) in a.draws.iter().enumerate().filter(|(_, d)| !d.settled) {
+            for (i, d) in a
+                .draws
+                .iter()
+                .enumerate()
+                .filter(|(_, d)| !d.settled && !in_chain.contains(&d.h_body))
+            {
                 if !self.rebroadcast(&d.raw)? {
                     log::warn!(
                         "draw {} of {} refused by the network; reverting",
@@ -403,7 +451,12 @@ impl Vault {
                     revert.push((key.clone(), true, i));
                 }
             }
-            for (i, r) in a.reclaims.iter().enumerate().filter(|(_, r)| !r.settled) {
+            for (i, r) in a
+                .reclaims
+                .iter()
+                .enumerate()
+                .filter(|(_, r)| !r.settled && !in_chain.contains(&r.h_body))
+            {
                 if !self.rebroadcast(&r.raw)? {
                     log::warn!(
                         "reclaim {} of {} refused by the network; reverting",
