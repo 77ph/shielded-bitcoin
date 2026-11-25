@@ -46,6 +46,53 @@ fn indexer(params: &TransferParams, d: &Deployment) -> Indexer {
     )
 }
 
+/// A state is bound to the deployment it was built under: resumed under
+/// the same one, refused under another (another name, or another
+/// activation of the same name); a state from before the binding takes it.
+#[test]
+fn a_state_is_bound_to_its_deployment() {
+    let params = TransferParams::insecure_setup(&[0u8; 32]).unwrap();
+    let d = deployment(&params, "bound");
+    let mut idx = indexer(&params, &d);
+    assert_eq!(idx.state.deployment, None);
+    idx.bind_state().unwrap();
+    assert_eq!(idx.state.deployment.as_deref(), Some(d.state_id().as_str()));
+    let json = idx.state.to_json();
+    let back = ReplayState::from_json(&json).unwrap();
+    assert_eq!(back.deployment, idx.state.deployment);
+    // the same deployment resumes
+    let mut same = Indexer::new(
+        d.clone(),
+        TransferVerifier::new(params.vk().clone()),
+        back.clone(),
+    );
+    same.bind_state().unwrap();
+    // another name, or another activation of the same name, does not
+    let other = deployment(&params, "other");
+    let mut idx2 = Indexer::new(
+        other,
+        TransferVerifier::new(params.vk().clone()),
+        back.clone(),
+    );
+    let e = idx2.bind_state().unwrap_err().to_string();
+    assert!(e.contains("built under deployment"), "{e}");
+    let mut moved = d.clone();
+    moved.activation_height += 1;
+    let mut idx3 = Indexer::new(moved, TransferVerifier::new(params.vk().clone()), back);
+    assert!(idx3.bind_state().is_err());
+    // a file from before the field is unbound and takes the deployment
+    let mut unbound: serde_json::Value = serde_json::from_str(&json).unwrap();
+    unbound.as_object_mut().unwrap().remove("deployment");
+    let old = ReplayState::from_json(&unbound.to_string()).unwrap();
+    assert_eq!(old.deployment, None);
+    let mut idx4 = Indexer::new(d.clone(), TransferVerifier::new(params.vk().clone()), old);
+    idx4.bind_state().unwrap();
+    assert_eq!(
+        idx4.state.deployment.as_deref(),
+        Some(d.state_id().as_str())
+    );
+}
+
 fn zero_transfer(
     params: &TransferParams,
     d: &Deployment,

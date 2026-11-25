@@ -121,6 +121,18 @@ pub enum DeploymentError {
 }
 
 impl Deployment {
+    /// What a replay state is bound to: the name, the activation height
+    /// and the salt — a state built under one deployment is not resumed
+    /// under another ([`crate::Indexer::bind_state`]).
+    pub fn state_id(&self) -> String {
+        format!(
+            "{}@{}/{}",
+            self.name,
+            self.activation_height,
+            hex::encode(self.const_salt)
+        )
+    }
+
     /// `const_salt = SHA-256("sb/v1/const_salt/" ‖ name)` (profile §9).
     pub fn derive_const_salt(name: &str) -> [u8; 32] {
         let mut h = Sha256::new();

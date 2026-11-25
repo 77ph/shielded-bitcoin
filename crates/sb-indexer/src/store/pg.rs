@@ -196,6 +196,7 @@ impl StateStore for PgStore {
             nullifier_tree: Default::default(),
             root_tree: Default::default(),
             light: None,
+            deployment: None,
         };
         state.rebuild_commitments();
         Ok(state)

@@ -544,6 +544,7 @@ impl Ctx {
         let mut store = self.store()?;
         let state = store.load()?;
         let mut idx = Indexer::new(self.deployment.clone(), verifier, state);
+        idx.bind_state()?;
         if let Some(sv) = self.deployment.swap_verifier(&self.base_dir())? {
             idx = idx.with_swap_verifier(sv);
         }

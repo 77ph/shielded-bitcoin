@@ -503,10 +503,9 @@ impl Ctx {
         let verifier = self.deployment.verifier()?;
         let mut store: Box<dyn StateStore> = Box::new(JsonStore::new(self.state_path()));
         let state = store.load()?;
-        Ok((
-            Indexer::new(self.deployment.clone(), verifier, state),
-            store,
-        ))
+        let mut idx = Indexer::new(self.deployment.clone(), verifier, state);
+        idx.bind_state()?;
+        Ok((idx, store))
     }
 
     /// Passphrase from --passphrase-file, then SB_WALLET_PASSPHRASE, then a prompt.

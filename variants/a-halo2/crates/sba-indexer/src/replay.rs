@@ -102,6 +102,23 @@ pub struct Indexer {
 }
 
 impl Indexer {
+    /// Bind the state to this deployment: a state built under another one
+    /// (name, activation or salt) is refused rather than resumed from its
+    /// tip under the wrong constants; an unbound state (new, or a file from
+    /// before the field) takes this deployment's id.
+    pub fn bind_state(&mut self) -> Result<(), crate::StateError> {
+        let id = self.deployment.state_id();
+        match &self.state.deployment {
+            Some(d) if *d != id => Err(crate::StateError::Corrupt(format!(
+                "the state was built under deployment {d}, this is {id}"
+            ))),
+            _ => {
+                self.state.deployment = Some(id);
+                Ok(())
+            }
+        }
+    }
+
     pub fn new(deployment: Deployment, verifier: TransferVerifier, state: ReplayState) -> Self {
         let vault_script = deployment.boundary.as_ref().map(|b| {
             ScriptBuf::from_bytes(hex::decode(&b.vault_script_hex).expect("vault script hex"))

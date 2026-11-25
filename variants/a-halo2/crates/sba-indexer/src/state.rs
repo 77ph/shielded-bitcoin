@@ -58,6 +58,9 @@ pub struct ReplayState {
     /// One batch witness per replayed block, in memory only (the prover of
     /// the accumulated replay proof consumes them as blocks are replayed).
     pub batches: Vec<BatchWitness>,
+    /// The deployment this state was built under (`Deployment::state_id`);
+    /// `None` before the first sync, or in a file from before the field.
+    pub deployment: Option<String>,
 }
 
 impl Default for ReplayState {
@@ -96,6 +99,8 @@ struct StateFile {
     blocks: Vec<BlockCheckpoint>,
     events: Vec<EventRecord>,
     rejections: Vec<Rejection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    deployment: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -122,6 +127,7 @@ impl ReplayState {
             events: Vec::new(),
             rejections: Vec::new(),
             batches: Vec::new(),
+            deployment: None,
         }
     }
 
@@ -245,6 +251,7 @@ impl ReplayState {
                 })
                 .collect(),
             rejections: self.rejections.clone(),
+            deployment: self.deployment.clone(),
         };
         serde_json::to_string(&f).expect("serializable")
     }
@@ -322,6 +329,7 @@ impl ReplayState {
             events,
             rejections: f.rejections,
             batches: Vec::new(),
+            deployment: f.deployment,
         })
     }
 

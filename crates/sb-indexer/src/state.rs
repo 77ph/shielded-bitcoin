@@ -55,6 +55,9 @@ pub struct ReplayState {
     /// `Some` for a light client's state (`crate::proof`): it keeps no
     /// nullifier tree, only what the proofs it verified say about it.
     pub light: Option<LightView>,
+    /// The deployment this state was built under (`Deployment::state_id`);
+    /// `None` before the first sync, or in a file from before the field.
+    pub deployment: Option<String>,
 }
 
 /// Serialisable event record; outputs are re-derived from `raw` on load.
@@ -127,6 +130,8 @@ struct StateFile {
     rejections: Vec<Rejection>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     light: Option<LightView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    deployment: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -153,6 +158,7 @@ impl Default for ReplayState {
             nullifier_tree: IndexedMerkleTree::new(),
             root_tree: NoteTree::from_leaves(&[EMPTY_ROOTS[DEPTH]]),
             light: None,
+            deployment: None,
         }
     }
 }
@@ -355,6 +361,7 @@ impl ReplayState {
                 .collect(),
             rejections: self.rejections.clone(),
             light: self.light.clone(),
+            deployment: self.deployment.clone(),
         };
         serde_json::to_string(&f).expect("serializable")
     }
@@ -439,6 +446,7 @@ impl ReplayState {
             nullifier_tree: IndexedMerkleTree::new(),
             root_tree: NoteTree::new(),
             light: f.light,
+            deployment: f.deployment,
         };
         state.rebuild_commitments();
         Ok(state)
