@@ -200,6 +200,9 @@ enum Cmd {
     Scan {
         #[arg(long, default_value = "default")]
         name: String,
+        /// Forget the scan and read the accepted history from the start.
+        #[arg(long)]
+        rescan: bool,
     },
     /// Release input locks left by unpublished transfers.
     Unlock {
@@ -1040,9 +1043,12 @@ pub fn run(args: Vec<String>) -> Result<()> {
             },
             latest,
         )?,
-        Cmd::Scan { name } => {
+        Cmd::Scan { name, rescan } => {
             let (idx, _store) = ctx.indexer()?;
             let mut w = ctx.wallet(&name)?;
+            if rescan {
+                w.reset_scan();
+            }
             let n = w.scan(
                 &ctx.deployment.const_salt_fp(),
                 &idx.state.events,

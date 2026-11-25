@@ -204,6 +204,9 @@ enum Cmd {
     Scan {
         #[arg(long, default_value = "default")]
         name: String,
+        /// Forget the scan and read the accepted history from the start.
+        #[arg(long)]
+        rescan: bool,
     },
     /// Mint `amount` sat into the wallet (dev boundary; pays the vault).
     Mint {
@@ -1429,9 +1432,12 @@ fn main() -> Result<()> {
             print_status(&idx);
         }
         Cmd::Status => print_status(&ctx.indexer()?.0),
-        Cmd::Scan { name } => {
+        Cmd::Scan { name, rescan } => {
             let (idx, _store) = ctx.indexer()?;
             let mut w = ctx.wallet(&name)?;
+            if rescan {
+                w.reset_scan();
+            }
             let n = w.scan(
                 &ctx.deployment.const_salt_fr(),
                 &idx.state.events,

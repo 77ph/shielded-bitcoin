@@ -163,17 +163,46 @@ fn wallet_files_and_rescans() {
         2
     );
     assert_eq!(aw.balance(), 15);
-    // scanned_events > 0 with no last txid → inconsistent → full rescan, same result
-    aw.last_scanned_txid = None;
+    // a wrong digest → inconsistent → full rescan, same result
+    aw.scanned_digest = Some([0u8; 32]);
     assert_eq!(
         aw.scan(&salt_fe, std::slice::from_ref(&ev1), &Default::default())
             .unwrap(),
         2
     );
     assert_eq!(aw.balance(), 15);
+    // a wallet from before the digest: the last txid alone decides
+    aw.scanned_digest = None;
+    assert_eq!(
+        aw.scan(&salt_fe, std::slice::from_ref(&ev1), &Default::default())
+            .unwrap(),
+        0
+    );
+    assert!(
+        aw.scanned_digest.is_some(),
+        "the digest is written by the scan"
+    );
+    aw.scanned_digest = None;
+    aw.last_scanned_txid = None;
+    assert_eq!(
+        aw.scan(&salt_fe, std::slice::from_ref(&ev1), &Default::default())
+            .unwrap(),
+        2
+    );
+    // the scanned event rewritten under the wallet at the same txid (another
+    // height): the last txid still matches, the digest does not
+    let mut moved = ev1.clone();
+    moved.height += 1;
+    assert_eq!(
+        aw.scan(&salt_fe, std::slice::from_ref(&moved), &Default::default())
+            .unwrap(),
+        2
+    );
+    assert_eq!(aw.notes[0].height, moved.height);
     // scanning the same events again from the start without clearing notes skips duplicates
     aw.scanned_events = 0;
     aw.last_scanned_txid = None;
+    aw.scanned_digest = None;
     assert_eq!(
         aw.scan(&salt_fe, std::slice::from_ref(&ev1), &Default::default())
             .unwrap(),
@@ -202,6 +231,7 @@ fn wallet_files_and_rescans() {
     let back = Wallet::load(&p, None).unwrap();
     assert_eq!(back.notes, aw.notes);
     assert_eq!(back.last_scanned_txid, aw.last_scanned_txid);
+    assert_eq!(back.scanned_digest, aw.scanned_digest);
     std::fs::remove_dir_all(&dir).unwrap();
 }
 

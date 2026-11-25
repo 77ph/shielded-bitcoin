@@ -219,6 +219,8 @@ struct WalletFile {
     fee_deposit_next: u64,
     scanned_events: usize,
     last_scanned_txid: Option<String>,
+    #[serde(default)]
+    scanned_digest: Option<String>,
     next_address_index: u64,
     /// Next transparent funding receive index (deployment layer, docs/BOUNDARY.md).
     #[serde(default)]
@@ -275,6 +277,9 @@ pub struct Wallet {
     pub fee_deposit_next: u64,
     pub scanned_events: usize,
     pub last_scanned_txid: Option<[u8; 32]>,
+    /// [`scan_digest`] of the scanned events; `None` in a wallet from
+    /// before the field, or before the first scan.
+    pub scanned_digest: Option<[u8; 32]>,
     pub next_address_index: u64,
     /// Next transparent funding receive index (docs/BOUNDARY.md, "Fee funding").
     pub funding_receive: u32,
@@ -299,6 +304,7 @@ impl Wallet {
             fee_deposit_next: 0,
             scanned_events: 0,
             last_scanned_txid: None,
+            scanned_digest: None,
             next_address_index: 0,
             funding_receive: 0,
             funding_change: 0,
@@ -361,6 +367,16 @@ impl Wallet {
             }
             None => None,
         };
+        w.scanned_digest = match f.scanned_digest {
+            Some(s) => {
+                let b = hex::decode(&s).map_err(|e| WalletError::Corrupt(e.to_string()))?;
+                Some(
+                    b.try_into()
+                        .map_err(|_| WalletError::Corrupt("scan digest".into()))?,
+                )
+            }
+            None => None,
+        };
         w.next_address_index = f.next_address_index;
         w.funding_receive = f.funding_receive;
         w.funding_change = f.funding_change;
@@ -396,10 +412,22 @@ impl Wallet {
             fee_deposit_next: self.fee_deposit_next,
             scanned_events: self.scanned_events,
             last_scanned_txid: self.last_scanned_txid.map(hex::encode),
+            scanned_digest: self.scanned_digest.map(hex::encode),
             next_address_index: self.next_address_index,
             funding_receive: self.funding_receive,
             funding_change: self.funding_change,
         }
+    }
+
+    /// Forget the scan: the notes, the outgoing records and the scanned
+    /// count, so that the next [`scan`](Self::scan) reads the accepted
+    /// history from the start (`rescan`).
+    pub fn reset_scan(&mut self) {
+        self.notes.clear();
+        self.sent.clear();
+        self.scanned_events = 0;
+        self.last_scanned_txid = None;
+        self.scanned_digest = None;
     }
 
     /// Write the wallet file (encrypted when a passphrase is set).
@@ -458,17 +486,21 @@ impl Wallet {
         replayed_nullifiers: &HashSet<Fr>,
     ) -> Result<usize, WalletError> {
         let consistent = self.scanned_events <= events.len()
-            && match (self.scanned_events, self.last_scanned_txid) {
-                (0, _) => true,
-                (n, Some(txid)) => events[n - 1].txid == txid,
-                (_, None) => false,
+            && match (
+                self.scanned_events,
+                self.scanned_digest,
+                self.last_scanned_txid,
+            ) {
+                (0, _, _) => true,
+                // the digest binds every scanned event in order
+                (n, Some(d), _) => scan_digest(&events[..n]) == d,
+                // a wallet from before the digest: the last event's txid
+                (n, None, Some(txid)) => events[n - 1].txid == txid,
+                (_, None, None) => false,
             };
         if !consistent {
             log::warn!("accepted history changed under the wallet; rescanning from the start");
-            self.notes.clear();
-            self.sent.clear();
-            self.scanned_events = 0;
-            self.last_scanned_txid = None;
+            self.reset_scan();
         }
         let mut new_notes = 0;
         for ev in &events[self.scanned_events..] {
@@ -548,6 +580,7 @@ impl Wallet {
             self.scanned_events += 1;
             self.last_scanned_txid = Some(ev.txid);
         }
+        self.scanned_digest = Some(scan_digest(&events[..self.scanned_events]));
         // Spends we did not see as envelopes (same seed elsewhere).
         for n in self.notes.iter_mut() {
             if n.spent_at.is_none() && replayed_nullifiers.contains(&fr_hex(&n.nullifier)?) {
@@ -929,6 +962,21 @@ fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     o.open(path)?.write_all(bytes)
 }
 
+/// What the wallet has scanned, bound in order: a digest over every
+/// accepted event's txid and height up to the scanned count. A history
+/// rewritten under the wallet anywhere before its last scanned event —
+/// not only at the end — fails it and the wallet rescans from the start.
+pub fn scan_digest(events: &[AcceptedEvent]) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(b"sb-wallet/scan/");
+    for ev in events {
+        h.update(ev.txid);
+        h.update(ev.height.to_le_bytes());
+    }
+    h.finalize().into()
+}
+
 #[cfg(test)]
 mod private_branches {
     use super::*;
@@ -950,6 +998,7 @@ mod private_branches {
             fee_deposit_next: 0,
             scanned_events: 0,
             last_scanned_txid: None,
+            scanned_digest: None,
             next_address_index: 0,
             funding_receive: 0,
             funding_change: 0,
