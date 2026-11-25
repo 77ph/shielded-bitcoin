@@ -268,6 +268,14 @@ fn light_client_syncs_from_proofs() {
         !state.contains("\"raw\":\"62746301"),
         "no envelope bytes kept"
     );
+    // a full replay does not resume from a light state
+    let full_over_light = Cli {
+        data: light.data.clone(),
+        profile: light.profile.clone(),
+        chain: esplora.clone(),
+        global: vec![],
+    };
+    full_over_light.fails(&["sync"], "built by a proof client");
 
     // the light client spends from its own tree, through a full source
     let mut publishing = Cli {

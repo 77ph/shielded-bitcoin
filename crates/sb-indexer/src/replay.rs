@@ -72,6 +72,10 @@ pub enum SyncError {
     Chain(#[from] ChainError),
     #[error("store: {0}")]
     Store(#[from] StoreError),
+    #[error(
+        "this state was built by a proof client (no nullifier tree); a full replay needs its own"
+    )]
+    LightState,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -478,6 +482,11 @@ impl Indexer {
         chain: &dyn ChainSource,
         mut store: Option<&mut dyn StateStore>,
     ) -> Result<SyncReport, SyncError> {
+        // the mirror of `proof::sync`'s refusal of a full-replay state: a
+        // light state has no nullifier tree to append to
+        if self.state.light.is_some() {
+            return Err(SyncError::LightState);
+        }
         let mut report = SyncReport::default();
         let tip = chain.tip()?;
         report.tip = Some(tip.height);
