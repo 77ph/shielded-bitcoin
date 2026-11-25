@@ -9,6 +9,7 @@
 //! vk_in    ─HKDF("diversifier"‖i)─▶ d_i   (11 bytes)
 //! ```
 
+use ff::Field;
 use group::Curve;
 use group::prime::PrimeCurveAffine;
 use hkdf::Hkdf;
@@ -115,6 +116,18 @@ pub struct WalletKeys {
 impl Drop for WalletKeys {
     fn drop(&mut self) {
         self.sk_master.zeroize();
+        // the derived secrets too; the field types keep their limbs
+        // private, so they are overwritten the way `zeroize` does it: a
+        // volatile write the compiler may not drop as dead
+        // SAFETY: each pointer is to a live, aligned field of `self`,
+        // borrowed exclusively here, and the value written is a valid one.
+        unsafe {
+            std::ptr::write_volatile(&mut self.sk_spend, Fp::ZERO);
+            std::ptr::write_volatile(&mut self.sk_nf, Fp::ZERO);
+            std::ptr::write_volatile(&mut self.ivk.vk_in, Fp::ZERO);
+            std::ptr::write_volatile(&mut self.ivk.sk_view, Scalar::ZERO);
+        }
+        std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
     }
 }
 

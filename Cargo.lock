@@ -2672,6 +2672,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "ureq",
+ "zeroize",
 ]
 
 [[package]]
@@ -2822,6 +2823,7 @@ dependencies = [
  "sba-wallet",
  "serde",
  "serde_json",
+ "zeroize",
 ]
 
 [[package]]

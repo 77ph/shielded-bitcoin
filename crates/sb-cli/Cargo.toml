@@ -14,6 +14,7 @@ path = "src/main.rs"
 sb-primitives.workspace = true
 sb-core.workspace = true
 sb-circuit.workspace = true
+zeroize.workspace = true
 sb-indexer.workspace = true
 sb-common.workspace = true
 sba-cli.workspace = true

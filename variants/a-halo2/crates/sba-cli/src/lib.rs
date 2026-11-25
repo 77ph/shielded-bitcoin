@@ -27,6 +27,7 @@ use sba_indexer::{Deployment, DevBoundary, Indexer, JsonStore, StateStore};
 use sba_primitives::Fp;
 use sba_primitives::encoding::fp_to_bytes;
 use sba_wallet::{Wallet, anchor_for};
+use zeroize::Zeroizing;
 
 mod relay;
 mod replay;

@@ -34,6 +34,7 @@ use sb_indexer::chain::rpc::BitcoinCoreRpc;
 use sb_indexer::deployment::DevBoundary;
 use sb_indexer::{ChainSource, Deployment, Indexer, Setup};
 use sb_wallet::{Wallet, anchor_for};
+use zeroize::Zeroizing;
 
 #[derive(Parser)]
 #[command(

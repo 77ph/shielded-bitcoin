@@ -112,6 +112,11 @@ pub struct WalletKeys {
 impl Drop for WalletKeys {
     fn drop(&mut self) {
         self.sk_master.zeroize();
+        // the derived secrets too (their limbs are public fields)
+        self.sk_spend.0.0.zeroize();
+        self.sk_nf.0.0.zeroize();
+        self.ivk.vk_in.0.0.zeroize();
+        self.ivk.sk_view.0.0.zeroize();
     }
 }
 

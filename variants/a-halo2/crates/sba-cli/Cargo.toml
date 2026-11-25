@@ -10,6 +10,7 @@ license.workspace = true
 sba-primitives.workspace = true
 sba-core.workspace = true
 sba-circuit.workspace = true
+zeroize.workspace = true
 sba-indexer.workspace = true
 sba-replay.workspace = true
 sba-wallet.workspace = true
