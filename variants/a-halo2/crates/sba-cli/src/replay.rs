@@ -273,7 +273,7 @@ pub fn prove(
             settle,
             poll,
         );
-        let (step, waited) = match next {
+        let (steps, waited) = match next {
             Ok(Some(x)) => x,
             Ok(None) => {
                 if steps.is_some() {
@@ -284,15 +284,26 @@ pub fn prove(
                 continue;
             }
             Err(StepError::Reorg { fork }) => {
-                // rewind to the last step still on the chain and go on from it
-                let on_chain = dir.steps()?.into_iter().rev().find(|(_, h, _)| *h <= fork);
-                let Some((index, h, path)) = on_chain else {
+                // rewind to the last step still on the chain that closes its
+                // block (a fragment leaving a block in progress is no place
+                // to resume from) and go on from it
+                let mut on_chain = None;
+                for (index, h, path) in dir.steps()?.into_iter().rev() {
+                    if h > fork {
+                        continue;
+                    }
+                    let kept = ProvenStep::from_bytes(&std::fs::read(&path)?)
+                        .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
+                    if kept.opening_after.applied == 0 {
+                        on_chain = Some((index, h, kept));
+                        break;
+                    }
+                }
+                let Some((index, h, kept)) = on_chain else {
                     bail!(
                         "the chain reorganised below the genesis (fork at block {fork}): start the chain anew"
                     );
                 };
-                let kept = ProvenStep::from_bytes(&std::fs::read(&path)?)
-                    .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
                 let st = keys
                     .state_of_step(&kept, index)
                     .map_err(|e| anyhow::anyhow!("rebuilding the state of step {index}: {e}"))?;
@@ -318,31 +329,48 @@ pub fn prove(
             }
             Err(e) => bail!("block {height}: {e}"),
         };
-        done += 1;
+        let n = steps.len() as u32;
+        done += n;
         let proved = t.elapsed().saturating_sub(waited).as_secs_f64();
-        let index = prover.steps as u32;
-        let height = step.height;
-        let bytes = step.to_bytes();
-        write_atomic(&dir.step(index, height), &bytes)?;
+        // every step of the block on disk, then the state after all of them
+        let last_index = prover.steps as u32;
+        let mut sizes = Vec::with_capacity(steps.len());
+        for (j, step) in steps.iter().enumerate() {
+            let index = last_index - (n - 1 - j as u32);
+            let bytes = step.to_bytes();
+            write_atomic(&dir.step(index, step.height), &bytes)?;
+            sizes.push((index, bytes.len()));
+        }
         write_atomic(
             &dir.chain_state(),
             &prover.state(idx.next_height()).to_bytes(),
         )?;
         // the prover's own check, as the client will do it
-        let t = Instant::now();
-        let s = decider
-            .decide(&step, index as usize, s_prev)
-            .map_err(|e| anyhow::anyhow!("step {index} refused by the decider: {e}"))?;
-        println!(
-            "step {index}: blocks {}..={height} ({} without events), {} slots, {} bytes, proved in {proved:.1} s after waiting {:.0} s, decided in {:.2} s, digest {}",
-            step.first_height,
-            height - step.first_height,
-            step.slots.iter().filter(|s| s.is_some()).count(),
-            bytes.len(),
-            waited.as_secs_f64(),
-            t.elapsed().as_secs_f64(),
-            hex::encode(fp_to_bytes(&s))
-        );
+        let mut s_prev = s_prev;
+        for (j, step) in steps.iter().enumerate() {
+            let (index, len) = sizes[j];
+            let height = step.height;
+            let t = Instant::now();
+            let s = decider
+                .decide(step, index as usize, s_prev)
+                .map_err(|e| anyhow::anyhow!("step {index} refused by the decider: {e}"))?;
+            s_prev = s;
+            let fragment = if n > 1 {
+                format!(", fragment {} of {n} of the block", j + 1)
+            } else {
+                String::new()
+            };
+            println!(
+                "step {index}: blocks {}..={height} ({} without events), {} slots, {} bytes, proved in {proved:.1} s after waiting {:.0} s, decided in {:.2} s, digest {}{fragment}",
+                step.first_height,
+                height - step.first_height,
+                step.slots.iter().filter(|s| s.is_some()).count(),
+                len,
+                waited.as_secs_f64(),
+                t.elapsed().as_secs_f64(),
+                hex::encode(fp_to_bytes(&s))
+            );
+        }
     }
     Ok(())
 }

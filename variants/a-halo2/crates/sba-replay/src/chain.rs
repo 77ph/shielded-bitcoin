@@ -2030,16 +2030,19 @@ impl From<String> for StepError {
 }
 
 /// Replay the indexer's next blocks from `chain` (persisting through
-/// `store`, if any) and prove them as the chain's next step: blocks
+/// `store`, if any) and prove them as the chain's next steps: blocks
 /// without a shielded event are closed by the step of the first block
 /// with one after them, up to the keys' `n_empty` of them, or by the
-/// last block ready when no more are (§3.9). A block is ready when it has
+/// last block ready when no more are (§3.9). A block with more statements
+/// than a fragment holds (the keys' slots, or transfer proofs) is proven
+/// as consecutive fragments of the same block ([`fragments`]), one step
+/// each, the last closing it; a block within one fragment is one step. A block is ready when it has
 /// `confirm` blocks above it (a step is never cut at the very tip, which
 /// a one-block reorganisation would undo); with `settle`, the runner
 /// waits up to that long (looking every `poll`) for more ready blocks
 /// before it cuts a step of empty ones, so a quiet chain costs a step per
 /// `settle`, not per block. `None` when no block is ready; otherwise the
-/// step and the time spent waiting. The indexer must stand exactly where
+/// steps and the time spent waiting. The indexer must stand exactly where
 /// the prover does (`reconcile`); a reorganisation below the proven chain
 /// is [`StepError::Reorg`] — the caller rewinds to the last step still on
 /// the chain (`ChainKeys::state_of_step`) and goes on. It is seen at the
@@ -2056,7 +2059,7 @@ pub fn prove_next_step(
     confirm: u32,
     settle: std::time::Duration,
     poll: std::time::Duration,
-) -> Result<Option<(ProvenStep, std::time::Duration)>, StepError> {
+) -> Result<Option<(Vec<ProvenStep>, std::time::Duration)>, StepError> {
     let started = std::time::Instant::now();
     let mut waited = std::time::Duration::ZERO;
     let first = idx.next_height();
@@ -2087,7 +2090,7 @@ pub fn prove_next_step(
             };
             let opening_after = idx.state.opening(idx.next_height());
             let step = prover.prove(first, height - 1, &merged, &opening_after, &[])?;
-            return Ok(Some((step, waited)));
+            return Ok(Some((vec![step], waited)));
         }
         let blocks_before = idx.state.blocks.len();
         // the store reborrowed for this block only
@@ -2127,17 +2130,46 @@ pub fn prove_next_step(
             more = ready(height + 1)?;
         }
         if has_events || empties.len() == n_empty || !more {
-            let merged = BatchWitness {
+            let k = prover.keys;
+            let frags = fragments(
                 prev,
-                empty_appends: empties,
-                slots: witness.slots,
-                final_block: true,
-                root_append: witness.root_append,
-            };
+                empties,
+                witness.slots,
+                witness.root_append,
+                k.n_slots,
+                k.n_proofs,
+                &k.batch_params,
+            )?;
             let opening_after = idx.state.opening(idx.next_height());
             let transfers = transfers_of(idx, height)?;
-            let step = prover.prove(first, height, &merged, &opening_after, &transfers)?;
-            return Ok(Some((step, waited)));
+            let n = frags.len();
+            let mut steps = Vec::with_capacity(n);
+            let mut taken = 0;
+            for (j, w) in frags.iter().enumerate() {
+                // the fragment's transfer proofs, in slot order
+                let n_tr = w
+                    .slots
+                    .iter()
+                    .filter(|s| matches!(s, Some(sw) if !sw.statement.mint))
+                    .count();
+                let tr = transfers
+                    .get(taken..taken + n_tr)
+                    .ok_or_else(|| "fewer transfer proofs than transfer slots".to_string())?;
+                taken += n_tr;
+                let after = if j + 1 == n {
+                    opening_after
+                } else {
+                    w.next_opening(&k.batch_params)
+                        .ok_or_else(|| "the relation refuses a fragment of the block".to_string())?
+                };
+                // the empty blocks before are the first fragment's
+                let first = if j == 0 { first } else { height };
+                steps.push(prover.prove(first, height, w, &after, tr)?);
+            }
+            if taken != transfers.len() {
+                return Err("transfer slots and proofs differ".to_string().into());
+            }
+            return Ok(Some((steps, waited)));
         }
         // a block without events: its root append joins the prefix
         empties.push(
@@ -2146,6 +2178,75 @@ pub fn prove_next_step(
                 .ok_or_else(|| "a replayed block without its root append".to_string())?,
         );
     }
+}
+
+/// Cut a block's slots into fragments: each holds at most `n_slots` slots
+/// and at most `n_proofs` transfer slots (`transfer[i]` says whether slot
+/// `i` is one; a mint carries no proof). The lengths in order; one
+/// fragment, possibly empty, for a block without events.
+pub fn cut_slots(transfer: &[bool], n_slots: usize, n_proofs: usize) -> Result<Vec<usize>, String> {
+    if n_slots == 0 {
+        return Err("a fragment of no slots".into());
+    }
+    let mut lengths = Vec::new();
+    let (mut len, mut proofs) = (0usize, 0usize);
+    for &t in transfer {
+        if t && n_proofs == 0 {
+            return Err("a transfer slot under keys without transfer proofs".into());
+        }
+        if len == n_slots || (t && proofs == n_proofs) {
+            lengths.push(len);
+            len = 0;
+            proofs = 0;
+        }
+        len += 1;
+        proofs += usize::from(t);
+    }
+    lengths.push(len);
+    Ok(lengths)
+}
+
+/// A block's batch witness as the fragments the keys take, each opening
+/// from the state the one before leaves ([`BatchWitness::next_opening`]):
+/// the first carries the blocks without events before, the last closes
+/// the block; one witness when the block fits a fragment.
+pub fn fragments(
+    prev: StateOpening,
+    empty_appends: Vec<sba_core::tree::MerklePath>,
+    slots: Vec<Option<sba_core::batch::SlotWitness>>,
+    root_append: Option<sba_core::tree::MerklePath>,
+    n_slots: usize,
+    n_proofs: usize,
+    p: &BatchParams,
+) -> Result<Vec<BatchWitness>, String> {
+    let transfer: Vec<bool> = slots
+        .iter()
+        .map(|s| matches!(s, Some(sw) if !sw.statement.mint))
+        .collect();
+    let lengths = cut_slots(&transfer, n_slots, n_proofs)?;
+    let n = lengths.len();
+    let mut slots = slots.into_iter();
+    let mut empty_appends = empty_appends;
+    let mut root_append = root_append;
+    let mut prev = prev;
+    let mut out = Vec::with_capacity(n);
+    for (j, len) in lengths.into_iter().enumerate() {
+        let last = j + 1 == n;
+        let w = BatchWitness {
+            prev,
+            empty_appends: std::mem::take(&mut empty_appends),
+            slots: slots.by_ref().take(len).collect(),
+            final_block: last,
+            root_append: if last { root_append.take() } else { None },
+        };
+        if !last {
+            prev = w
+                .next_opening(p)
+                .ok_or_else(|| "the relation refuses a fragment of the block".to_string())?;
+        }
+        out.push(w);
+    }
+    Ok(out)
 }
 
 /// Is the last block the indexer replayed still on the chain? `None` when
@@ -2242,13 +2343,23 @@ pub fn claims_of_step(
 /// opening's height is inside its digest, which is `s_next`, a public
 /// input of the proof; the wire's `height` and `first_height` are not,
 /// so a decider that read them would read a label anyone can rewrite.
-/// The opening stands at the block after the step's last, and the first
-/// block of the step is not above the last. Checked before any proof.
+/// The opening stands at the block after the step's last when the step
+/// closes it, and at the step's own block when the step is a fragment
+/// leaving it in progress (statements applied); the first block of the
+/// step is not above the last. Checked before any proof.
 pub fn check_heights(step: &ProvenStep) -> Result<(), String> {
-    if step.height.checked_add(1) != Some(step.opening_after.height) {
+    let o = &step.opening_after;
+    if o.applied == 0 {
+        if step.height.checked_add(1) != Some(o.height) {
+            return Err(format!(
+                "the step's height {} is not the opening's ({}, the block after the step)",
+                step.height, o.height
+            ));
+        }
+    } else if step.height != o.height {
         return Err(format!(
-            "the step's height {} is not the opening's ({}, the block after the step)",
-            step.height, step.opening_after.height
+            "the step's height {} is not the opening's ({}, the block a fragment leaves in progress)",
+            step.height, o.height
         ));
     }
     if step.first_height > step.height {
@@ -2573,9 +2684,96 @@ mod chain_tests {
         );
         bad.first_height = 1003;
         assert_eq!(check_heights(&bad), Ok(()), "one block");
+        // a fragment leaving its block in progress: the opening at the
+        // step's own block, statements applied
+        let mut frag = step.clone();
+        frag.opening_after.applied = 2;
+        assert!(
+            check_heights(&frag).is_err(),
+            "applied, yet the opening at the block after"
+        );
+        frag.opening_after.height = 1003;
+        assert_eq!(check_heights(&frag), Ok(()), "a fragment of block 1003");
+        frag.height = 1002;
+        assert!(check_heights(&frag).is_err(), "a fragment of another block");
         let mut bad = step;
         bad.height = u32::MAX;
         assert!(check_heights(&bad).is_err(), "no wrap");
+    }
+
+    #[test]
+    fn a_block_is_cut_into_fragments_by_slots_and_proofs() {
+        let (t, m) = (true, false);
+        assert_eq!(cut_slots(&[], 3, 2), Ok(vec![0]));
+        assert_eq!(cut_slots(&[m, m], 3, 2), Ok(vec![2]));
+        assert_eq!(cut_slots(&[m, m, m, m], 3, 2), Ok(vec![3, 1]));
+        assert_eq!(cut_slots(&[t, t, t], 3, 2), Ok(vec![2, 1]));
+        assert_eq!(cut_slots(&[t, m, t, m, t], 3, 2), Ok(vec![3, 2]));
+        assert_eq!(cut_slots(&[m; 7], 3, 2), Ok(vec![3, 3, 1]));
+        assert_eq!(cut_slots(&[t, t], 3, 1), Ok(vec![1, 1]));
+        assert!(cut_slots(&[t], 3, 0).is_err());
+        assert!(cut_slots(&[m], 0, 2).is_err());
+    }
+
+    /// A block of more statements than a fragment holds, cut into
+    /// fragments the relation accepts one after the other, each opening
+    /// from the state the one before leaves, the last leaving the
+    /// indexer's.
+    #[test]
+    fn a_block_over_several_fragments_chains_through_the_relation() {
+        let mut w = World::new();
+        let (_, alice0) = w.alice.ivk.find_address(0);
+        let mut chain = MockChain::new(ACTIVATION);
+        let mut idx = w.indexer();
+        let mints: Vec<_> = (0..5).map(|i| w.mint_tx(&alice0, 100 + i).0).collect();
+        chain.push_block(mints);
+        idx.sync(&chain).unwrap();
+        let p = idx.batch_params();
+        let wit = idx.state.batches.pop().unwrap();
+        let after = idx.state.opening(idx.next_height());
+        let frags = fragments(
+            wit.prev,
+            Vec::new(),
+            wit.slots.clone(),
+            wit.root_append.clone(),
+            2,
+            1,
+            &p,
+        )
+        .unwrap();
+        assert_eq!(
+            frags.iter().map(|f| f.slots.len()).collect::<Vec<_>>(),
+            vec![2, 2, 1]
+        );
+        let mut s = wit.prev.digest();
+        for (j, f) in frags.iter().enumerate() {
+            assert_eq!(f.final_block, j == 2);
+            let st = f.check(&p).expect("the relation accepts the fragment");
+            assert_eq!(st.s_prev, s);
+            s = st.s_next;
+            if j < 2 {
+                let o = f.next_opening(&p).unwrap();
+                assert_eq!((o.height, o.applied), (ACTIVATION, 2 * (j as u32 + 1)));
+                assert_eq!(frags[j + 1].prev, o);
+            }
+        }
+        assert_eq!(
+            s,
+            after.digest(),
+            "the last fragment leaves the indexer's state"
+        );
+        // one fragment when the block fits
+        let one = fragments(
+            wit.prev,
+            Vec::new(),
+            wit.slots.clone(),
+            wit.root_append.clone(),
+            8,
+            2,
+            &p,
+        )
+        .unwrap();
+        assert_eq!(one, vec![wit]);
     }
 
     /// A reorganisation of blocks already replayed is reported by the
@@ -2825,9 +3023,11 @@ mod chain_tests {
         reconcile(&mut idx, None, 1002).unwrap();
         let t = std::time::Instant::now();
         let zero = std::time::Duration::ZERO;
-        let (step3, _) = prove_next_step(&mut prover, &mut idx, None, &chain, 0, zero, zero)
+        let (mut steps, _) = prove_next_step(&mut prover, &mut idx, None, &chain, 0, zero, zero)
             .unwrap()
             .expect("the block is on the chain");
+        assert_eq!(steps.len(), 1, "one block within one fragment: one step");
+        let step3 = steps.remove(0);
         assert_eq!(step3.height, 1002);
         assert_eq!(idx.next_height(), 1003);
         assert!(
@@ -2986,9 +3186,10 @@ mod chain_tests {
         let mut prover = ChainProver::resume(&keys, &st2).unwrap();
         reconcile(&mut idx, None, 1002).unwrap();
         let t = std::time::Instant::now();
-        let (step3b, _) = prove_next_step(&mut prover, &mut idx, None, &chain, 0, zero, zero)
+        let (mut steps, _) = prove_next_step(&mut prover, &mut idx, None, &chain, 0, zero, zero)
             .unwrap()
             .expect("the new block 1002");
+        let step3b = steps.remove(0);
         println!(
             "step 3 again after a reorganisation (a mint): {:.1} s",
             t.elapsed().as_secs_f64()
@@ -3001,6 +3202,59 @@ mod chain_tests {
         assert!(
             decider.decide_latest(&step3).is_ok(),
             "the orphaned step still verifies on its own"
+        );
+        // block 1003: four mints over three slots, more statements than a
+        // fragment holds, proven as two consecutive steps of the block —
+        // the first leaving it in progress, the second closing it
+        let s3 = idx.state.opening(1003).digest();
+        let mints: Vec<_> = (0..4).map(|i| w.mint_tx(&alice0, 10 + i).0).collect();
+        chain.push_block(mints);
+        let t = std::time::Instant::now();
+        let (steps, _) = prove_next_step(&mut prover, &mut idx, None, &chain, 0, zero, zero)
+            .unwrap()
+            .expect("block 1003");
+        println!(
+            "block 1003 as {} fragments: {:.1} s",
+            steps.len(),
+            t.elapsed().as_secs_f64()
+        );
+        assert_eq!(steps.len(), 2);
+        assert_eq!((steps[0].height, steps[1].height), (1003, 1003));
+        assert_eq!((steps[0].first_height, steps[1].first_height), (1003, 1003));
+        assert_eq!(steps[0].slots.iter().filter(|s| s.is_some()).count(), 3);
+        assert_eq!(steps[1].slots.iter().filter(|s| s.is_some()).count(), 1);
+        assert_eq!(
+            (
+                steps[0].opening_after.height,
+                steps[0].opening_after.applied
+            ),
+            (1003, 3)
+        );
+        assert_eq!(steps[1].opening_after, idx.state.opening(1004));
+        let s4 = decider.decide(&steps[0], 4, s3).unwrap();
+        assert_eq!(s4, steps[0].opening_after.digest());
+        let s5 = decider.decide(&steps[1], 5, s4).unwrap();
+        assert_eq!(s5, idx.state.opening(1004).digest());
+        assert!(
+            decider.decide(&steps[1], 5, s3).is_err(),
+            "the second fragment opens from the first's state, not the block's"
+        );
+        // alone from the genesis: the first fragment attests block 1002 as
+        // the last complete block, the second block 1003
+        assert_eq!(decider.decide_latest(&steps[0]).unwrap(), (1002, s4));
+        assert_eq!(decider.decide_latest(&steps[1]).unwrap(), (1003, s5));
+        let mut relabelled = steps[0].clone();
+        relabelled.opening_after.applied = 0;
+        relabelled.opening_after.height = 1004;
+        assert!(
+            decider.decide_latest(&relabelled).is_err(),
+            "a fragment relabelled as closing its block"
+        );
+        let st4 = keys.state_of_step(&steps[0], 4).unwrap();
+        assert_eq!(
+            (st4.index, st4.next_height, st4.s),
+            (4, 1003, s4),
+            "the prover's state after a fragment stands at the block in progress"
         );
     }
 

@@ -282,6 +282,22 @@ impl BatchWitness {
     /// The relation, natively — the specification the circuit follows rule
     /// by rule: the statement it proves, or `None` where a rule fails.
     pub fn check(&self, p: &BatchParams) -> Option<BatchStatement> {
+        let (next, statements) = self.transition(p)?;
+        Some(BatchStatement {
+            s_prev: self.prev.digest(),
+            s_next: next.digest(),
+            d: batch_digest(&statements),
+        })
+    }
+
+    /// The state after this batch — what the next fragment of the same
+    /// block opens from — or `None` when the relation refuses it.
+    pub fn next_opening(&self, p: &BatchParams) -> Option<StateOpening> {
+        Some(self.transition(p)?.0)
+    }
+
+    /// The relation's transition: the state after and the statements.
+    fn transition(&self, p: &BatchParams) -> Option<(StateOpening, Vec<Option<SlotStatement>>)> {
         let prev = &self.prev;
         let mut root = prev.root;
         let mut size = prev.size;
@@ -382,11 +398,7 @@ impl BatchWitness {
             height,
             applied,
         };
-        Some(BatchStatement {
-            s_prev: prev.digest(),
-            s_next: next.digest(),
-            d: batch_digest(&statements),
-        })
+        Some((next, statements))
     }
 }
 
