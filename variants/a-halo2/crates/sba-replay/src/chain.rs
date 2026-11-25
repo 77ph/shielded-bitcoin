@@ -2379,6 +2379,16 @@ impl ChainDecider<'_> {
     /// opening's and its lengths against the keys' shape ([`check_heights`],
     /// [`check_shape`]).
     fn verify(&self, step: &ProvenStep) -> Result<(), String> {
+        // `SB_DECIDE_TIMING=1` prints the split of a decision: the shape and
+        // claims read, each proof's verification, the public values.
+        let timing = std::env::var_os("SB_DECIDE_TIMING").is_some();
+        let mut t = std::time::Instant::now();
+        let mut lap = |what: &str| {
+            if timing {
+                println!("decide: {what} {:.3} s", t.elapsed().as_secs_f64());
+                t = std::time::Instant::now();
+            }
+        };
         let k = self.keys;
         k.check_step(step)?;
         let sq = &k.step_q;
@@ -2387,6 +2397,7 @@ impl ChainDecider<'_> {
         let iq = &step.instance_q;
         let ip = &step.instance_p;
         let (claim_q_prev, claims) = claims_of_step(k, step)?;
+        lap("shape, keys and claims read");
         // T_p(i−1)'s key
         let keys_p = key_commitments_q(&sq.group_tp);
         for (i, pos) in key_slots_q(&sq.group_tp).chunks(2).enumerate() {
@@ -2411,6 +2422,7 @@ impl ChainDecider<'_> {
             std::slice::from_ref(&claim_q_prev),
         )
         .map_err(|e| format!("T_q: {e:?}"))?;
+        lap("T_q verified");
         // T_q(i)'s key as T_p exposed it
         let keys_q = key_commitments_p(&sp.group_tq);
         for (i, pos) in key_slots_p(&sp.group_tq).chunks(2).enumerate() {
@@ -2435,6 +2447,7 @@ impl ChainDecider<'_> {
             &claims,
         )
         .map_err(|e| format!("T_p: {e:?}"))?;
+        lap("T_p verified");
         Ok(())
     }
 
