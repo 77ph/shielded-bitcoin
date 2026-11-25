@@ -12,7 +12,7 @@
 //! the initial accumulator) and the accumulator, all points compressed.
 
 use ark_bls12_381::{Fr, G1Affine, G1Projective, G2Affine, G2Projective};
-use ark_ec::{CurveGroup, PrimeGroup};
+use ark_ec::{AffineRepr, CurveGroup, PrimeGroup};
 use ark_ff::{Field, UniformRand};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Read, Write};
 use rand::{CryptoRng, RngCore};
@@ -75,6 +75,12 @@ impl Pok {
 
     /// `(g2_s, g2_s_x)`: the `G2` pair with the secret's ratio, if the proof holds.
     fn verify(&self, label: &[u8], digest: &[u8; 32]) -> CeremonyResult<(G2Affine, G2Affine)> {
+        if self.g1_s.is_zero() || self.g1_s_x.is_zero() || self.g2_s_x.is_zero() {
+            return Err(CeremonyError::Invalid(format!(
+                "proof of knowledge of {} carries the identity",
+                String::from_utf8_lossy(label)
+            )));
+        }
         let g2_s = Self::g2_s(label, digest, &self.g1_s, &self.g1_s_x).into_affine();
         if !same_ratio((self.g1_s, self.g1_s_x), (g2_s, self.g2_s_x)) {
             return Err(CeremonyError::Invalid(format!(
@@ -271,6 +277,17 @@ impl Phase1 {
         {
             return Err(bad("index 0 is not the generator"));
         }
+        // the secrets are nonzero: the first power of each and β in G2 are
+        // not the identity (the power checks below carry this to every
+        // element, and `same_ratio` refuses the identity on its own)
+        if self.tau_g1[1].is_zero()
+            || self.tau_g2[1].is_zero()
+            || self.alpha_tau_g1[0].is_zero()
+            || self.beta_tau_g1[0].is_zero()
+            || self.beta_g2.is_zero()
+        {
+            return Err(bad("a secret of the accumulator is zero"));
+        }
         let tau_g2 = (self.tau_g2[0], self.tau_g2[1]);
         if !same_ratio(power_pairs_g1(&self.tau_g1, rng), tau_g2) {
             return Err(bad("G1 powers of tau are inconsistent"));
@@ -433,6 +450,33 @@ mod tests {
         t.beta_g2 = p1.beta_g2;
         let e = Phase1::verify_transition(&p1, d1, &t, &mut rng).unwrap_err();
         assert!(e.to_string().contains("beta differs"), "{e}");
+        // a zero secret: every vector scaled by it is the identity, which no
+        // check may take for a consistent power sequence
+        for zero_alpha in [true, false] {
+            let mut t = p2.clone();
+            if zero_alpha {
+                t.alpha_tau_g1 = vec![G1Affine::identity(); t.alpha_tau_g1.len()];
+            } else {
+                t.beta_tau_g1 = vec![G1Affine::identity(); t.beta_tau_g1.len()];
+                t.beta_g2 = G2Affine::identity();
+            }
+            let e = t.verify_shape(&mut rng).unwrap_err();
+            assert!(e.to_string().contains("zero"), "{e}");
+            assert!(Phase1::verify_transition(&p1, d1, &t, &mut rng).is_err());
+        }
+        let mut t = p2.clone();
+        t.tau_g1 = vec![G1Affine::identity(); t.tau_g1.len()];
+        t.tau_g1[0] = G1Projective::generator().into_affine();
+        assert!(t.verify_shape(&mut rng).is_err());
+        // a proof of knowledge with identity points
+        let mut t = p2.clone();
+        {
+            let k = t.key.as_mut().unwrap();
+            k.alpha.g1_s_x = G1Affine::identity();
+            k.alpha.g2_s_x = G2Affine::identity();
+        }
+        let e = Phase1::verify_transition(&p1, d1, &t, &mut rng).unwrap_err();
+        assert!(e.to_string().contains("identity"), "{e}");
         // beta applied to G1 but not G2 is a shape failure on its own
         let mut t = p2.clone();
         t.beta_g2 = p1.beta_g2;

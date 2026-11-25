@@ -2,7 +2,7 @@
 
 use ark_bls12_381::{Bls12_381, Fr, G1Affine, G1Projective, G2Affine, G2Projective};
 use ark_ec::pairing::Pairing;
-use ark_ec::{CurveGroup, VariableBaseMSM};
+use ark_ec::{AffineRepr, CurveGroup, VariableBaseMSM};
 use ark_ff::UniformRand;
 use ark_serialize::CanonicalSerialize;
 use rand::{RngCore, SeedableRng};
@@ -53,8 +53,13 @@ pub fn hash_to_g2(domain: &[u8], inputs: &[&[u8]]) -> G2Projective {
 }
 
 /// `e(a₁, b₂) == e(a₂, b₁)`: the pairs `(a₁, a₂)` and `(b₁, b₂)` have the
-/// same discrete-log ratio.
+/// same discrete-log ratio. The identity is refused in every position: a
+/// pairing with the identity is 1 whatever the other point, so a pair with
+/// an identity in it has no ratio to speak of and must not pass as one.
 pub fn same_ratio(g1: (G1Affine, G1Affine), g2: (G2Affine, G2Affine)) -> bool {
+    if g1.0.is_zero() || g1.1.is_zero() || g2.0.is_zero() || g2.1.is_zero() {
+        return false;
+    }
     Bls12_381::pairing(g1.0, g2.1) == Bls12_381::pairing(g1.1, g2.0)
 }
 
@@ -100,6 +105,35 @@ mod tests {
     use ark_ec::PrimeGroup;
     use ark_ff::Field;
     use rand::SeedableRng;
+
+    #[test]
+    fn the_identity_has_no_ratio() {
+        let mut rng = ChaCha20Rng::seed_from_u64(2);
+        let x = Fr::rand(&mut rng);
+        let g1 = G1Projective::generator().into_affine();
+        let g2 = G2Projective::generator().into_affine();
+        let g1x = (g1 * x).into_affine();
+        let g2x = (g2 * x).into_affine();
+        let o1 = G1Affine::identity();
+        let o2 = G2Affine::identity();
+        assert!(same_ratio((g1, g1x), (g2, g2x)));
+        for (a, b) in [
+            ((o1, o1), (o2, o2)),
+            ((g1, o1), (g2, o2)),
+            ((o1, g1x), (o2, g2x)),
+            ((g1, o1), (o2, g2x)),
+            ((o1, g1x), (g2, o2)),
+            ((g1, g1x), (g2, o2)),
+            ((g1, o1), (g2, g2x)),
+            ((o1, g1x), (g2, g2x)),
+            ((g1, g1x), (o2, g2x)),
+        ] {
+            assert!(!same_ratio(a, b));
+        }
+        // a zero vector is not a power sequence
+        let zeros = [o1; 5];
+        assert!(!same_ratio(power_pairs_g1(&zeros, &mut rng), (g2, g2x)));
+    }
 
     #[test]
     fn ratio_checks() {

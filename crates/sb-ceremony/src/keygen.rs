@@ -91,6 +91,17 @@ pub fn initial_proving_key<C: ConstraintSynthesizer<Fr>>(
             p1.n
         )));
     }
+    // the shape check refuses these already; a key is never derived from an
+    // accumulator with a zero secret
+    if p1.alpha_tau_g1[0].is_zero()
+        || p1.beta_tau_g1[0].is_zero()
+        || p1.beta_g2.is_zero()
+        || p1.tau_g1[1].is_zero()
+    {
+        return Err(CeremonyError::Invalid(
+            "the accumulator carries a zero secret".into(),
+        ));
+    }
     // Lagrange basis in the exponent: [L_k(τ)] = ifft([τ^j])_k
     let lagrange = |v: &[G1Affine]| -> Vec<G1Projective> {
         let mut p: Vec<G1Projective> = v[..n].iter().map(|a| a.into_group()).collect();
