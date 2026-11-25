@@ -278,6 +278,8 @@ fn witness_deployment_end_to_end() {
     ]);
     assert!(w.contains("operator pays"), "{w}");
     shared.mine(9);
+    // the payout waits until its carrier is k_min blocks deep
+    shared.mine(90);
     cli.ok(&["sync"]);
     assert_eq!(balance(&cli.ok(&["scan", "--name", "bob"])), 1000);
     let paid = cli.ok(&["payouts", "--name", "operator", "--fee-rate", "1"]);
