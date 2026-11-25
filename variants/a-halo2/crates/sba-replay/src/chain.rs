@@ -2987,4 +2987,284 @@ mod chain_tests {
             "the orphaned step still verifies on its own"
         );
     }
+
+    /// Two key sets of the same structure: the second closes seven blocks
+    /// without events a step instead of eight, so its `T_p` has the same
+    /// columns and instance layout under another key, and its `T_q` is the
+    /// first set's (the `T_p` key is `T_q`'s input, not its constant). A
+    /// chain started under the second set, continued by a step whose `T_q`
+    /// is the second set's and whose `T_p` is the first's — two valid
+    /// proofs — and then by a step under the first set alone. The first
+    /// set's deciders refuse the second set's base step and the mixed step
+    /// by the exposed key, and the step after the mixed one by its `T_q`
+    /// proof: the key tail leaves that circuit unsatisfiable while every
+    /// other check of the step passes. The mixed step's two proofs verify
+    /// natively, so the refusal after it is the tail's alone. Two key sets
+    /// generated, one resident at a time (about an hour on the server).
+    #[test]
+    #[ignore]
+    fn a_step_under_another_key_set() {
+        let mut w = World::new();
+        let (_, alice0) = w.alice.ivk.find_address(0);
+        let (_, bob0) = w.bob.ivk.find_address(0);
+        let mut chain = MockChain::new(ACTIVATION);
+        let mut idx = w.indexer();
+        let genesis = idx.state.opening(idx.next_height());
+        // block 1000: two mints
+        let (m1, _) = w.mint_tx(&alice0, 1000);
+        let (m2, _) = w.mint_tx(&alice0, 400);
+        chain.push_block(vec![m1, m2]);
+        idx.sync(&chain).unwrap();
+        let bparams = idx.batch_params();
+        let w0 = idx.state.batches[0].clone();
+        let o0 = idx.state.opening(idx.next_height());
+        // block 1001: two transfers and a mint
+        let notes: Vec<_> = idx.state.events[..2]
+            .iter()
+            .map(|ev| {
+                let (pk_eph, ct) = &ev.outputs[0];
+                let pt = decrypt_as_recipient(&w.alice.ivk.sk_view, pk_eph, ct).unwrap();
+                (pt, ev.h_body, ev.first_position)
+            })
+            .collect();
+        let e1 = w.transfer(
+            &idx,
+            1000,
+            Some((notes[0].0, notes[0].1, 0, notes[0].2)),
+            [(bob0, 700), (alice0, 300)],
+        );
+        let e2 = w.transfer(
+            &idx,
+            1000,
+            Some((notes[1].0, notes[1].1, 0, notes[1].2)),
+            [(bob0, 400), (alice0, 0)],
+        );
+        let (m3, _) = w.mint_tx(&alice0, 5);
+        chain.push_block(vec![
+            tx_with(vec![carrier_output(&e1.to_bytes())]),
+            tx_with(vec![carrier_output(&e2.to_bytes())]),
+            m3,
+        ]);
+        idx.sync(&chain).unwrap();
+        let w1 = idx.state.batches[1].clone();
+        let o1 = idx.state.opening(idx.next_height());
+        let tr1 = transfers_of(&idx, 1001).unwrap();
+        assert_eq!(tr1.len(), 2);
+        // block 1002: a mint
+        let (m4, _) = w.mint_tx(&alice0, 7);
+        chain.push_block(vec![m4]);
+        idx.sync(&chain).unwrap();
+        let w2 = idx.state.batches[2].clone();
+        let o2 = idx.state.opening(idx.next_height());
+
+        // the second key set first: its base step, then the T_q of a step
+        // over it, which the first set's prover would make the same way
+        let t = std::time::Instant::now();
+        let keys_b = ChainKeys::generate(2, 3, 7, 18, 18, bparams, &genesis).unwrap();
+        println!(
+            "second key set (seven empty blocks a step): {:.1} s",
+            t.elapsed().as_secs_f64()
+        );
+        let lengths_b = keys_b.instance_lengths();
+        let offsets_b = keys_b.step_q.offsets();
+        let fixed_p_b: Vec<vesta::Affine> = keys_b.pvk.fixed_commitments().to_vec();
+        let fixed_q_b: Vec<pallas::Affine> = keys_b.ovk.fixed_commitments().to_vec();
+        let mut prover_b = ChainProver::new(&keys_b).unwrap();
+        let decider_b = ChainDecider { keys: &keys_b };
+        let t = std::time::Instant::now();
+        let step1_b = prover_b.prove(1000, 1000, &w0, &o0, &[]).unwrap();
+        println!(
+            "step 1 under the second set: {:.1} s",
+            t.elapsed().as_secs_f64()
+        );
+        assert_eq!(
+            decider_b.decide(&step1_b, 1, genesis.digest()).unwrap(),
+            o0.digest()
+        );
+        assert_eq!(
+            decider_b.decide_latest(&step1_b).unwrap(),
+            (1000, o0.digest())
+        );
+        let prev_b = prover_b.prev.clone();
+        let caps: Vec<Capture<vesta::Affine>> = tr1
+            .iter()
+            .map(|(st, proof)| {
+                capture(
+                    &keys_b.tparams,
+                    &keys_b.tvk,
+                    &st.to_field_elements(),
+                    proof,
+                    &[],
+                )
+                .unwrap()
+            })
+            .collect();
+        let t = std::time::Instant::now();
+        let sq2 = keys_b
+            .shaper()
+            .step_q(&caps, &prev_b.cap_p, &prev_b.sp, &prev_b.cap_q, false);
+        let instance_q2 = sq2.instance();
+        let claim_q1 = prev_b.cap_q.claim();
+        let mut tr = crate::native::PoseidonWrite::<_, pallas::Affine>::init(vec![]);
+        plonk::create_proof_with_openings(
+            &keys_b.outer,
+            &keys_b.prover().unwrap().opk,
+            std::slice::from_ref(&sq2),
+            &[&[&instance_q2[..]]],
+            std::slice::from_ref(&claim_q1),
+            OsRng,
+            &mut tr,
+        )
+        .unwrap();
+        let proof_q2 = tr.finalize();
+        let cap_q2 = capture(
+            &keys_b.outer,
+            &keys_b.ovk,
+            &instance_q2,
+            &proof_q2,
+            std::slice::from_ref(&claim_q1),
+        )
+        .unwrap();
+        println!("T_q of the mixed step: {:.1} s", t.elapsed().as_secs_f64());
+        // one key set resident at a time
+        drop(decider_b);
+        drop(prover_b);
+        drop(keys_b);
+
+        // the first key set: the same shapes, the same T_q key, another T_p key
+        let t = std::time::Instant::now();
+        let keys = ChainKeys::generate(2, 3, 8, 18, 18, bparams, &genesis).unwrap();
+        println!(
+            "first key set (eight empty blocks a step): {:.1} s",
+            t.elapsed().as_secs_f64()
+        );
+        assert_eq!(keys.instance_lengths(), lengths_b);
+        assert_eq!(keys.step_q.offsets(), offsets_b);
+        assert_eq!(
+            keys.ovk.fixed_commitments(),
+            &fixed_q_b[..],
+            "T_q is one circuit under both sets"
+        );
+        assert_ne!(
+            keys.pvk.fixed_commitments(),
+            &fixed_p_b[..],
+            "T_p's key differs"
+        );
+        let decider = ChainDecider { keys: &keys };
+        // the second set's base step: refused by the exposed key
+        let e = decider.decide(&step1_b, 1, genesis.digest()).unwrap_err();
+        assert!(e.contains("T_p's key"), "{e}");
+        let e = decider.decide_latest(&step1_b).unwrap_err();
+        assert!(e.contains("T_p's key"), "{e}");
+        // the mixed step's T_p under the first set, over the second set's
+        // T_q(2) and T_p(1), as the prover builds a T_p
+        let t = std::time::Instant::now();
+        let mut witness = w1.clone();
+        while witness.slots.len() < keys.n_slots {
+            witness.slots.push(None);
+        }
+        let mut next = 0;
+        let slot_proof: Vec<Option<usize>> = witness
+            .slots
+            .iter()
+            .map(|s| match s {
+                Some(s) if !s.statement.mint => {
+                    next += 1;
+                    Some(next - 1)
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(next, 2);
+        let sp2 = keys.shaper().step_p(
+            &cap_q2,
+            &sq2,
+            &caps,
+            &prev_b.cap_p,
+            &prev_b.sp,
+            Some(witness.clone()),
+            slot_proof,
+            vec![true, true],
+        );
+        let instance_p2 = sp2.instance();
+        let mut claims: Vec<Claim<vesta::Affine>> = caps.iter().map(|c| c.claim()).collect();
+        claims.push(prev_b.cap_p.claim());
+        let mut tr = crate::native::PoseidonWrite::<_, vesta::Affine>::init(vec![]);
+        plonk::create_proof_with_openings(
+            &keys.pparams,
+            &keys.prover().unwrap().ppk,
+            std::slice::from_ref(&sp2),
+            &[&[&instance_p2[..]]],
+            &claims,
+            OsRng,
+            &mut tr,
+        )
+        .unwrap();
+        let proof_p2 = tr.finalize();
+        let cap_p2 = capture(&keys.pparams, &keys.pvk, &instance_p2, &proof_p2, &claims).unwrap();
+        println!("T_p of the mixed step: {:.1} s", t.elapsed().as_secs_f64());
+        // both proofs of the mixed step verify natively under the keys they
+        // were made for: what refuses the step is the key T_q exposes
+        let mut rd = crate::native::PoseidonRead::<_, pallas::Affine>::init(&proof_q2[..]);
+        plonk::verify_proof_with_openings(
+            &keys.outer,
+            &keys.ovk,
+            plonk::SingleVerifier::new(&keys.outer),
+            &[&[&instance_q2[..]]],
+            &mut rd,
+            std::slice::from_ref(&claim_q1),
+        )
+        .unwrap();
+        let mut rd = crate::native::PoseidonRead::<_, vesta::Affine>::init(&proof_p2[..]);
+        plonk::verify_proof_with_openings(
+            &keys.pparams,
+            &keys.pvk,
+            plonk::SingleVerifier::new(&keys.pparams),
+            &[&[&instance_p2[..]]],
+            &mut rd,
+            &claims,
+        )
+        .unwrap();
+        let step2 = ProvenStep {
+            first_height: 1001,
+            height: 1001,
+            slots: witness
+                .slots
+                .iter()
+                .map(|s| s.as_ref().map(|s| s.statement))
+                .collect(),
+            opening_after: o1,
+            instance_q: instance_q2,
+            proof_q: proof_q2,
+            instance_p: instance_p2,
+            proof_p: proof_p2,
+        };
+        let e = decider.decide_latest(&step2).unwrap_err();
+        assert!(e.contains("T_p's key"), "{e}");
+        let e = decider.decide(&step2, 2, o0.digest()).unwrap_err();
+        assert!(e.contains("T_p's key"), "{e}");
+        // the step after it, under the first set alone: its keys and their
+        // hashes are the deployment's, and its T_q cannot carry the tail
+        let mut prover = ChainProver {
+            keys: &keys,
+            prev: Artifacts {
+                cap_q: cap_q2,
+                cap_p: cap_p2,
+                sq: sq2.without_witnesses(),
+                sp: sp2.without_witnesses(),
+            },
+            steps: 2,
+            s: o1.digest(),
+        };
+        let t = std::time::Instant::now();
+        let step3 = prover.prove(1002, 1002, &w2, &o2, &[]).unwrap();
+        println!(
+            "step 3 under the first set over the mixed step: {:.1} s",
+            t.elapsed().as_secs_f64()
+        );
+        let e = decider.decide_latest(&step3).unwrap_err();
+        assert!(e.starts_with("T_q:"), "{e}");
+        let e = decider.decide(&step3, 3, o1.digest()).unwrap_err();
+        assert!(e.starts_with("T_q:"), "{e}");
+    }
 }
