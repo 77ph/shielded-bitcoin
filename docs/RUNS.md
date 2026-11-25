@@ -850,8 +850,13 @@ and the step after by its `T_q` proof — the key tail leaves that circuit
 unsatisfiable while every other check of the step passes. Passed:
 **1 h 16 min 31 s** of wall clock, **22.78 GB** at the peak
 (`/usr/bin/time -v`), the build before it 214 s. The follower restarted
-itself from its state on disk (step 145) at **11:19:17 UTC** and read
-its keys.
+itself from its state on disk (step 145) at **11:19:17 UTC**, read its
+keys in 389 s (267 s the parameters and key files, 90 s the transfer key
+and padding, 23 s the shapes, 8 s step 0; 164–190 s on the 24th — the
+host's load was about 19) and wrote **step 146** (blocks 331729–331737)
+at 11:37:24 UTC: proved in 584.2 s, decided in 8.53 s, 70 552 bytes —
+the same pace as the overnight median of 362 s and 2.8 s, under three
+times the load; the chain continues from the state the pause left.
 
 **The newest step's bytes** (step 145, 70 552 bytes, read on the
 laptop on 25 November against the wire layout of `wire.rs`; step 144
