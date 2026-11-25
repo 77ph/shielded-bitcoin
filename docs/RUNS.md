@@ -852,3 +852,26 @@ unsatisfiable while every other check of the step passes. Passed:
 (`/usr/bin/time -v`), the build before it 214 s. The follower restarted
 itself from its state on disk (step 145) at **11:19:17 UTC** and read
 its keys.
+
+**The newest step's bytes** (step 145, 70 552 bytes, read on the
+laptop on 25 November against the wire layout of `wire.rs`; step 144
+splits identically):
+
+| Part | Bytes | Share |
+|---|---|---|
+| `T_q`'s instance, 1 032 values | 33 028 | 46.8 % |
+| `T_p`'s instance, 665 values | 21 284 | 30.2 % |
+| `T_p`'s proof | 8 260 | 11.7 % |
+| `T_q`'s proof | 5 796 | 8.2 % |
+| four slots of sixteen field elements | 2 048 | 2.9 % |
+| the opening after the step | 120 | 0.2 % |
+| version, first and last height, slot count | 16 | — |
+
+`x_q` = 221 + 221 (the two transfer group sides) + 586 (the group side
+of `T_p(i−1)`) + 4 (the key tail: two two-limb hashes); `x_p` = 657
+(the group side of `T_q(i)`) + 4 (the tail) + 3 (`s_prev`, `s_next`,
+`D`) + 1 (`g`). The chain test's three-slot shape prints the same 586
+and 657, so the instances have the same length in both shapes and the
+512 bytes between 70 040 and 70 552 are one slot's sixteen elements.
+Three quarters of a step are the two instance vectors; the two proofs
+are a fifth.

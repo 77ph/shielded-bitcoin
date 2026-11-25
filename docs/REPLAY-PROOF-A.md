@@ -1133,7 +1133,9 @@ side of `T_q(i−1)` in 3 268 rows; `T_p` 660 public inputs — the group
 side of `T_q(i)` with 657 exposed values in two limbs each (186
 permutations, 123 MSM terms), the two transfer field sides of 3 192
 rows, the field side of `T_p(i−1)` in 4 199 rows, the relation's 3 951
-rows for three slots and its three public values. Figures: the key
+rows for three slots and its three public values [since `g` and the
+key tail: 1 032 and 665 public inputs in either shape, a live step's
+split in `RUNS.md`, 25 November]. Figures: the key
 bootstrap — four `T_q` and four `T_p` verifying keys at k = 18 and the
 two proving keys — **1 293.5 s**; step 1 (two mints, both proofs the
 padding, the base step over the dummy step 0) **387.1 s**; step 2 (two
