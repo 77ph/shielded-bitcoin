@@ -290,11 +290,15 @@ fn host_of(url: &str) -> String {
 }
 
 fn is_local(host: &str) -> bool {
+    let bare = host
+        .strip_prefix('[')
+        .and_then(|h| h.strip_suffix(']'))
+        .unwrap_or(host);
     host == "localhost"
-        || host.starts_with("127.")
-        || host == "[::1]"
-        || host == "::1"
         || host.ends_with(".localhost")
+        || bare
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
 }
 
 /// The minimum gap between two requests to the same remote host:
@@ -390,6 +394,10 @@ mod pace_tests {
         );
         assert!(is_local("localhost"));
         assert!(is_local("127.0.0.1"));
+        assert!(is_local("127.1.2.3"));
+        assert!(is_local("[::1]"));
+        assert!(!is_local("127.evil.com"));
+        assert!(!is_local("127.0.0.1.evil.com"));
         assert!(is_local("[::1]"));
         assert!(!is_local("mempool.space"));
     }
