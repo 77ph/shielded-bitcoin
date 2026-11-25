@@ -98,10 +98,10 @@ impl Htlc {
             input: vec![TxIn {
                 previous_output: outpoint,
                 script_sig: ScriptBuf::new(),
-                sequence: match secret {
-                    Some(_) => Sequence::ENABLE_RBF_NO_LOCKTIME,
-                    None => Sequence::ENABLE_LOCKTIME_NO_RBF,
-                },
+                // both paths signal replace-by-fee (0xfffffffd), which also
+                // enables the refund's absolute lock time: a spend stuck on
+                // its fee can be bumped while it races the other side
+                sequence: Sequence::ENABLE_RBF_NO_LOCKTIME,
                 witness: Witness::new(),
             }],
             output: vec![TxOut {
@@ -244,7 +244,11 @@ mod tests {
         assert_eq!(w.len(), 3);
         assert!(w[1].is_empty());
         assert_eq!(refund.lock_time, LockTime::from_height(150).unwrap());
-        assert_eq!(refund.input[0].sequence, Sequence::ENABLE_LOCKTIME_NO_RBF);
+        assert_eq!(refund.input[0].sequence, Sequence::ENABLE_RBF_NO_LOCKTIME);
+        assert!(
+            refund.input[0].sequence.is_rbf()
+                && refund.input[0].sequence.enables_absolute_lock_time()
+        );
         assert!(!serialize(&refund).is_empty());
         // the wrong key for a path, and a value that cannot pay the fee
         assert!(
