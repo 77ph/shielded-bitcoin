@@ -187,7 +187,10 @@ impl FundingWallet {
         outputs: Vec<TxOut>,
         fee_rate: u64,
     ) -> Result<(Transaction, FundingState)> {
-        let target: u64 = outputs.iter().map(|o| o.value.to_sat()).sum();
+        let target: u64 = outputs
+            .iter()
+            .try_fold(0u64, |a, o| a.checked_add(o.value.to_sat()))
+            .context("the outputs' values overflow")?;
         let out_bytes: u64 = outputs
             .iter()
             .map(|o| 9 + o.script_pubkey.len() as u64)
@@ -206,11 +209,18 @@ impl FundingWallet {
         let mut fee = 0u64;
         for c in sorted {
             inputs.push(c);
-            total += c.utxo.value;
+            // the values come from a server: no sum of them is trusted to fit
+            total = total
+                .checked_add(c.utxo.value)
+                .context("the coins' values overflow")?;
             // P2WPKH input ≈ 68 vB, change output 31 vB, overhead ≈ 11 vB
             let vbytes = 11 + 68 * inputs.len() as u64 + out_bytes + 31;
-            fee = vbytes * fee_rate;
-            if total >= target + fee + DUST_LIMIT {
+            fee = vbytes.checked_mul(fee_rate).context("the fee overflows")?;
+            let need = target
+                .checked_add(fee)
+                .and_then(|v| v.checked_add(DUST_LIMIT))
+                .context("the amount overflows")?;
+            if total >= need {
                 break;
             }
         }
@@ -220,7 +230,7 @@ impl FundingWallet {
                 self.receive_address(st)?
             );
         }
-        if total < target + fee {
+        if total < target.saturating_add(fee) {
             bail!(
                 "fee wallet holds {total} sat; need {target} + fee {fee} (fund {})",
                 self.receive_address(st)?
