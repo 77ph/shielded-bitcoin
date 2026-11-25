@@ -129,7 +129,7 @@ fn witness_deployment_end_to_end() {
     cli.ok(&[
         "profile-new",
         "--name",
-        "tmp",
+        "wit",
         "--network",
         "regtest",
         "--activation",

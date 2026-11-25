@@ -162,7 +162,7 @@ fn light_client_syncs_from_proofs() {
     indexer.ok(&[
         "profile-new",
         "--name",
-        "tmp",
+        "proof",
         "--network",
         "regtest",
         "--activation",

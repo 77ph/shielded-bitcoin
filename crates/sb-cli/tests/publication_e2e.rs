@@ -160,7 +160,7 @@ fn proxy_route_delay_and_anchor_policy() {
     direct.ok(&[
         "profile-new",
         "--name",
-        "tmp",
+        "pub",
         "--network",
         "regtest",
         "--activation",

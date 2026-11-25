@@ -269,7 +269,7 @@ fn fee_vault_end_to_end() {
     cli.ok(&[
         "profile-new",
         "--name",
-        "tmp",
+        "fv",
         "--network",
         "regtest",
         "--activation",

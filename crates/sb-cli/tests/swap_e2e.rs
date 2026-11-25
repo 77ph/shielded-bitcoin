@@ -119,7 +119,7 @@ fn swap_out_completes_and_a_second_one_refunds_on_both_sides() {
     cli.ok(&[
         "profile-new",
         "--name",
-        "tmp",
+        "swap",
         "--network",
         "regtest",
         "--activation",
