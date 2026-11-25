@@ -79,7 +79,8 @@ impl ChainSource for BitcoinCoreRpc {
                     |e: bitcoin::hex::HexToArrayError| ChainError::Decode(e.to_string()),
                 )?))
             }
-            Err(ChainError::Rpc(msg)) if msg.contains("-8") => Ok(None), // Block height out of range
+            // -8: block height out of range
+            Err(ChainError::Rpc(msg)) if rpc_code(&msg) == Some(-8) => Ok(None),
             Err(e) => Err(e),
         }
     }
@@ -93,5 +94,33 @@ impl ChainSource for BitcoinCoreRpc {
         let block: Block = deserialize(&bytes).map_err(|e| ChainError::Decode(e.to_string()))?;
         super::check_block(hash, &block)?;
         Ok(block)
+    }
+}
+
+/// The `code` of a JSON-RPC error as [`BitcoinCoreRpc::call`] reports it
+/// (the error object's text); a message that merely mentions a number is
+/// not a code.
+fn rpc_code(msg: &str) -> Option<i64> {
+    serde_json::from_str::<Value>(msg)
+        .ok()?
+        .get("code")?
+        .as_i64()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_error_code_is_read_from_the_object_not_the_text() {
+        assert_eq!(
+            rpc_code(r#"{"code":-8,"message":"Block height out of range"}"#),
+            Some(-8)
+        );
+        assert_eq!(
+            rpc_code(r#"{"code":-5,"message":"block -8 not found"}"#),
+            Some(-5)
+        );
+        assert_eq!(rpc_code("connection reset by peer (-8)"), None);
     }
 }
