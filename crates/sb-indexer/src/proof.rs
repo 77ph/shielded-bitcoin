@@ -240,7 +240,9 @@ pub fn sync<R: RngCore + CryptoRng>(
         if rolled > MAX_ROLLBACK {
             return Err(ProofSyncError::DeepReorg(rolled));
         }
-        let to = last - 1;
+        let to = last
+            .checked_sub(1)
+            .ok_or_else(|| invalid(last, "nothing below height 0 to roll back to"))?;
         state.rollback_to(to);
         if let Some(s) = store.as_deref_mut() {
             s.rollback_to(state, to)?;

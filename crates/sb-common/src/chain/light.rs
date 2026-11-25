@@ -275,7 +275,8 @@ impl ChainSource for LightSource {
             .ok_or_else(|| ChainError::NotFound("tip".into()))?;
         let height = v["height"]
             .as_u64()
-            .ok_or_else(|| ChainError::Decode("indexer tip".into()))? as u32;
+            .and_then(|h| u32::try_from(h).ok())
+            .ok_or_else(|| ChainError::Decode("indexer tip".into()))?;
         let hash: BlockHash = v["hash"]
             .as_str()
             .and_then(|s| s.parse().ok())
