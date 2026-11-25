@@ -661,6 +661,11 @@ fn full_cycle_on_fake_node() {
     shared.mine(8);
     cli.ok(&["sync"]);
     assert_eq!(balance(&cli.ok(&["scan", "--name", "bob"])), 1800);
+    // the request is pending once its carrier is k_min blocks below the tip
+    let listed = cli.ok(&["payouts", "--name", "operator", "--no-broadcast"]);
+    assert!(listed.contains("0 pending"), "{listed}");
+    shared.mine(80);
+    cli.ok(&["sync"]);
     let listed = cli.ok(&["payouts", "--name", "operator", "--no-broadcast"]);
     assert!(listed.contains("1 pending"), "{listed}");
     let paid = cli.ok(&["payouts", "--name", "operator", "--fee-rate", "1"]);
