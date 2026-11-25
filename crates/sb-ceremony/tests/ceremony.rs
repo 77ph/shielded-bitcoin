@@ -157,9 +157,10 @@ fn full_ceremony_on_the_tiny_circuit() {
         .contribute(&mut rng)
         .unwrap();
     let q3 = q2.beacon(b"block 900000 hash").unwrap();
-    assert_eq!(
-        q3.beacon(b"block 900000 hash").unwrap().contributions.len(),
-        4
+    assert_eq!(q3.beacon.as_deref(), Some(&b"block 900000 hash"[..]));
+    assert!(
+        q3.beacon(b"block 900000 hash").is_err() && q3.contribute(&mut rng).is_err(),
+        "the beacon is the last contribution"
     );
     assert_eq!(
         q2.beacon(b"block 900000 hash").unwrap(),
@@ -168,6 +169,22 @@ fn full_ceremony_on_the_tiny_circuit() {
     );
     let hashes = q3.verify(&initial, &mut rng).unwrap();
     assert_eq!(hashes.len(), 3);
+    // the file keeps the beacon, and the verifier recomputes the step from it
+    let q3_again = Phase2::read(&q3.to_bytes().unwrap()[..]).unwrap();
+    assert_eq!(q3_again, q3);
+    let mut other = q3.clone();
+    other.beacon = Some(b"block 900001 hash".to_vec());
+    assert!(
+        other
+            .verify(&initial, &mut rng)
+            .unwrap_err()
+            .to_string()
+            .contains("beacon")
+    );
+    let mut none = q3.clone();
+    none.beacon = None;
+    assert_eq!(none.verify(&initial, &mut rng).unwrap().len(), 3);
+    assert!(q2.beacon(b"").is_err(), "an empty beacon is no beacon");
     assert_eq!(hashes[0], q1.contributions[0].hash());
     // the final key proves and verifies
     let pk = q3.pk.clone();

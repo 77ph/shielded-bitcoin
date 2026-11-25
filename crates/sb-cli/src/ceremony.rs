@@ -347,6 +347,13 @@ pub fn run(cmd: CeremonyCmd) -> Result<()> {
             for (i, h) in hashes.iter().enumerate() {
                 println!("  {i}: {}", hex::encode(h));
             }
+            match &q.beacon {
+                Some(b) => println!(
+                    "beacon {}: the last contribution is derived from it (recomputed)",
+                    hex::encode(b)
+                ),
+                None => println!("no beacon recorded: the last contribution is a participant's"),
+            }
             println!("verifying key sha256 {}", hex::encode(vk_sha256(&q.pk.vk)));
         }
         CeremonyCmd::Export { final_, pk, vk } => {

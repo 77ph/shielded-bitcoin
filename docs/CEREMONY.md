@@ -104,7 +104,9 @@ contribution). The **beacon** is the last contribution: its `δ'` is derived
 from a public value nobody could predict while the participants were
 working, agreed on in advance, for example the hash of a Bitcoin block at
 a chosen height. That makes the final key independent of the order and
-choices of the participants and lets anyone recompute the last step.
+choices of the participants and lets anyone recompute the last step: the
+beacon value is recorded in the final file, `phase2-verify` recomputes
+the step from it, and nothing can be contributed after it.
 Verification checks that the circuit part is untouched against the
 initial key, walks the contributions, and checks `H` and `L` against the
 final `δ` with one batched pairing each. With `--initial` the initial key

@@ -8,7 +8,8 @@
 //! final `δ` in one batched pairing each.
 //!
 //! File layout (`sbp2`): magic, version, digest of the initial key, the
-//! contributions, the proving key (compressed).
+//! contributions, the proving key (compressed), and (version 2) the beacon
+//! the last contribution was derived from, if any.
 
 use ark_bls12_381::{Bls12_381, Fr, G1Affine, G1Projective, G2Affine, G2Projective};
 use ark_ec::{CurveGroup, PrimeGroup};
@@ -32,7 +33,9 @@ const MAX_CONTRIBUTIONS: usize = 1 << 16;
 /// Elements a query of the proving key may hold (the circuits here have a
 /// few hundred thousand constraints).
 const MAX_QUERY: usize = 1 << 26;
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
+/// Bytes a beacon value may have.
+const MAX_BEACON: usize = 1024;
 
 /// A participant's contribution: the new `[δ]₁` and a proof of knowledge
 /// of the factor applied, bound to the transcript before it.
@@ -69,6 +72,10 @@ pub struct Phase2 {
     pub cs_hash: [u8; 32],
     pub contributions: Vec<Phase2Key>,
     pub pk: ProvingKey<Bls12_381>,
+    /// The public value the last contribution was derived from
+    /// ([`Self::beacon`]), recorded so that a verifier recomputes that
+    /// step; `None` while participants are still contributing.
+    pub beacon: Option<Vec<u8>>,
 }
 
 impl Phase2 {
@@ -80,6 +87,7 @@ impl Phase2 {
             cs_hash: digest(&bytes),
             contributions: Vec::new(),
             pk,
+            beacon: None,
         })
     }
 
@@ -96,6 +104,11 @@ impl Phase2 {
     }
 
     fn apply(&self, mut delta: Fr, s: G1Affine) -> CeremonyResult<Self> {
+        if self.beacon.is_some() {
+            return Err(CeremonyError::Invalid(
+                "the beacon is the last contribution".into(),
+            ));
+        }
         let mut delta_inv = delta
             .inverse()
             .ok_or_else(|| CeremonyError::Invalid("zero delta".into()))?;
@@ -132,6 +145,7 @@ impl Phase2 {
             cs_hash: self.cs_hash,
             contributions,
             pk,
+            beacon: None,
         })
     }
 
@@ -149,14 +163,15 @@ impl Phase2 {
     /// Bitcoin block hash chosen in advance by height): `δ'` and `s` are
     /// derived from it, so anyone can recompute this step.
     pub fn beacon(&self, beacon: &[u8]) -> CeremonyResult<Self> {
-        let mut h = Sha256::new();
-        h.update(b"sb-ceremony/phase2/beacon");
-        h.update(self.transcript());
-        h.update(beacon);
-        let mut rng = ChaCha20Rng::from_seed(h.finalize().into());
-        let delta = Fr::rand(&mut rng);
-        let s = G1Projective::rand(&mut rng).into_affine();
-        self.apply(delta, s)
+        if beacon.is_empty() || beacon.len() > MAX_BEACON {
+            return Err(CeremonyError::Invalid("beacon length".into()));
+        }
+        let (mut delta, s) = beacon_secret(&self.transcript(), beacon);
+        let out = self.apply(delta, s);
+        crate::phase1::wipe(&mut delta);
+        let mut out = out?;
+        out.beacon = Some(beacon.to_vec());
+        Ok(out)
     }
 
     /// The initial key of a phase 2 file that has no contributions yet (for
@@ -214,7 +229,11 @@ impl Phase2 {
             cs_hash: self.cs_hash,
             contributions: Vec::new(),
             pk: initial.clone(),
+            beacon: None,
         };
+        if self.beacon.is_some() && self.contributions.is_empty() {
+            return Err(bad("a beacon without a contribution"));
+        }
         let mut hashes = Vec::new();
         for (i, c) in self.contributions.iter().enumerate() {
             if c.transcript != transcript_state.transcript() {
@@ -228,6 +247,18 @@ impl Phase2 {
             }
             if !same_ratio((delta_g1, c.delta_after), (r, c.r_delta)) {
                 return Err(bad(&format!("contribution {i}: delta was not applied")));
+            }
+            // the last contribution is the recorded beacon's: anyone
+            // recomputes it
+            if i + 1 == self.contributions.len() {
+                if let Some(b) = &self.beacon {
+                    let (mut delta, s) = beacon_secret(&transcript_state.transcript(), b);
+                    let expected = (delta_g1 * delta).into_affine();
+                    crate::phase1::wipe(&mut delta);
+                    if c.s != s || c.delta_after != expected {
+                        return Err(bad("the last contribution is not the recorded beacon's"));
+                    }
+                }
             }
             delta_g1 = c.delta_after;
             hashes.push(c.hash());
@@ -264,6 +295,10 @@ impl Phase2 {
         w.write_all(&self.cs_hash)?;
         self.contributions.serialize_compressed(&mut w)?;
         self.pk.serialize_compressed(&mut w)?;
+        (self.beacon.is_some() as u8).serialize_compressed(&mut w)?;
+        if let Some(b) = &self.beacon {
+            b.serialize_compressed(&mut w)?;
+        }
         Ok(())
     }
 
@@ -281,7 +316,7 @@ impl Phase2 {
             return Err(CeremonyError::Invalid("not a phase 2 file".into()));
         }
         let version = u32::deserialize_compressed(&mut r)?;
-        if version != VERSION {
+        if version != 1 && version != VERSION {
             return Err(CeremonyError::Invalid(format!(
                 "phase 2 file version {version}"
             )));
@@ -306,12 +341,42 @@ impl Phase2 {
                 "a point is not in the prime-order subgroup".into(),
             ));
         }
+        // version 1 recorded no beacon
+        let beacon = if version >= 2 {
+            match u8::deserialize_compressed(&mut r)? {
+                0 => None,
+                1 => {
+                    let b = read_bounded::<u8, _>(&mut r, MAX_BEACON, false)?;
+                    if b.is_empty() {
+                        return Err(CeremonyError::Invalid("beacon length".into()));
+                    }
+                    Some(b)
+                }
+                _ => return Err(CeremonyError::Invalid("beacon tag".into())),
+            }
+        } else {
+            None
+        };
         Ok(Phase2 {
             cs_hash,
             contributions,
             pk,
+            beacon,
         })
     }
+}
+
+/// `δ'` and `s` of the beacon step: derived from the transcript so far and
+/// the beacon value, so that anyone recomputes them.
+fn beacon_secret(transcript: &[u8; 32], beacon: &[u8]) -> (Fr, G1Affine) {
+    let mut h = Sha256::new();
+    h.update(b"sb-ceremony/phase2/beacon");
+    h.update(transcript);
+    h.update(beacon);
+    let mut rng = ChaCha20Rng::from_seed(h.finalize().into());
+    let delta = Fr::rand(&mut rng);
+    let s = G1Projective::rand(&mut rng).into_affine();
+    (delta, s)
 }
 /// The proving key as `CanonicalSerialize` writes it (field by field), with
 /// every vector read through [`read_bounded`].
