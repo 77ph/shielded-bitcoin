@@ -128,7 +128,9 @@ paying, the relayer replays to the chain tip and checks the envelope
 exactly as the indexer will at the next block (parse, anchor window and
 root, unspent nullifiers, proof); it refuses mints (they pay the vault),
 envelopes it already paid for that still wait for a block, memos that are
-not a payout memo, and more than `--max-per-hour` carriers. Clients use
+not a payout memo, and more than `--max-per-hour` carriers; what it paid
+for and when is kept beside its wallet file (`<wallet>.relay.json`), so a
+restart forgets neither. Clients use
 `sb send --relay http://host:port`, `sb withdraw --relay …` or `sb publish
 <label> --relay …`.
 

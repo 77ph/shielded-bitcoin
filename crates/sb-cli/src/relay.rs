@@ -84,9 +84,12 @@ pub struct Relayer {
     pub fee_rate: u64,
     pub max_per_hour: u32,
     /// Nullifiers of transfers already paid for but not yet replayed, so the
-    /// same envelope is not paid twice while it sits in the mempool.
+    /// same envelope is not paid twice while it sits in the mempool; kept
+    /// on disk with the payment times, so that a restart forgets neither.
     pending: HashSet<Fr>,
-    paid_at: Vec<Instant>,
+    /// Payment times (seconds since the epoch) within the last hour.
+    paid_at: Vec<u64>,
+    ledger_path: PathBuf,
     /// The check path (replay to tip, proof verification) is the expensive
     /// one: at most this many submissions per client address per minute.
     pub max_checks_per_minute: u32,
@@ -110,6 +113,14 @@ impl Relayer {
         fee_rate: u64,
         max_per_hour: u32,
     ) -> Self {
+        let ledger_path = wallet_path.with_extension("relay.json");
+        let ledger = RelayLedger::load(&ledger_path).unwrap_or_else(|e| {
+            log::warn!(
+                "relay ledger {}: {e}; starting empty",
+                ledger_path.display()
+            );
+            LoadedLedger::default()
+        });
         Relayer {
             indexer,
             store,
@@ -121,13 +132,27 @@ impl Relayer {
             network,
             fee_rate,
             max_per_hour,
-            pending: HashSet::new(),
-            paid_at: Vec::new(),
+            pending: ledger.pending,
+            paid_at: ledger.paid_at,
+            ledger_path,
             max_checks_per_minute: 6,
             checks: HashMap::new(),
             sync_interval: Duration::from_secs(5),
             last_sync: None,
         }
+    }
+
+    /// Write the pending nullifiers and the payment times.
+    fn save_ledger(&self) -> Result<()> {
+        RelayLedger {
+            pending: self
+                .pending
+                .iter()
+                .map(|nf| hex::encode(sb_primitives::encoding::fr_to_bytes(nf)))
+                .collect(),
+            paid_at: self.paid_at.clone(),
+        }
+        .save(&self.ledger_path)
     }
 
     pub(crate) fn funding_state(&self) -> FundingState {
@@ -149,7 +174,11 @@ impl Relayer {
             self.last_sync = Some(Instant::now());
             // paid-for transfers that have been replayed no longer need tracking
             let replayed = &self.indexer.state.nullifiers;
+            let before = self.pending.len();
             self.pending.retain(|nf| !replayed.contains(nf));
+            if self.pending.len() != before {
+                self.save_ledger()?;
+            }
         }
         self.indexer
             .state
@@ -287,15 +316,16 @@ impl Relayer {
         if self.is_pending(&check.nullifiers) {
             bail!("rejected: already relayed, waiting for a block");
         }
-        let hour_ago = Instant::now() - Duration::from_secs(3600);
-        self.paid_at.retain(|t| *t > hour_ago);
+        let now = now_secs();
+        self.paid_at.retain(|t| *t > now.saturating_sub(3600));
         if self.paid_at.len() as u32 >= self.max_per_hour {
             bail!("busy: hourly budget spent, try later");
         }
         let carrier = self.build_carrier(envelope, memo)?;
         let txid = self.broadcast_carrier(&carrier)?;
         self.mark_pending(check.nullifiers);
-        self.paid_at.push(Instant::now());
+        self.paid_at.push(now);
+        self.save_ledger()?;
         log::info!(
             "relayed transfer {} (anchor {}) in {txid}, fee {} sat",
             hex::encode(&sb_primitives::encoding::fr_to_bytes(&check.h_body)[..8]),
@@ -382,10 +412,90 @@ pub fn submit(url: &str, envelope: &[u8], memo: Option<&[u8]>) -> Result<Txid> {
         .context("txid")
 }
 
+/// Seconds since the epoch.
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// What the relayer remembers across restarts: the nullifiers of transfers
+/// paid for and not yet replayed, and when it paid within the last hour
+/// (the budget). Beside the wallet file, as `<wallet>.relay.json`.
+#[derive(Default, Serialize, Deserialize)]
+struct RelayLedger {
+    #[serde(default)]
+    pending: Vec<String>,
+    #[serde(default)]
+    paid_at: Vec<u64>,
+}
+
+#[derive(Default)]
+struct LoadedLedger {
+    pending: HashSet<Fr>,
+    paid_at: Vec<u64>,
+}
+
+impl RelayLedger {
+    fn load(path: &PathBuf) -> Result<LoadedLedger> {
+        let bytes = match std::fs::read(path) {
+            Ok(b) => b,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(e) => return Err(e.into()),
+        };
+        let l: RelayLedger = if bytes.is_empty() {
+            RelayLedger::default()
+        } else {
+            serde_json::from_slice(&bytes)?
+        };
+        let mut pending = HashSet::new();
+        for s in &l.pending {
+            let b = hex::decode(s)?;
+            pending.insert(sb_primitives::encoding::fr_from_bytes(&b).map_err(|e| anyhow!("{e}"))?);
+        }
+        Ok(LoadedLedger {
+            pending,
+            paid_at: l.paid_at,
+        })
+    }
+
+    fn save(&self, path: &PathBuf) -> Result<()> {
+        let tmp = path.with_extension("tmp");
+        std::fs::write(&tmp, serde_json::to_vec_pretty(self)?)?;
+        std::fs::rename(&tmp, path)?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::net::TcpListener;
+
+    /// The pending nullifiers and the payment times survive a restart
+    /// through the ledger file; a missing file is an empty ledger.
+    #[test]
+    fn the_relay_ledger_round_trips() {
+        let dir = std::env::temp_dir().join(format!("sb-relay-ledger-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("default.relay.json");
+        let empty = RelayLedger::load(&path).unwrap();
+        assert!(empty.pending.is_empty() && empty.paid_at.is_empty());
+        let nf = Fr::from(7u64);
+        RelayLedger {
+            pending: vec![hex::encode(sb_primitives::encoding::fr_to_bytes(&nf))],
+            paid_at: vec![1, 2, 3],
+        }
+        .save(&path)
+        .unwrap();
+        let back = RelayLedger::load(&path).unwrap();
+        assert!(back.pending.contains(&nf));
+        assert_eq!(back.paid_at, vec![1, 2, 3]);
+        std::fs::write(&path, b"{").unwrap();
+        assert!(RelayLedger::load(&path).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn admission_is_per_address_per_minute() {
