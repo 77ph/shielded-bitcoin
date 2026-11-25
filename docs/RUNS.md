@@ -787,3 +787,48 @@ it is at the network's head again and follows block by block. The
 first chain's step files do not decide under the new keys (another key
 set is another id) and stay in the old directory with its log and
 binary.
+
+## Public signet, 25 November 2026: the catch-up from the genesis, the newest step decided on the laptop under the new key set (deployment `signet-a-2`)
+
+**The catch-up overnight** (the server container, host load 7–19). The
+follower restarted from the genesis at 18:52 UTC on the 24th wrote its
+step 1 (blocks 330433–330441) at 19:16:25 UTC and its step 145 (blocks
+331720–331728) at 09:57:23 UTC on the 25th: 145 steps over 1 296 blocks
+in 15 h 5 min from the restart, the key generation included — 141 steps
+of nine blocks, two of seven, one of four; a step file every **366 s**
+(quartiles 344 and 382 s, extremes 322 and 437 s over the 144
+intervals), which is the whole step at the catch-up pace — the nine
+blocks fetched from the explorer, replayed, proved and written, with no
+settle wait while the tip is far ahead; **87.7 blocks an hour** after
+step 1, 85.9 from the restart; every step **70 552 bytes**. At six
+signet blocks an hour the follower gains some 80 blocks an hour on the
+tip, so the two weeks of blocks since the activation are redone in
+about a day of proving, as estimated the evening before. The follower's
+log carries no timestamps; the step files' modification times are the
+record. **Paused at 09:59 UTC** after step 145, between steps, for the
+chain test below; it restarts itself from its state on disk when the
+test ends.
+
+**The newest step decided on the laptop under the new key set** (the
+laptop under another project's load — load average 2.6–6.7 on 20
+threads, about 10.6 GB available; 10:42–10:43 UTC; the release build of
+`554d7b9`, which prints the decision's split when `SB_DECIDE_TIMING` is
+set). The decider's part of the new key set (the two circuits'
+parameters and verifying keys, the transfer key's files, `meta`: 36 MB
+on disk) and step 145 were copied over; `replay-decide --latest` from a
+cold client state, three runs in a row:
+
+| Run | Keys read (s): parameters and verifying keys / transfer key / shapes / total | `T_q` verified (s) | `T_p` verified (s) | Step decided (s) | Wall clock (s) | Peak resident (MB) |
+|---|---|---|---|---|---|---|
+| 1 | 6.4 / 0.3 / 1.7 / 8.3 | 0.261 | 0.246 | 0.51 | 12.75 | 243 |
+| 2 | 6.3 / 0.3 / 1.7 / 8.3 | 0.256 | 0.266 | 0.52 | 12.67 | 243 |
+| 3 | 6.3 / 0.3 / 1.6 / 8.2 | 0.263 | 0.238 | 0.50 | 12.62 | 243 |
+
+The shape, keys and claims are read in under a millisecond before the
+first verification; the two verifications share the half second about
+equally; the wall clock beyond the key read and the decision is the
+process start, the profile, the step file and the client state written.
+Against the 24th on the same laptop under the old key set (keys
+12.5–21.5 s, the step 1.04–1.16 s, two runs): about half, at a lighter
+load. Not a quiet-machine figure: the load average never fell under
+2.6.
