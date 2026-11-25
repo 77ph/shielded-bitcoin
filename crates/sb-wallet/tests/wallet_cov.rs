@@ -193,6 +193,12 @@ fn wallet_files_and_rescans() {
     // persistence of every record kind
     let p = dir.join("alice.json");
     aw.save(&p).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "the wallet file is the owner's alone");
+    }
     let back = Wallet::load(&p, None).unwrap();
     assert_eq!(back.notes, aw.notes);
     assert_eq!(back.last_scanned_txid, aw.last_scanned_txid);

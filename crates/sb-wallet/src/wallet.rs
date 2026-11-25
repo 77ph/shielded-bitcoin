@@ -412,7 +412,7 @@ impl Wallet {
             }
         };
         let tmp = path.with_extension("tmp");
-        std::fs::write(&tmp, text)?;
+        write_private(&tmp, text.as_bytes())?;
         std::fs::rename(tmp, path)?;
         Ok(())
     }
@@ -912,6 +912,21 @@ impl Wallet {
 /// `replayed_tip + 1` may use under `K_wallet`.
 pub fn anchor_for(replayed_tip: u32, k_wallet: u32) -> u32 {
     (replayed_tip + 1).saturating_sub(k_wallet)
+}
+
+/// Write `bytes` to a fresh file the owner alone can read: a wallet holds
+/// the spending keys, in clear without a passphrase.
+fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let _ = std::fs::remove_file(path);
+    let mut o = std::fs::OpenOptions::new();
+    o.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        o.mode(0o600);
+    }
+    o.open(path)?.write_all(bytes)
 }
 
 #[cfg(test)]
