@@ -555,37 +555,59 @@ impl Ctx {
     }
 
     /// Passphrase from --passphrase-file, then SB_WALLET_PASSPHRASE, then a prompt.
-    fn passphrase(&self, prompt: &str, confirm: bool) -> Result<String> {
-        if let Some(p) = &self.passphrase_file {
-            return Ok(std::fs::read_to_string(p)?
-                .trim_end_matches(['\n', '\r'])
-                .to_string());
-        }
-        if let Ok(p) = std::env::var("SB_WALLET_PASSPHRASE") {
-            return Ok(p);
-        }
-        let p = rpassword::prompt_password(prompt)?;
-        if confirm && rpassword::prompt_password("Repeat passphrase: ")? != p {
-            bail!("passphrases differ");
+    fn passphrase(&self, prompt: &str, confirm: bool) -> Result<Zeroizing<String>> {
+        let p = if let Some(p) = &self.passphrase_file {
+            Zeroizing::new(
+                std::fs::read_to_string(p)?
+                    .trim_end_matches(['\n', '\r'])
+                    .to_string(),
+            )
+        } else if let Ok(p) = std::env::var("SB_WALLET_PASSPHRASE") {
+            Zeroizing::new(p)
+        } else {
+            let p = Zeroizing::new(rpassword::prompt_password(prompt)?);
+            if confirm && *Zeroizing::new(rpassword::prompt_password("Repeat passphrase: ")?) != *p
+            {
+                bail!("passphrases differ");
+            }
+            p
+        };
+        if confirm && p.is_empty() {
+            bail!("an empty passphrase protects nothing");
         }
         Ok(p)
     }
 
     pub(crate) fn wallet(&self, name: &str) -> Result<Wallet> {
         let path = self.wallet_path(name);
-        match Wallet::load(&path, None) {
+        let w = match Wallet::load(&path, None) {
             Ok(w) => {
                 eprintln!(
                     "warning: wallet {name} is stored in plaintext; run `sb wallet-encrypt --name {name}`"
                 );
-                Ok(w)
+                w
             }
             Err(sb_wallet::WalletError::PassphraseRequired) => {
                 let pass = self.passphrase(&format!("Passphrase for wallet {name}: "), false)?;
-                Wallet::load(&path, Some(&pass)).with_context(|| format!("wallet {name}"))
+                Wallet::load(&path, Some(pass.as_str()))
+                    .with_context(|| format!("wallet {name}"))?
             }
-            Err(e) => Err(e).with_context(|| format!("wallet {name} (run `sb wallet-new`)")),
+            Err(e) => {
+                return Err(e).with_context(|| format!("wallet {name} (run `sb wallet-new`)"));
+            }
+        };
+        // a wallet file is bound to the deployment that made it: its notes,
+        // anchors and addresses mean nothing under another
+        if w.network != self.deployment.network || w.deployment != self.deployment.name {
+            bail!(
+                "wallet {name} was made for deployment {} on {:?}; this profile is {} on {:?}",
+                w.deployment,
+                w.network,
+                self.deployment.name,
+                self.deployment.network
+            );
         }
+        Ok(w)
     }
 
     pub(crate) fn btc_network(&self) -> bitcoin::Network {

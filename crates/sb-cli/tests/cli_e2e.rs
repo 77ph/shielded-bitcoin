@@ -196,9 +196,15 @@ fn full_cycle_on_fake_node() {
     let op = cli.ok(&["wallet-new", "--name", "operator"]);
     assert!(op.contains("encrypted"));
     cli.fails(&["wallet-new", "--name", "operator"], "exists");
+    // a wallet belongs to the deployment that made it: the nested profile
+    // refuses the regtest wallet and renders its own on testnet
+    nested.fails(
+        &["address", "--name", "operator"],
+        "made for deployment e2e on Regtest",
+    );
     assert!(
         nested
-            .ok(&["address", "--name", "operator"])
+            .ok(&["wallet-new", "--name", "testnet-operator"])
             .contains("funding address:  tb1")
     );
     let op_shielded = field(&op, "shielded address:").to_string();
@@ -905,8 +911,21 @@ fn full_cycle_on_fake_node() {
         profile: dir.join("mainnet.json"),
         chain: cli.chain.clone(),
     };
+    // the regtest wallet is refused under it; a wallet made for it (here
+    // written directly, since profile-new refuses mainnet) renders bc1
+    mn.fails(
+        &["address", "--name", "alice"],
+        "made for deployment e2e on Regtest; this profile is e2e on Mainnet",
+    );
+    sb_wallet::Wallet::from_seed(
+        sb_core::keys::Seed([7u8; 32]),
+        sb_core::address::Network::Mainnet,
+        "e2e",
+    )
+    .save(&dir.join("wallets").join("mainnet-alice.json"))
+    .unwrap();
     assert!(
-        mn.ok(&["address", "--name", "alice"])
+        mn.ok(&["address", "--name", "mainnet-alice"])
             .contains("funding address:  bc1")
     );
     // no passphrase source and no terminal: the prompt fails cleanly
