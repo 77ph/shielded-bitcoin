@@ -27,6 +27,11 @@ pub struct EncryptedFile {
 pub const KDF_M_COST_KIB: u32 = 65536;
 pub const KDF_T_COST: u32 = 3;
 pub const KDF_P_COST: u32 = 1;
+/// Ceilings on the parameters a file may ask for (a tampered file could
+/// otherwise make opening it exhaust memory): 1 GiB, 32 passes, 16 lanes.
+pub const MAX_M_COST_KIB: u32 = 1 << 20;
+pub const MAX_T_COST: u32 = 32;
+pub const MAX_P_COST: u32 = 16;
 
 #[derive(Debug, thiserror::Error)]
 pub enum CryptoError {
@@ -90,6 +95,11 @@ impl FileCrypto {
         if f.kdf != "argon2id" {
             return Err(CryptoError::Corrupt(format!("unknown kdf {}", f.kdf)));
         }
+        if f.m_cost_kib > MAX_M_COST_KIB || f.t_cost > MAX_T_COST || f.p_cost > MAX_P_COST {
+            return Err(CryptoError::Corrupt(
+                "kdf parameters above the ceiling".into(),
+            ));
+        }
         let salt: [u8; 16] = hex::decode(&f.salt)
             .map_err(|e| CryptoError::Corrupt(e.to_string()))?
             .try_into()
@@ -126,6 +136,25 @@ impl FileCrypto {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A file asking for more memory, passes or lanes than the ceiling is
+    /// refused before the derivation starts.
+    #[test]
+    fn kdf_parameters_are_capped() {
+        let c = FileCrypto::derive("pw", [1u8; 16], 64, 1, 1).unwrap();
+        let f = c.seal(b"body", b"aad");
+        assert_eq!(FileCrypto::open(&f, "pw", b"aad").unwrap().0, b"body");
+        for (m, t, p) in [(u32::MAX, 1, 1), (64, 1000, 1), (64, 1, 255)] {
+            let mut big = f.clone();
+            big.m_cost_kib = m;
+            big.t_cost = t;
+            big.p_cost = p;
+            assert!(matches!(
+                FileCrypto::open(&big, "pw", b"aad"),
+                Err(CryptoError::Corrupt(_))
+            ));
+        }
+    }
 
     #[test]
     fn round_trip_and_wrong_passphrase_and_aad() {
