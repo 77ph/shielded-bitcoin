@@ -140,7 +140,9 @@ impl Htlc {
         let tip = chain.tip()?.height;
         for h in from..=tip {
             let Some(hash) = chain.block_hash(h)? else {
-                break;
+                // a gap below the tip is the source's problem, not "not
+                // spent yet"
+                bail!("chain source has no block at height {h} (tip {tip}); try again");
             };
             let block = chain.block(&hash)?;
             for tx in &block.txdata {
