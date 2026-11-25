@@ -304,16 +304,24 @@ impl Electrum {
         Ok(())
     }
 
-    /// Read lines until the response with `id` arrives (notifications are skipped).
+    /// Read lines until the response with `id` arrives (notifications are
+    /// skipped, up to [`MAX_SKIPPED`] of them).
     fn recv_on(reader: &mut BufReader<Box<dyn ReadWrite>>, id: u64) -> Result<Value, ChainError> {
+        let mut skipped = 0usize;
         loop {
             let mut line = String::new();
-            if reader.read_line(&mut line)? == 0 {
+            if read_line_capped(reader, &mut line)? == 0 {
                 return Err(ChainError::Http("electrum connection closed".into()));
             }
             let v: Value =
                 serde_json::from_str(line.trim()).map_err(|e| ChainError::Decode(e.to_string()))?;
             if v.get("id").and_then(|i| i.as_u64()) != Some(id) {
+                skipped += 1;
+                if skipped > MAX_SKIPPED {
+                    return Err(ChainError::Http(format!(
+                        "electrum: no reply among {MAX_SKIPPED} messages"
+                    )));
+                }
                 continue;
             }
             if let Some(err) = v.get("error").filter(|e| !e.is_null()) {
@@ -384,14 +392,24 @@ impl Electrum {
                 Self::send_on(reader, &Value::Array(reqs))?;
                 // The whole batch comes back as one JSON array line.
                 let mut line = String::new();
+                let mut skipped = 0usize;
                 loop {
                     line.clear();
-                    if reader.read_line(&mut line)? == 0 {
+                    if read_line_capped(reader, &mut line)? == 0 {
                         return Err(ChainError::Http("electrum connection closed".into()));
                     }
                     let v: Value = serde_json::from_str(line.trim())
                         .map_err(|e| ChainError::Decode(e.to_string()))?;
-                    let Some(arr) = v.as_array() else { continue }; // notification
+                    let Some(arr) = v.as_array() else {
+                        // a notification
+                        skipped += 1;
+                        if skipped > MAX_SKIPPED {
+                            return Err(ChainError::Http(format!(
+                                "electrum: no reply among {MAX_SKIPPED} messages"
+                            )));
+                        }
+                        continue;
+                    };
                     let mut out: Vec<Option<Result<Value, ChainError>>> =
                         (0..params.len()).map(|_| None).collect();
                     for item in arr {
@@ -558,5 +576,73 @@ impl Electrum {
             .ok_or_else(|| ChainError::Rpc("bad txid".into()))?
             .parse()
             .map_err(|e: bitcoin::hex::HexToArrayError| ChainError::Decode(e.to_string()))
+    }
+}
+/// Longest line a server may send (a block's hex and the JSON around it).
+const MAX_LINE: u64 = 64 << 20;
+/// Messages that are not the awaited reply before the server is given up on.
+const MAX_SKIPPED: usize = 10_000;
+
+/// One line of at most [`MAX_LINE`] bytes; a longer one is an error, not
+/// an allocation that grows with what the server sends.
+fn read_line_capped(
+    reader: &mut BufReader<Box<dyn ReadWrite>>,
+    line: &mut String,
+) -> Result<usize, ChainError> {
+    read_line_up_to(reader, line, MAX_LINE)
+}
+
+fn read_line_up_to(
+    reader: &mut BufReader<Box<dyn ReadWrite>>,
+    line: &mut String,
+    cap: u64,
+) -> Result<usize, ChainError> {
+    let n = (&mut *reader).take(cap).read_line(line)?;
+    if n as u64 >= cap && !line.ends_with('\n') {
+        return Err(ChainError::Decode("electrum: line too long".into()));
+    }
+    Ok(n)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn reader(bytes: Vec<u8>) -> BufReader<Box<dyn ReadWrite>> {
+        BufReader::new(Box::new(std::io::Cursor::new(bytes)))
+    }
+
+    #[test]
+    fn a_line_beyond_the_cap_is_an_error_not_an_allocation() {
+        let mut r = reader(b"short\n".to_vec());
+        let mut line = String::new();
+        assert_eq!(read_line_up_to(&mut r, &mut line, 16).unwrap(), 6);
+        let mut r = reader(vec![b'a'; 64]);
+        let mut line = String::new();
+        assert!(matches!(
+            read_line_up_to(&mut r, &mut line, 16),
+            Err(ChainError::Decode(_))
+        ));
+        assert!(line.len() <= 16);
+    }
+
+    #[test]
+    fn a_flood_of_notifications_does_not_hold_the_reader() {
+        let mut flood = Vec::new();
+        for _ in 0..=MAX_SKIPPED {
+            flood.extend_from_slice(b"{\"method\":\"blockchain.headers.subscribe\"}\n");
+        }
+        flood.extend_from_slice(b"{\"id\":1,\"result\":5}\n");
+        let mut r = reader(flood);
+        let e = Electrum::recv_on(&mut r, 1).unwrap_err().to_string();
+        assert!(e.contains("no reply among"), "{e}");
+        // one fewer and the reply is found
+        let mut some = Vec::new();
+        for _ in 0..MAX_SKIPPED {
+            some.extend_from_slice(b"{\"method\":\"x\"}\n");
+        }
+        some.extend_from_slice(b"{\"id\":1,\"result\":5}\n");
+        let mut r = reader(some);
+        assert_eq!(Electrum::recv_on(&mut r, 1).unwrap(), Value::from(5));
     }
 }
