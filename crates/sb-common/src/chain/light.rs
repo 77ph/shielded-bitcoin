@@ -232,7 +232,7 @@ impl LightSource {
             .call()
         {
             Ok(r) => {
-                Ok(Some(r.into_json().map_err(|e| {
+                Ok(Some(crate::net::json(r).map_err(|e| {
                     ChainError::Decode(format!("indexer {path}: {e}"))
                 })?))
             }

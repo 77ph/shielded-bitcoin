@@ -149,7 +149,7 @@ impl ProofSource for ProofClient {
             .get(&format!("{}/batches/{height}", self.base))
             .call()
         {
-            Ok(r) => Ok(Some(r.into_json().map_err(|e| {
+            Ok(r) => Ok(Some(sb_common::net::json(r).map_err(|e| {
                 ChainError::Decode(format!("proven block {height}: {e}"))
             })?)),
             Err(ureq::Error::Status(404, _)) => Ok(None),

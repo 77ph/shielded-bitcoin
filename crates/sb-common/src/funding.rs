@@ -318,7 +318,8 @@ impl EsploraPublisher {
 impl Publisher for EsploraPublisher {
     fn utxos(&self, address: &Address) -> Result<Vec<Utxo>> {
         let url = format!("{}/address/{}/utxo", self.base, address);
-        let list: Vec<EsploraUtxo> = crate::net::get(&url).context("esplora utxo")?.into_json()?;
+        let list: Vec<EsploraUtxo> =
+            crate::net::json(crate::net::get(&url).context("esplora utxo")?)?;
         list.into_iter()
             .map(|u| {
                 Ok(Utxo {

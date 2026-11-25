@@ -41,10 +41,10 @@ impl BitcoinCoreRpc {
             .set("Content-Type", "application/json")
             .send_json(body)
         {
-            Ok(r) => r.into_json()?,
+            Ok(r) => crate::net::json(r)?,
             // Bitcoin Core answers application errors with HTTP 500 and a JSON body.
             Err(ureq::Error::Status(_, r)) => {
-                r.into_json().map_err(|e| ChainError::Rpc(e.to_string()))?
+                crate::net::json(r).map_err(|e| ChainError::Rpc(e.to_string()))?
             }
             Err(e) => return Err(e.into()),
         };

@@ -56,8 +56,7 @@ pub fn post_json(url: &str, body: &impl serde::Serialize, service: &str) -> Resu
         .timeout(std::time::Duration::from_secs(120))
         .send_json(body)
         .map_err(|e| refusal(e, service))?;
-    resp.into_json()
-        .with_context(|| format!("{service} response"))
+    crate::net::json(resp).with_context(|| format!("{service} response"))
 }
 
 /// `GET` a JSON document from `url`, with the same error mapping.
@@ -67,8 +66,7 @@ pub fn get_json(url: &str, service: &str) -> Result<Value> {
         .timeout(std::time::Duration::from_secs(30))
         .call()
         .map_err(|e| refusal(e, service))?;
-    resp.into_json()
-        .with_context(|| format!("{service} response"))
+    crate::net::json(resp).with_context(|| format!("{service} response"))
 }
 
 fn refusal(e: ureq::Error, service: &str) -> anyhow::Error {

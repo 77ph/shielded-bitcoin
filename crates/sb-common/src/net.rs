@@ -80,10 +80,26 @@ pub fn route() -> String {
     }
 }
 
-/// The HTTP client every request goes through.
+/// Bytes a response body may carry (a block's hex and the JSON around
+/// it stay well under it).
+pub const MAX_BODY: u64 = 64 << 20;
+
+/// A response body as JSON, read up to [`MAX_BODY`] bytes (`into_json`
+/// would read without bound).
+pub fn json<T: serde::de::DeserializeOwned>(resp: ureq::Response) -> std::io::Result<T> {
+    let mut bytes = Vec::new();
+    resp.into_reader().take(MAX_BODY).read_to_end(&mut bytes)?;
+    serde_json::from_slice(&bytes).map_err(std::io::Error::other)
+}
+
+/// The HTTP client every request goes through: a connection, a read and a
+/// write each time out on their own, so a silent peer holds no sync.
 pub fn agent() -> &'static ureq::Agent {
     AGENT.get_or_init(|| {
-        let mut b = ureq::AgentBuilder::new();
+        let mut b = ureq::AgentBuilder::new()
+            .timeout_connect(Duration::from_secs(20))
+            .timeout_read(Duration::from_secs(60))
+            .timeout_write(Duration::from_secs(60));
         if let Some(p) = proxy() {
             b = b.proxy(
                 ureq::Proxy::new(p.url()).expect("a parsed socks5 proxy is a valid ureq proxy"),
