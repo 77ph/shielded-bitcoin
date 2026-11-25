@@ -93,7 +93,8 @@ impl SlotStatement {
 
     /// The inverse of [`Self::to_elements`], `None` if the elements are
     /// not a statement: a height above `u32`, a point off the curve or
-    /// outside the prime-order subgroup, a kind other than 0, 1 or 2.
+    /// outside the prime-order subgroup, an identity ephemeral key outside
+    /// a mint's padding, a kind other than 0, 1 or 2.
     pub fn from_elements(e: &[Fr]) -> Option<Self> {
         use ark_ff::{BigInteger, PrimeField};
         if e.len() != SLOT_ELEMENTS {
@@ -132,6 +133,13 @@ impl SlotStatement {
             2 => (false, true),
             _ => return None,
         };
+        // an ephemeral key is never the identity, except the padding
+        // output of a mint, which is the zero statement part
+        for (j, p) in pk_eph.iter().enumerate() {
+            if *p == JubjubAffine::default() && !(mint && j == 1) {
+                return None;
+            }
+        }
         Some(SlotStatement {
             h_anchor,
             r_anchor: e[1],
@@ -243,11 +251,12 @@ mod tests {
             f(&mut t);
             assert_ne!(t.digest(), d);
         }
+        let g = <JubjubAffine as ark_ec::AffineRepr>::generator();
         let st = SlotStatement {
             h_anchor: 7,
             r_anchor: Fr::from(8u64),
             nullifiers: [Fr::from(9u64), Fr::from(10u64)],
-            pk_eph: [JubjubAffine::default(); N_OUT],
+            pk_eph: [g; N_OUT],
             ct: [NoteCiphertext {
                 c0: Fr::from(11u64),
                 c1: Fr::from(12u64),
@@ -278,6 +287,18 @@ mod tests {
         let mut bad = st.to_elements();
         bad[4] += Fr::from(1u64);
         assert_eq!(SlotStatement::from_elements(&bad), None, "point");
+        // the identity is no ephemeral key, except as a mint's padding
+        let mut idle = st;
+        idle.pk_eph[1] = JubjubAffine::default();
+        assert_eq!(SlotStatement::from_elements(&idle.to_elements()), None);
+        idle.mint = true;
+        idle.nullifiers = [Fr::from(0u64); N_IN];
+        assert_eq!(
+            SlotStatement::from_elements(&idle.to_elements()),
+            Some(idle)
+        );
+        idle.pk_eph[0] = JubjubAffine::default();
+        assert_eq!(SlotStatement::from_elements(&idle.to_elements()), None);
         let a = batch_digest(&[Some(st), None]);
         let b = batch_digest(&[None, Some(st)]);
         assert_ne!(a, b, "the order is committed");
