@@ -3,7 +3,7 @@
 //! contributions and a beacon, and proofs that verify. The transfer
 //! circuit itself runs when `SB_CEREMONY_FULL` is set (minutes).
 
-use ark_bls12_381::{Bls12_381, Fr, G1Projective, G2Projective};
+use ark_bls12_381::{Bls12_381, Fr, G1Affine, G1Projective, G2Affine, G2Projective};
 use ark_ec::PrimeGroup;
 use ark_ff::{Field, UniformRand};
 use ark_groth16::Groth16;
@@ -247,6 +247,23 @@ fn full_ceremony_on_the_tiny_circuit() {
     let mut t = q3.clone();
     t.pk.h_query.pop();
     bad(t, "length changed");
+    // a zero delta, in the last contribution and in the final key
+    let mut t = q3.clone();
+    t.contributions[2].delta_after = G1Affine::identity();
+    t.contributions[2].s_delta = G1Affine::identity();
+    t.contributions[2].r_delta = G2Affine::identity();
+    t.pk.delta_g1 = G1Affine::identity();
+    t.pk.vk.delta_g2 = G2Affine::identity();
+    bad(t, "proof of knowledge");
+    let mut t = q3.clone();
+    t.contributions[2].delta_after = G1Affine::identity();
+    t.pk.delta_g1 = G1Affine::identity();
+    t.pk.vk.delta_g2 = G2Affine::identity();
+    bad(t, "delta was not applied");
+    let mut t = q3.clone();
+    t.pk.delta_g1 = G1Affine::identity();
+    t.pk.vk.delta_g2 = G2Affine::identity();
+    bad(t, "final delta differs");
     // a key for another circuit does not verify against this one
     let other =
         Groth16::<Bls12_381>::generate_random_parameters_with_reduction(Tiny::default(), &mut rng)

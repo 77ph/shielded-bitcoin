@@ -160,6 +160,16 @@ impl MockChain {
             },
             txdata,
         };
+        // the coinbase commits to the witnesses (BIP 141), as a real one does
+        let witness_root = block.witness_root().expect("non-empty");
+        let commitment = Block::compute_witness_commitment(&witness_root, &[0u8; 32]);
+        let mut script = vec![0x6a, 0x24, 0xaa, 0x21, 0xa9, 0xed];
+        script.extend_from_slice(commitment.as_byte_array());
+        block.txdata[0].output.push(TxOut {
+            value: Amount::ZERO,
+            script_pubkey: ScriptBuf::from_bytes(script),
+        });
+        block.txdata[0].input[0].witness = Witness::from_slice(&[[0u8; 32]]);
         block.header.merkle_root = block.compute_merkle_root().expect("non-empty");
         let id = BlockId {
             height,

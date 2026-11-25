@@ -64,6 +64,8 @@ impl ChainSource for Esplora {
         let resp = crate::net::get(&format!("{}/block/{hash}/raw", self.base))?;
         let mut bytes = Vec::new();
         resp.into_reader().take(64 << 20).read_to_end(&mut bytes)?;
-        deserialize(&bytes).map_err(|e| ChainError::Decode(e.to_string()))
+        let block: Block = deserialize(&bytes).map_err(|e| ChainError::Decode(e.to_string()))?;
+        super::check_block(hash, &block)?;
+        Ok(block)
     }
 }

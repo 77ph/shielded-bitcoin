@@ -1993,6 +1993,9 @@ impl ChainSource for Capped<'_> {
         }
         self.inner.block_hash(height)
     }
+    fn partial_blocks(&self) -> bool {
+        self.inner.partial_blocks()
+    }
     fn block(&self, hash: &BlockHash) -> Result<Block, ChainError> {
         self.inner.block(hash)
     }

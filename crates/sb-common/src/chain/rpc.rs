@@ -90,6 +90,8 @@ impl ChainSource for BitcoinCoreRpc {
             .as_str()
             .ok_or_else(|| ChainError::Rpc("bad block".into()))?;
         let bytes = hex::decode(hex).map_err(|e| ChainError::Decode(e.to_string()))?;
-        deserialize(&bytes).map_err(|e| ChainError::Decode(e.to_string()))
+        let block: Block = deserialize(&bytes).map_err(|e| ChainError::Decode(e.to_string()))?;
+        super::check_block(hash, &block)?;
+        Ok(block)
     }
 }

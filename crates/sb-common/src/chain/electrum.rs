@@ -515,12 +515,7 @@ impl ChainSource for Electrum {
             }
         }
         let block = Block { header, txdata };
-        if block.compute_merkle_root() != Some(header.merkle_root) {
-            return Err(ChainError::Decode(format!(
-                "electrum block {hash}: merkle root mismatch ({} txs)",
-                block.txdata.len()
-            )));
-        }
+        super::check_block(hash, &block)?;
         let _ = serialize(&header);
         Ok(block)
     }

@@ -576,10 +576,16 @@ impl Indexer {
                 break;
             };
             let block = chain.block(&hash)?;
+            // the source is trusted for chain selection, not for block
+            // contents: the hash, `check_block` on a full block, and the link
+            // to the block before
             if block.block_hash() != hash {
                 return Err(
                     ChainError::Decode(format!("block at {h} does not hash to {hash}")).into(),
                 );
+            }
+            if !chain.partial_blocks() {
+                sb_common::chain::check_block(&hash, &block)?;
             }
             if let Some(prev) = self.state.blocks.last() {
                 if block.header.prev_blockhash != prev.hash {

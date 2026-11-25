@@ -299,6 +299,14 @@ impl ChainSource for LightSource {
         };
         view.into_block(hash)
     }
+
+    /// The carriers are proven into the header's merkle root by the view;
+    /// the other positions hold placeholders. The witnesses are not
+    /// authenticated this way (no coinbase, no witness tree), so a light
+    /// block is read for its outputs only.
+    fn partial_blocks(&self) -> bool {
+        true
+    }
 }
 
 #[cfg(test)]

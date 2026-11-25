@@ -526,12 +526,16 @@ impl Indexer {
             };
             let block = chain.block(&hash)?;
             // The source is trusted for chain selection, not for block
-            // contents: the block must be the one named by the hash and must
-            // extend the block replayed before it.
+            // contents: the block must be the one named by the hash, a full
+            // block must pass `check_block`, and it must extend the block
+            // replayed before it.
             if block.block_hash() != hash {
                 return Err(
                     ChainError::Decode(format!("block at {h} does not hash to {hash}")).into(),
                 );
+            }
+            if !chain.partial_blocks() {
+                sb_common::chain::check_block(&hash, &block)?;
             }
             if let Some(prev) = self.state.blocks.last() {
                 if block.header.prev_blockhash != prev.hash {

@@ -32,11 +32,25 @@ pub fn vault_script() -> ScriptBuf {
     ])
 }
 
+/// A transaction with these outputs and one fake input, distinct per
+/// call: a block never carries the same transaction twice (the sources
+/// refuse one that does), so two carriers of one envelope are two
+/// transactions.
 pub fn tx_with(outputs: Vec<TxOut>) -> Transaction {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static NONCE: AtomicU32 = AtomicU32::new(1);
+    let nonce = NONCE.fetch_add(1, Ordering::Relaxed);
     Transaction {
         version: bitcoin::transaction::Version::TWO,
         lock_time: bitcoin::absolute::LockTime::ZERO,
-        input: vec![],
+        input: vec![bitcoin::TxIn {
+            previous_output: bitcoin::OutPoint::null(),
+            script_sig: bitcoin::blockdata::script::Builder::new()
+                .push_int(nonce as i64)
+                .into_script(),
+            sequence: bitcoin::Sequence::MAX,
+            witness: bitcoin::Witness::new(),
+        }],
         output: outputs,
     }
 }
