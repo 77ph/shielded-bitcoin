@@ -832,3 +832,23 @@ Against the 24th on the same laptop under the old key set (keys
 12.5–21.5 s, the step 1.04–1.16 s, two runs): about half, at a lighter
 load. Not a quiet-machine figure: the load average never fell under
 2.6.
+
+**The second-key-set test** (the server container, the release build of
+`3fdc1ff`, host load 12–19; 09:59–11:19 UTC, the follower paused for it;
+`a_step_under_another_key_set`, ignored, run alone). A second key set of
+the same structure — seven blocks without events a step instead of
+eight, so the same columns and instance layout, the same `T_q` key and
+another `T_p` key — generated in **1 121.2 s**; a chain started under it
+(step 1, **495.2 s**); a mixed step whose `T_q` is the second set's
+(**303.6 s**) and whose `T_p` is the first set's (**393.9 s**), two
+valid proofs; the first set generated in **1 731.3 s** once the second
+was dropped (one set resident at a time; the host's load was about 19
+through that hour, against 1 069–1 239 s on the 24th); a step under the
+first set over the mixed one, **472.4 s**. The first set's deciders
+refuse the second set's base step and the mixed step by the exposed key,
+and the step after by its `T_q` proof — the key tail leaves that circuit
+unsatisfiable while every other check of the step passes. Passed:
+**1 h 16 min 31 s** of wall clock, **22.78 GB** at the peak
+(`/usr/bin/time -v`), the build before it 214 s. The follower restarted
+itself from its state on disk (step 145) at **11:19:17 UTC** and read
+its keys.

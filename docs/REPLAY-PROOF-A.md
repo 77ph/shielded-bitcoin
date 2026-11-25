@@ -1067,8 +1067,19 @@ last step are every step's, and it checks the hashes beside them.
 [measured, the server, 24 November: `T_p` 225 836 rows at k = 18,
 2 477 more than before the tail; a step 70 040 bytes, 256 more — the
 four tail values of each instance; proving and deciding times unchanged
-within the run-to-run spread, `RUNS.md`] **The
-mechanism is built** (`verifier_body.rs`, `keys_as_inputs` and
+within the run-to-run spread, `RUNS.md`]. The tail across a
+real key change: the chain test's `a_step_under_another_key_set`
+generates a second key set of the same structure (seven empty blocks a
+step instead of eight: the same columns and instance layout, the same
+`T_q` key, another `T_p` key), starts a chain under it, builds a mixed
+step whose `T_q` is the second set's and whose `T_p` is the first's —
+two valid proofs — and a step under the first set over it; the first
+set's deciders refuse the base step and the mixed step by the exposed
+key, and the step after at `T_q`, the tail unsatisfiable while every
+other check passes [measured, the server, 25 November: the second set
+1 121 s, the first 1 731 s under a host load of 19, one resident at a
+time; steps 495 s, 304 + 394 s, 472 s; 1 h 16 min, 22.78 GB, `RUNS.md`].
+**The mechanism is built** (`verifier_body.rs`, `keys_as_inputs` and
 `allow_base`, the same night) [measured]: over a transfer proof the
 `q` group side exposes its key's 33 commitments as 66 cells and the base
 bit (288 public inputs in place of 221), a wrong key coordinate moves
@@ -1509,7 +1520,13 @@ as it was; this section and its implementation go to the next batch.
   multiplication uses; the one active bit gates the state writes and
   the proof binding alike), noting that the decider's check of the
   exposed key points against the deployment's is what its security
-  rests on, the hashes serving the chaining.
+  rests on, the hashes serving the chaining. The tail across a real
+  key change tested on the server on 25 November
+  (`a_step_under_another_key_set`): a second key set of the same
+  structure, a chain under it, a mixed step with two valid proofs, a
+  step under the first set over it — the first two refused by the
+  exposed key, the last at `T_q` by the tail; 1 h 16 min, 22.78 GB
+  (`RUNS.md`).
 * **v0.13** (24 November 2026) — the decider reads its own part of the
   key set (`ChainKeys::read_for_decider`: parameters, verifying keys,
   transfer key, shapes over fake captures; no proving key, padding or
