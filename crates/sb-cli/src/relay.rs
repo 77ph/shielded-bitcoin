@@ -31,7 +31,7 @@ use sb_primitives::Fr;
 use sb_wallet::Wallet;
 
 use crate::funding::{Chain, Coin, FundingState, FundingWallet, Publisher};
-use crate::http::{post_json, read_request, respond};
+use crate::http::post_json;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RelayRequest {
@@ -350,19 +350,12 @@ impl Relayer {
     /// The first replay happens here, before the first request.
     pub fn serve(&mut self, listener: TcpListener, max_requests: Option<u32>) -> Result<()> {
         self.refresh()?;
-        let mut served = 0u32;
-        while max_requests.is_none_or(|m| served < m) {
-            let (conn, peer) = listener.accept()?;
-            let _ = conn.set_read_timeout(Some(Duration::from_secs(10)));
-            let (status, body) = match read_request(&conn) {
-                Ok((method, path, body)) => self.handle(&method, &path, &body, peer.ip()),
-                Err(e) => (400, json!({"error": e.to_string()})),
-            };
-            log::info!("{peer}: {status}");
-            respond(conn, status, &body);
-            served += 1;
-        }
-        Ok(())
+        crate::http::serve(
+            listener,
+            max_requests,
+            || false,
+            |method, path, body, ip| self.handle(method, path, body, ip),
+        )
     }
 
     fn handle(&mut self, method: &str, path: &str, body: &[u8], ip: IpAddr) -> (u16, Value) {
@@ -471,6 +464,7 @@ impl RelayLedger {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::http::{read_request, respond};
     use std::net::TcpListener;
 
     /// The pending nullifiers and the payment times survive a restart

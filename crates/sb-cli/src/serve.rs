@@ -6,7 +6,6 @@
 //! The server fetches the full block from its own chain source on demand.
 
 use std::net::TcpListener;
-use std::time::Duration;
 
 use anyhow::Result;
 use bitcoin::BlockHash;
@@ -14,8 +13,6 @@ use serde_json::{Value, json};
 
 use sb_indexer::chain::light::BlockView;
 use sb_indexer::{ChainSource, Indexer, StateStore};
-
-use crate::http::{read_request, respond};
 
 pub struct Server {
     pub indexer: Indexer,
@@ -28,19 +25,12 @@ pub struct Server {
 impl Server {
     /// Serve until `max_requests` requests were answered (`None`: forever).
     pub fn serve(&mut self, listener: TcpListener, max_requests: Option<u32>) -> Result<()> {
-        let mut served = 0u32;
-        while max_requests.is_none_or(|m| served < m) {
-            let (conn, peer) = listener.accept()?;
-            let _ = conn.set_read_timeout(Some(Duration::from_secs(10)));
-            let (status, body) = match read_request(&conn) {
-                Ok((method, path, _)) => self.handle(&method, &path),
-                Err(e) => (400, json!({"error": e.to_string()})),
-            };
-            log::info!("{peer}: {status}");
-            respond(conn, status, &body);
-            served += 1;
-        }
-        Ok(())
+        crate::http::serve(
+            listener,
+            max_requests,
+            || false,
+            |method, path, _, _| self.handle(method, path),
+        )
     }
 
     fn handle(&mut self, method: &str, path: &str) -> (u16, Value) {

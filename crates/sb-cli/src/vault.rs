@@ -37,7 +37,7 @@ use sb_wallet::{Wallet, anchor_for};
 
 use crate::feeauth::{draw_message, reclaim_message, verify};
 use crate::funding::{Chain, Coin, FundingState, Utxo};
-use crate::http::{get_json, post_json, read_request, respond};
+use crate::http::{get_json, post_json};
 use crate::relay::Relayer;
 use crate::{Ctx, OutboxEntry, PublishMode};
 
@@ -758,23 +758,16 @@ impl Vault {
         self.refresh()?;
         self.check_i1()?;
         self.resolve_pending()?;
-        let mut served = 0u32;
-        while max_requests.is_none_or(|m| served < m) {
-            let (conn, peer) = listener.accept()?;
-            let _ = conn.set_read_timeout(Some(Duration::from_secs(10)));
-            let (status, body) = match read_request(&conn) {
-                Ok((method, path, body)) => self.handle(&method, &path, &body, peer.ip()),
-                Err(e) => (400, json!({"error": e.to_string()})),
-            };
-            log::info!("{peer}: {status}");
-            respond(conn, status, &body);
-            served += 1;
-            if stop_file.is_some_and(|f| f.exists()) {
-                log::info!("stop file present; stopping after {served} requests");
-                break;
+        let stop = || {
+            let s = stop_file.is_some_and(|f| f.exists());
+            if s {
+                log::info!("stop file present; stopping");
             }
-        }
-        Ok(())
+            s
+        };
+        crate::http::serve(listener, max_requests, stop, |method, path, body, ip| {
+            self.handle(method, path, body, ip)
+        })
     }
 
     fn handle(&mut self, method: &str, path: &str, body: &[u8], ip: IpAddr) -> (u16, Value) {

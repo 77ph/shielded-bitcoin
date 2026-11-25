@@ -150,11 +150,14 @@ restart forgets neither. Clients use
   censor but not forge, replay or redirect a transfer.
 * The operator's exposure: anyone can make the relayer run a check
   (replay to the tip, one proof verification), so the service is a
-  single-threaded target for availability attacks. It limits submissions
-  per client address per minute (`--max-checks-per-minute`), replays at
-  most once per `--sync-interval`, answers `/info` from memory, and caps
-  request bodies; none of that is authentication, and a public relayer
-  needs a front proxy or an allow-list. Funds are never at risk beyond the
+  target for availability attacks: checks run one at a time. It limits
+  submissions per client address per minute (`--max-checks-per-minute`),
+  replays at most once per `--sync-interval`, answers `/info` from memory,
+  caps request bodies, lines and headers, reads each request on its own
+  thread under a deadline and writes each answer under a timeout (a slow
+  or silent client holds its connection, not the service), and closes
+  connections beyond a cap unanswered; none of that is authentication,
+  and a public relayer needs a front proxy or an allow-list. Funds are never at risk beyond the
   hourly budget: only valid, unspent, never-seen transfers are paid for.
 
 ### 4. Fee vault (paid in shielded credit)
